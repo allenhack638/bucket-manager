@@ -561,6 +561,7 @@ final class BrowserViewController: NSViewController {
         renameButton?.isEnabled = hasBucket && model.selectedItem != nil
         filterButton?.isEnabled = hasBucket
         filterButton?.isSelectedState = !filterField.isHidden
+        filterButton?.iconTint = filterField.isHidden ? nil : Theme.Colors.accent
         if !filterField.isHidden, model.filterText.isEmpty, !filterField.stringValue.isEmpty {
             filterField.stringValue = ""
         }

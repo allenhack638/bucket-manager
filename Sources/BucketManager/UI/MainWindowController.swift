@@ -202,6 +202,7 @@ final class MainWindowController: NSWindowController {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, event.window == self.window else { return event }
             if self.window?.firstResponder is NSTextView { return event }
+            if self.handleCommandShortcut(event) { return nil }
 
             switch event.keyCode {
             case 96:
@@ -223,6 +224,104 @@ final class MainWindowController: NSWindowController {
                 return event
             }
         }
+    }
+
+    private func handleCommandShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        guard flags.contains(.command), !flags.contains(.control) else { return false }
+        let hasObjectSelection = model.selectedBucket != nil && model.selectedItem != nil
+        let inTable = browser.isTableFirstResponder
+
+        if flags == [.command] {
+            switch event.keyCode {
+            case 45:
+                sidebar.newBucket()
+                return true
+            case 32:
+                guard model.selectedBucket != nil else { return false }
+                browser.uploadFiles()
+                return true
+            case 2:
+                guard hasObjectSelection else { return false }
+                browser.downloadSelected()
+                return true
+            case 15:
+                Task { await model.refresh() }
+                return true
+            case 0:
+                guard inTable, !model.visibleItems.isEmpty else { return false }
+                browser.selectAllItems()
+                return true
+            case 7:
+                guard inTable, !model.selection.isEmpty else { return false }
+                browser.cutSelected()
+                return true
+            case 8:
+                guard inTable, !model.selection.isEmpty else { return false }
+                browser.copySelected()
+                return true
+            case 9:
+                guard inTable, model.hasClipboard, model.selectedBucket != nil else { return false }
+                browser.pasteItems()
+                return true
+            case 34:
+                guard hasObjectSelection else { return false }
+                browser.showProperties()
+                return true
+            case 3:
+                guard model.selectedBucket != nil else { return false }
+                browser.focusFilter()
+                return true
+            default:
+                return false
+            }
+        }
+
+        if flags == [.command, .shift] {
+            switch event.keyCode {
+            case 32:
+                guard model.selectedBucket != nil else { return false }
+                browser.uploadFolder()
+                return true
+            case 45:
+                guard model.selectedBucket != nil else { return false }
+                browser.newFolder()
+                return true
+            case 8:
+                guard !model.selection.isEmpty else { return false }
+                browser.copyTo()
+                return true
+            case 7:
+                guard !model.selection.isEmpty else { return false }
+                browser.moveTo()
+                return true
+            case 9:
+                guard hasObjectSelection else { return false }
+                browser.showVersions()
+                return true
+            case 11:
+                guard model.selectedBucket != nil else { return false }
+                addBookmarkAction()
+                return true
+            default:
+                return false
+            }
+        }
+
+        if flags == [.command, .option] {
+            switch event.keyCode {
+            case 45:
+                addAccountAction()
+                return true
+            case 46:
+                manageAccountsAction()
+                return true
+            default:
+                return false
+            }
+        }
+
+        return false
     }
 
     // MARK: - Sheets

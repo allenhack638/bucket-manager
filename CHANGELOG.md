@@ -12,3 +12,4 @@
 - Parallelize bulk delete/copy while respecting the global request throttle.
 - Limit destructive keyboard shortcuts to the object table.
 - Implement the object filter/search control with ⌘F and filtered empty states.
+- Restore the full keyboard shortcut set for the custom in-window menu bar.
