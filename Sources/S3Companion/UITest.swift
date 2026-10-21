@@ -1,0 +1,223 @@
+import AppKit
+
+/// Headless interaction checks for the dialog controllers. These call the same
+/// action methods the buttons call, so validation, save, and cancel behavior are
+/// exercised without a screen-recording or accessibility permission.
+@MainActor
+enum UITest {
+    static func run() {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        app.appearance = NSAppearance(named: .aqua)
+
+        var passed = 0
+        var failed = 0
+        func check(_ condition: Bool, _ name: String) {
+            if condition {
+                passed += 1
+                print("UITEST PASS  \(name)")
+            } else {
+                failed += 1
+                print("UITEST FAIL  \(name)")
+            }
+        }
+
+        var saved: (Account, String?)?
+        var cancelled = false
+        let add = AddAccountWindowController(
+            account: nil,
+            secret: nil,
+            onSave: { account, secret in saved = (account, secret) },
+            onCancel: { cancelled = true }
+        )
+
+        add.testFill(name: "", access: "", secret: "", region: "us-east-1", endpoint: "", kind: .amazonS3)
+        add.testSave()
+        check(saved == nil && !add.testErrorText.isEmpty, "required fields block save")
+
+        add.testFill(name: "Test Account", access: "EXAMPLE_ACCESS_KEY", secret: UUID().uuidString, region: "us-east-1", endpoint: "", kind: .amazonS3)
+        add.testSave()
+        check(saved?.0.displayName == "Test Account", "valid save emits account")
+        check(saved?.1 == UUID().uuidString, "valid save emits secret")
+        check(add.testErrorText.isEmpty, "successful save clears the error")
+
+        saved = nil
+        let compatible = AddAccountWindowController(
+            account: nil,
+            secret: nil,
+            onSave: { account, secret in saved = (account, secret) },
+            onCancel: {}
+        )
+        compatible.testFill(name: "Compatible", access: "KEY", secret: UUID().uuidString, region: "us-east-1", endpoint: "", kind: .compatible)
+        compatible.testSave()
+        check(saved == nil && !compatible.testErrorText.isEmpty, "compatible account requires an endpoint")
+
+        compatible.testFill(name: "Compatible", access: "KEY", secret: UUID().uuidString, region: "us-east-1", endpoint: "https://s3.example.com", kind: .compatible)
+        compatible.testSave()
+        check(saved?.0.endpoint == "https://s3.example.com", "compatible endpoint is saved")
+
+        let cancelSheet = AddAccountWindowController(
+            account: nil,
+            secret: nil,
+            onSave: { _, _ in failed += 1; print("UITEST FAIL  cancel triggered save") },
+            onCancel: { cancelled = true }
+        )
+        cancelSheet.testCancel()
+        check(cancelled, "cancel emits cancel callback")
+
+        var destination: String?
+        let crumbs = BreadcrumbView(frame: NSRect(x: 0, y: 0, width: 600, height: 30))
+        crumbs.onNavigate = { destination = $0 }
+        crumbs.setPath(bucket: "my-bucket", prefix: "originals/2026/")
+        crumbs.layout()
+        func press(_ label: String) -> Bool {
+            guard let button = crumbs.subviews.compactMap({ $0 as? NSButton })
+                .first(where: { ($0.accessibilityLabel() ?? $0.title) == label }) else { return false }
+            button.performClick(nil)
+            return true
+        }
+        check(press("Open folder originals"), "breadcrumb exposes parent segments")
+        check(destination == "originals/", "breadcrumb navigates to the parent prefix")
+        destination = nil
+        check(press("Open bucket my-bucket"), "breadcrumb exposes the bucket segment")
+        check(destination == "", "breadcrumb navigates to the bucket root")
+        destination = nil
+        check(press("Current folder 2026"), "breadcrumb exposes the current segment")
+        check(destination == nil, "current breadcrumb segment does not navigate")
+
+        let marker = S3Item.listed(key: "new-folder/", size: 0, lastModified: nil, storageClass: "STANDARD", eTag: "x")
+        check(marker.kind == .folder, "trailing-slash markers are folders")
+        check(marker.displayName == "new-folder", "folder markers hide the trailing slash")
+        check(BrowserModel.safeLocalName("..") == "_", "download names cannot escape the directory")
+        check(BrowserModel.safeLocalName("a/b") == "a_b", "download names cannot contain separators")
+
+        var secretReads = 0
+        let cacheAccount = Account(displayName: "Cache", accessKeyID: "K", kind: .amazonS3)
+        let cacheStore = AccountStore(
+            inMemoryAccounts: [cacheAccount],
+            secretLoader: { _ in
+                secretReads += 1
+                return "cache-secret"
+            }
+        )
+        _ = try? cacheStore.secret(for: cacheAccount)
+        _ = try? cacheStore.secret(for: cacheAccount)
+        check(secretReads == 1, "secret loader runs once per account per launch")
+
+        let demoStore = AccountStore(inMemoryAccounts: [])
+        let demoModel = BrowserModel(accounts: demoStore)
+        demoModel.loadDemoData()
+        if let demoItem = demoModel.items.first(where: { $0.kind == .object }) {
+            demoModel.setSelection([demoItem.key])
+            check(!demoModel.inspectorLoaded("properties", for: demoItem), "inspector metadata starts unloaded")
+            demoModel.loadDemoDetails()
+            check(demoModel.inspectorLoaded("properties", for: demoItem), "properties cache is keyed to the selected object")
+            check(demoModel.inspectorLoaded("tags", for: demoItem), "tags cache is keyed to the selected object")
+        }
+
+        let locationOne = Account(displayName: "One", accessKeyID: "A", kind: .amazonS3)
+        let locationTwo = Account(displayName: "Two", accessKeyID: "B", kind: .amazonS3)
+        let locationStore = AccountStore(inMemoryAccounts: [locationOne, locationTwo])
+        let locationModel = BrowserModel(accounts: locationStore)
+        locationModel.openLocation(accountID: locationTwo.id, bucket: "bucket-two", prefix: "folder/sub/")
+        check(locationModel.selectedAccount?.id == locationTwo.id, "folder selection switches to the folder's account")
+        check(locationModel.selectedBucket == "bucket-two", "folder selection switches to the folder's bucket")
+        check(locationModel.prefix == "folder/sub/", "folder selection sets the full prefix")
+        check(locationModel.items.isEmpty, "folder selection clears the previous listing")
+
+        let switchAccount = Account(displayName: "Switch", accessKeyID: "KEY", kind: .amazonS3)
+        let switchStore = AccountStore(inMemoryAccounts: [switchAccount])
+        let switchModel = BrowserModel(accounts: switchStore)
+        switchModel.selectBucket("new-bucket")
+        check(switchModel.selectedBucket == "new-bucket", "bucket selection changes immediately")
+        check(switchModel.prefix.isEmpty, "bucket selection resets the prefix immediately")
+        check(switchModel.items.isEmpty, "bucket selection clears the previous listing immediately")
+
+        let chromeStore = AccountStore(inMemoryAccounts: [])
+        let chrome = MainWindowController(
+            accounts: chromeStore,
+            model: BrowserModel(accounts: chromeStore)
+        )
+        check(chrome.window?.standardWindowButton(.closeButton)?.isHidden == false,
+              "native close traffic light is visible")
+        check(chrome.window?.standardWindowButton(.miniaturizeButton)?.isHidden == false,
+              "native minimize traffic light is visible")
+        check(chrome.window?.standardWindowButton(.zoomButton)?.isHidden == false,
+              "native zoom traffic light is visible")
+        check((chrome.window?.standardWindowButton(.closeButton)?.frame.minX ?? 999) < 60,
+              "native traffic lights are on the left")
+        check(chrome.window?.styleMask.contains(.fullSizeContentView) == true,
+              "full-size content keeps the custom chrome")
+        check(Theme.Metrics.trafficLightInset >= 78, "titlebar reserves space for traffic lights")
+        check(Theme.Icon.toolbar.size == 14 && Theme.Icon.toolbar.weight == .regular,
+              "toolbar icon token is formalized")
+        check(Theme.Icon.sortIndicator.weight == .semibold,
+              "sort indicator weight is formalized")
+
+        let metricKey = FolderStatsKey(accountID: UUID(), bucket: "bucket", prefix: "metrics/")
+        let loading = FolderStatsSnapshot(key: metricKey, record: nil, state: .loading)
+        check(loading.sizeText == "…", "folder size shows a loading ellipsis")
+        let record = FolderStatsRecord(
+            accountID: metricKey.accountID, bucket: metricKey.bucket, prefix: metricKey.prefix,
+            size: 1024, objectCount: 3, newestObjectDate: Date(), computedAt: Date(), partial: false
+        )
+        let ready = FolderStatsSnapshot(key: metricKey, record: record, state: .ready)
+        check(!ready.sizeText.isEmpty, "ready folder size is rendered")
+        let partial = FolderStatsSnapshot(
+            key: metricKey,
+            record: FolderStatsRecord(
+                accountID: metricKey.accountID, bucket: metricKey.bucket, prefix: metricKey.prefix,
+                size: 1024, objectCount: 3, newestObjectDate: nil, computedAt: Date(), partial: true
+            ),
+            state: .partial
+        )
+        check(partial.sizeText.hasPrefix("≥"), "partial folder size is marked")
+        let failedSnapshot = FolderStatsSnapshot(key: metricKey, record: nil, state: .failed("Access denied"))
+        check(failedSnapshot.sizeText == "—", "failed folder size is a dash")
+
+        let store = AccountStore(inMemoryAccounts: [
+            Account(displayName: "One", accessKeyID: "A", kind: .amazonS3),
+            Account(displayName: "Two", accessKeyID: "B", kind: .compatible, endpoint: "https://example.com")
+        ])
+        let model = BrowserModel(accounts: store)
+        let storage = StorageAccountsWindowController(accounts: store, model: model)
+        storage.reload()
+        check(storage.testRowCount() == 2, "storage manager shows every account")
+            var customButtonPressed = false
+            let customButton = FlatButton("Test action", style: .action)
+            customButton.onClick = { customButtonPressed = true }
+            check(customButton.accessibilityRole() == .button,
+                  "custom action button exposes the button role")
+            check(customButton.accessibilityPerformPress() && customButtonPressed,
+                  "custom action button performs its action through accessibility")
+
+            let header = ColumnHeaderView(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            let headerWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 300, height: 24),
+                styleMask: [.titled],
+                backing: .buffered,
+                defer: false
+            )
+            headerWindow.contentView = header
+            header.columns = [
+                HeaderColumn(id: "name", title: "Name", width: 100, alignment: .left),
+                HeaderColumn(id: "size", title: "Size", width: 100, alignment: .right)
+            ]
+            var sortedColumn: String?
+            header.onSort = { sortedColumn = $0 }
+            let headerChildren = header.accessibilityChildren() ?? []
+            check(headerChildren.count == 2,
+                  "each table column exposes a sort accessibility element")
+            if let sizeElement = headerChildren.last as? NSAccessibilityElement {
+                check(sizeElement.accessibilityLabel() == "Sort by Size",
+                      "sort accessibility element names its column")
+                check(sizeElement.accessibilityPerformPress() && sortedColumn == "size",
+                      "sort accessibility element performs the sort action")
+            }
+
+
+
+        print("UITEST SUMMARY passed=\(passed) failed=\(failed)")
+        exit(failed == 0 ? 0 : 1)
+    }
+}
