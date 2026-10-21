@@ -561,17 +561,25 @@ final class MainWindowController: NSWindowController {
         let defaults = UserDefaults.standard
         let legacyKey = "\(LegacyImport.defaultsPrefix)Bookmarks"
         guard let data = defaults.data(forKey: "BucketManagerBookmarks")
-                ?? defaults.data(forKey: legacyKey),
-              let decoded = try? JSONDecoder().decode([Bookmark].self, from: data) else { return }
-        bookmarks = decoded
+                ?? defaults.data(forKey: legacyKey) else { return }
+        do {
+            bookmarks = try JSONDecoder().decode([Bookmark].self, from: data)
+        } catch {
+            AppLog.shared.error("Could not read saved bookmarks: \(error.localizedDescription)")
+            return
+        }
         if defaults.data(forKey: "BucketManagerBookmarks") == nil {
             defaults.set(data, forKey: "BucketManagerBookmarks")
         }
     }
 
     private func saveBookmarks() {
-        guard let data = try? JSONEncoder().encode(bookmarks) else { return }
-        UserDefaults.standard.set(data, forKey: "BucketManagerBookmarks")
+        do {
+            let data = try JSONEncoder().encode(bookmarks)
+            UserDefaults.standard.set(data, forKey: "BucketManagerBookmarks")
+        } catch {
+            AppLog.shared.error("Could not save bookmarks: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Menus

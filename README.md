@@ -221,7 +221,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 57 dialog/model checks plus 74 end-to-end checks. The E2E
+The current suite is 64 dialog/model checks plus 74 end-to-end checks. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
 folder markers returned in `Contents`, AccessDenied, deliberately delayed
 responses, folder creation (`PUT .../name/`), metadata request counts, the 60s
