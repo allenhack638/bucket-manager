@@ -223,7 +223,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 64 dialog/model checks plus 74 end-to-end checks. The E2E
+The current suite is 64 dialog/model checks plus 76 end-to-end checks. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
 folder markers returned in `Contents`, AccessDenied, deliberately delayed
 responses, folder creation (`PUT .../name/`), metadata request counts, the 60s
@@ -248,7 +248,7 @@ headers, never the secret).
 - Cross-account copy/move is intentionally rejected; copy within one account works.
 - Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.
-- Image previews show a placeholder; text/UTF-8 previews render.
+- Preview renders common image formats and UTF-8 text; other binary objects show a size summary.
 - Versioning, tags, metadata, and ACLs are read-only.
 - Ad-hoc signing means Keychain may re-prompt after each rebuild.
 - The window uses native macOS traffic lights at top-left; offscreen snapshot

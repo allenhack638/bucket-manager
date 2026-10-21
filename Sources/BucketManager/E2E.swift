@@ -386,6 +386,17 @@ enum E2E {
                 check(counts["getObject"] == 1, "preview GetObject fetched once (got \(counts["getObject"] ?? 0))")
             }
 
+            model.openLocation(accountID: account.id, bucket: "alpha", prefix: "photos/")
+            _ = await waitUntil { !model.isBusy }
+            if let photo = model.items.first(where: { $0.key == "photos/a.jpg" }) {
+                model.setSelection([photo.key])
+                await model.loadPreview(for: photo)
+                check(model.previewImage != nil, "image preview decodes image data")
+                check(model.previewText == nil, "image preview does not fall back to text")
+            } else {
+                check(false, "fake image object is listed")
+            }
+
             model.openLocation(accountID: account.id, bucket: "alpha", prefix: "folder/")
             _ = await waitUntil { !model.isBusy }
             await model.createFolder(named: "new")

@@ -90,6 +90,7 @@ final class TransfersViewController: NSViewController {
     private let tasksScroll = NSScrollView()
     private let footer = ThemedView()
     private let infoView = InfoTextView()
+    private let previewImageView = NSImageView()
 
     private let taskHeading = Labels.label("Task", font: Theme.Font.small, color: Theme.Colors.secondaryText)
     private let sizeWidth: CGFloat = 78
@@ -144,13 +145,20 @@ final class TransfersViewController: NSViewController {
 
         content.addSubview(tasksContainer)
         content.addSubview(infoView)
+        content.addSubview(previewImageView)
         content.addSubview(logEmptyView)
         tasksContainer.translatesAutoresizingMaskIntoConstraints = false
         infoView.translatesAutoresizingMaskIntoConstraints = false
+        previewImageView.translatesAutoresizingMaskIntoConstraints = false
         logEmptyView.translatesAutoresizingMaskIntoConstraints = false
         tasksContainer.pinEdges(to: content)
         infoView.pinEdges(to: content)
+        previewImageView.pinEdges(to: content)
         logEmptyView.pinEdges(to: content)
+        previewImageView.imageScaling = .scaleProportionallyUpOrDown
+        previewImageView.imageAlignment = .alignCenter
+        previewImageView.setAccessibilityLabel("Image preview")
+        previewImageView.isHidden = true
         logEmptyView.isHidden = true
 
         root.addSubview(tabStrip)
@@ -447,6 +455,7 @@ final class TransfersViewController: NSViewController {
         let tasksVisible = id == "tasks"
         tasksContainer.isHidden = !tasksVisible
         infoView.isHidden = tasksVisible
+        previewImageView.isHidden = true
         logEmptyView.isHidden = true
         filterButtons.forEach { $0.isHidden = !tasksVisible }
 
@@ -556,6 +565,7 @@ final class TransfersViewController: NSViewController {
     private func updateInfo() {
         let tab = selectedTab
         let item = model.selectedItem
+        previewImageView.isHidden = true
 
         if tab == "tasks" {
             logEmptyView.isHidden = true
@@ -680,6 +690,11 @@ final class TransfersViewController: NSViewController {
         case "preview":
             if !model.inspectorLoaded("preview", for: item) {
                 infoView.setPlaceholder("Loading preview…")
+            } else if let image = model.previewImage {
+                previewImageView.image = image
+                previewImageView.setAccessibilityLabel("Preview of \(item.displayName)")
+                previewImageView.isHidden = false
+                infoView.isHidden = true
             } else {
                 infoView.setText(model.previewText ?? "Preview is empty.")
             }

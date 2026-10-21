@@ -51,6 +51,7 @@ final class BrowserModel {
     private(set) var versions: [ObjectVersion] = []
     private(set) var acl: [String] = []
     private(set) var previewText: String?
+    private(set) var previewImage: NSImage?
 
     private(set) var logs: [String] = []
 
@@ -1382,11 +1383,12 @@ final class BrowserModel {
         guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
         if isDemoData {
             previewText = "[demo preview] \(item.displayName) — \((item.size ?? 0).byteString)"
+            previewImage = nil
             previewKey = item.key
             onDetailsChange?()
             return
         }
-        if !force, previewKey == item.key, previewText != nil { return }
+        if !force, previewKey == item.key, previewText != nil || previewImage != nil { return }
         guard !inflightPreview.contains(item.key) else { return }
         inflightPreview.insert(item.key)
         defer { inflightPreview.remove(item.key) }
@@ -1397,18 +1399,22 @@ final class BrowserModel {
                 account: account, secret: secret, bucket: bucket, key: item.key
             )
             guard isCurrent(item, account: account, bucket: bucket) else { return }
-            if NSImage(data: data) != nil,
-               ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "heic"].contains(item.fileExtension) {
-                previewText = "[image] \(item.displayName) — \(Int64(data.count).byteString)"
+            if ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "heic"].contains(item.fileExtension),
+               let image = NSImage(data: data) {
+                previewImage = image
+                previewText = nil
             } else if let text = String(data: data, encoding: .utf8) {
+                previewImage = nil
                 previewText = String(text.prefix(200_000))
             } else {
+                previewImage = nil
                 previewText = "[binary] \(item.displayName) — first \(Int64(data.count).byteString)"
             }
             previewKey = item.key
             onDetailsChange?()
         } catch {
             guard isCurrent(item, account: account, bucket: bucket) else { return }
+            previewImage = nil
             previewText = "Preview failed: \(S3ErrorPresenter.message(for: error))"
             previewKey = item.key
             onDetailsChange?()
@@ -1421,6 +1427,7 @@ final class BrowserModel {
         acl = []
         tags = [:]
         previewText = nil
+        previewImage = nil
         detailsKey = nil
         versionsKey = nil
         aclKey = nil

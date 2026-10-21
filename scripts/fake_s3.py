@@ -7,6 +7,7 @@ serialization/deserialization and the app's listing/metadata code, not auth.
 Run: python3 scripts/fake_s3.py 0   # prints "LISTENING <port>"
 Endpoints: /__stats, /__reset, /__last_put, /__health
 """
+import base64
 import http.server
 import json
 import sys
@@ -152,12 +153,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             bump("denied")
             return error_response(self, "AccessDenied", "Access Denied")
         bump("getObject")
+        content_type = "text/plain"
         if key == "readme.txt":
             body = b"hello from fake s3"
+        elif key == "photos/a.jpg":
+            body = base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2n1kAAAAASUVORK5CYII="
+            )
+            content_type = "image/png"
         else:
             body = f"body of {key}".encode()
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("ETag", '"etag1"')
         self.send_header("Last-Modified", HTTP_DATE)
