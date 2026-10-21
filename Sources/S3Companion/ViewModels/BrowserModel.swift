@@ -197,7 +197,14 @@ final class BrowserModel {
         let done = transfers.doneBytes
         let speed = transfers.aggregateSpeed
         let time = Self.durationString(transfers.tasks.reduce(0) { $0 + $1.elapsed })
-        return "All (\(transfers.tasks.count)) · \(done.byteString)/\(total.byteString) · \(speed.rateString) · \(time)"
+        return "All (\(transfers.tasks.count))  ·  \(done.byteString) / \(total.byteString)  ·  \(speed.rateString)  ·  \(time)"
+    }
+
+    var summaryCompactText: String {
+        let total = transfers.totalBytes
+        let done = transfers.doneBytes
+        let speed = transfers.aggregateSpeed
+        return "All (\(transfers.tasks.count))  ·  \(done.byteString) / \(total.byteString)  ·  \(speed.rateString)"
     }
 
     static func durationString(_ interval: TimeInterval) -> String {
@@ -317,6 +324,12 @@ final class BrowserModel {
         tags = details?.tags ?? [:]
         tagsKey = item.key
         onDetailsChange?()
+        onLogChange?()
+    }
+
+    /// Snapshot-only helper: clears the event log so its empty state can be rendered.
+    func clearLogsForSnapshot() {
+        logs.removeAll()
         onLogChange?()
     }
 

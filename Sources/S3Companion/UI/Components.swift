@@ -128,8 +128,14 @@ final class FlatButton: NSControl {
     var fontSize: CGFloat? { didSet { needsDisplay = true; invalidateIntrinsicContentSize() } }
     var iconTint: NSColor? { didSet { needsDisplay = true } }
     var accessibilityTitle: String? { didSet { needsDisplay = true } }
+    var accessibilityHelpText: String?
     var isIconOnly = false { didSet { needsDisplay = true; invalidateIntrinsicContentSize() } }
-    var style: Style = .toolbar { didSet { needsDisplay = true } }
+    var style: Style = .toolbar {
+        didSet {
+            needsDisplay = true
+            focusRingType = (style == .tab || style == .menu) ? .none : .exterior
+        }
+    }
     var isSelectedState = false { didSet { needsDisplay = true } }
     var badge: String? { didSet { needsDisplay = true } }
     var onClick: (() -> Void)?
@@ -171,6 +177,18 @@ final class FlatButton: NSControl {
         guard isEnabled else { return false }
         onClick?()
         return true
+    }
+
+    override func accessibilityPerformShowMenu() -> Bool {
+        guard isEnabled else { return false }
+        onClick?()
+        return true
+    }
+
+    override func accessibilityActionNames() -> [NSAccessibility.Action] { [.press] }
+
+    override func accessibilityPerformAction(_ action: NSAccessibility.Action) {
+        if action == .press { _ = accessibilityPerformPress() }
     }
 
     override func drawFocusRingMask() {
@@ -245,7 +263,8 @@ final class FlatButton: NSControl {
             fill = pressed ? Theme.Colors.accentPressed : (hovering ? Theme.Colors.accentHover : Theme.Colors.accent)
             textColor = .white
         case .link:
-            textColor = Theme.Colors.link
+            textColor = isSelectedState ? Theme.Colors.accent : Theme.Colors.link
+            if isSelectedState { fill = Theme.Colors.hover }
         }
 
         if let fill {
@@ -258,7 +277,7 @@ final class FlatButton: NSControl {
 
         if style == .tab && isSelectedState {
             Theme.Colors.accent.setFill()
-            NSRect(x: rect.minX, y: rect.maxY - 2, width: rect.width, height: 2).fill()
+            NSRect(x: rect.minX + 6, y: rect.minY, width: max(0, rect.width - 12), height: 2).fill()
         }
 
         let font = fontSize.map { NSFont.systemFont(ofSize: $0, weight: .regular) }
@@ -307,11 +326,6 @@ final class FlatButton: NSControl {
                 withAttributes: attrs
             )
         }
-
-        if isSelectedState && style == .menu {
-            Theme.Colors.accent.setFill()
-            NSRect(x: 0, y: 0, width: 2, height: rect.height).fill()
-        }
     }
 
     override var intrinsicContentSize: NSSize {
@@ -329,7 +343,7 @@ final class FlatButton: NSControl {
         case .toolbar:
             return NSSize(width: titleSize.width + horizontalPadding * 2 + iconPart, height: 24)
         case .tab:
-            return NSSize(width: titleSize.width + 8, height: 28)
+            return NSSize(width: titleSize.width + 14, height: 28)
         case .action:
             return NSSize(width: titleSize.width + horizontalPadding * 2 + iconPart, height: 24)
         case .primary:
@@ -340,10 +354,16 @@ final class FlatButton: NSControl {
         }
     }
 
-    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityRole() -> NSAccessibility.Role? {
+        switch style {
+        case .tab: return .radioButton
+        default: return .button
+        }
+    }
     override func accessibilityLabel() -> String? {
         accessibilityTitle ?? (title.isEmpty ? iconName : title)
     }
+    override func accessibilityHelp() -> String? { accessibilityHelpText }
     override func accessibilityValue() -> Any? { isSelectedState ? 1 : 0 }
 }
 
@@ -645,11 +665,14 @@ final class TabStripView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.chrome.cgColor
+        setAccessibilityElement(true)
+        setAccessibilityRole(.tabGroup)
+        setAccessibilityLabel("Inspector tabs")
         stack.orientation = .horizontal
-        stack.spacing = 0
+        stack.spacing = 6
         stack.alignment = .height
         addSubview(stack)
-        stack.pinEdges(to: self, insets: NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8))
+        stack.pinEdges(to: self, insets: NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10))
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -659,6 +682,9 @@ final class TabStripView: NSView {
         buttons = tabs.map { tab in
             let button = FlatButton(tab.title, style: .tab)
             button.identifier = NSUserInterfaceItemIdentifier(tab.id)
+            button.fontSize = 11
+            button.accessibilityTitle = tab.title
+            button.accessibilityHelpText = "Show \(tab.title)"
             button.onClick = { [weak self] in self?.onSelect?(tab.id) }
             button.translatesAutoresizingMaskIntoConstraints = false
             button.heightAnchor.constraint(equalToConstant: Theme.Metrics.tabBarHeight).isActive = true
@@ -704,10 +730,13 @@ final class InfoTextView: NSView {
         textView.drawsBackground = false
         textView.font = Theme.Font.mono
         textView.textColor = Theme.Colors.text
-        textView.textContainerInset = NSSize(width: 10, height: 8)
+        textView.textContainerInset = NSSize(width: 14, height: 12)
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.setAccessibilityLabel("Details")
+        textView.setAccessibilityLabel("Inspector details")
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineSpacing = 3
+        textView.defaultParagraphStyle = paragraph
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]

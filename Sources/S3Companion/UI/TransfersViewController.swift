@@ -109,11 +109,16 @@ final class TransfersViewController: NSViewController {
         title: "No transfers yet",
         subtitle: "Upload or download files to see the queue here."
     )
+    private let logEmptyView = EmptyStateView(
+        iconName: "list.bullet.rectangle",
+        title: "No events yet",
+        subtitle: "Bucket activity, transfers, and errors will appear here."
+    )
+    private let footerProgress = ProgressBarView()
     private var startButton: FlatButton?
     private var stopButton: FlatButton?
     private var cancelButton: FlatButton?
     private var filterStack: NSStackView?
-    private var filterWidthConstraint: NSLayoutConstraint?
 
     init(model: BrowserModel) {
         self.model = model
@@ -141,10 +146,14 @@ final class TransfersViewController: NSViewController {
 
         content.addSubview(tasksContainer)
         content.addSubview(infoView)
+        content.addSubview(logEmptyView)
         tasksContainer.translatesAutoresizingMaskIntoConstraints = false
         infoView.translatesAutoresizingMaskIntoConstraints = false
+        logEmptyView.translatesAutoresizingMaskIntoConstraints = false
         tasksContainer.pinEdges(to: content)
         infoView.pinEdges(to: content)
+        logEmptyView.pinEdges(to: content)
+        logEmptyView.isHidden = true
 
         root.addSubview(tabStrip)
         root.addSubview(content)
@@ -266,13 +275,15 @@ final class TransfersViewController: NSViewController {
         let filterStack = NSStackView()
         self.filterStack = filterStack
         filterStack.orientation = .horizontal
-        filterStack.spacing = 2
+        filterStack.spacing = 10
         filterStack.translatesAutoresizingMaskIntoConstraints = false
         for (filter, title) in filters {
             let button = FlatButton(title, style: .link)
             button.fontSize = 11
             button.translatesAutoresizingMaskIntoConstraints = false
+            button.accessibilityTitle = "Show \(title.lowercased()) transfers"
             button.onClick = { [weak self] in self?.toggleFilter(filter) }
+            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
             filterStack.addArrangedSubview(button)
             filterButtons.append(button)
             filterMap[filter] = button
@@ -280,8 +291,6 @@ final class TransfersViewController: NSViewController {
         filterStack.setContentHuggingPriority(.required, for: .horizontal)
         filterStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         filterStack.distribution = .fill
-        filterWidthConstraint = filterStack.widthAnchor.constraint(equalToConstant: 230)
-        filterWidthConstraint?.isActive = true
         footer.addSubview(filterStack)
 
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -303,29 +312,52 @@ final class TransfersViewController: NSViewController {
         for button in [start, stop, cancel] {
             button.fontSize = 11
             button.translatesAutoresizingMaskIntoConstraints = false
+            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
         }
+        start.accessibilityTitle = "Start all transfers"
+        stop.accessibilityTitle = "Stop all transfers"
+        cancel.accessibilityTitle = "Cancel all transfers"
         startButton = start
         stopButton = stop
         cancelButton = cancel
         let actionStack = NSStackView(views: [start, stop, cancel])
         actionStack.orientation = .horizontal
-        actionStack.spacing = 4
+        actionStack.spacing = 10
         actionStack.setContentHuggingPriority(.required, for: .horizontal)
         actionStack.setContentCompressionResistancePriority(.required, for: .horizontal)
         actionStack.translatesAutoresizingMaskIntoConstraints = false
         footer.addSubview(actionStack)
 
-        NSLayoutConstraint.activate([
-            filterStack.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 8),
-            filterStack.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+        let actionDivider = SeparatorView(axis: .vertical)
+        actionDivider.translatesAutoresizingMaskIntoConstraints = false
+        footer.addSubview(actionDivider)
 
-            actionStack.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -8),
-            actionStack.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
+        footerProgress.translatesAutoresizingMaskIntoConstraints = false
+        footerProgress.barColor = Theme.Colors.accent
+        footerProgress.setAccessibilityLabel("Overall transfer progress")
+        footer.addSubview(footerProgress)
+
+        NSLayoutConstraint.activate([
+            filterStack.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 12),
+            filterStack.centerYAnchor.constraint(equalTo: footer.centerYAnchor, constant: -1),
+
+            actionStack.trailingAnchor.constraint(equalTo: footer.trailingAnchor, constant: -12),
+            actionStack.centerYAnchor.constraint(equalTo: footer.centerYAnchor, constant: -1),
+
+            actionDivider.widthAnchor.constraint(equalToConstant: 1),
+            actionDivider.heightAnchor.constraint(equalToConstant: 18),
+            actionDivider.centerYAnchor.constraint(equalTo: footer.centerYAnchor, constant: -1),
+            actionDivider.trailingAnchor.constraint(equalTo: actionStack.leadingAnchor, constant: -12),
 
             summaryLabel.centerXAnchor.constraint(equalTo: footer.centerXAnchor),
-            summaryLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
-            summaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: filterStack.trailingAnchor, constant: 12),
-            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: actionStack.leadingAnchor, constant: -12),
+            summaryLabel.centerYAnchor.constraint(equalTo: footer.centerYAnchor, constant: -1),
+            summaryLabel.leadingAnchor.constraint(greaterThanOrEqualTo: filterStack.trailingAnchor, constant: 16),
+            summaryLabel.trailingAnchor.constraint(lessThanOrEqualTo: actionDivider.leadingAnchor, constant: -16),
+
+            footerProgress.leadingAnchor.constraint(equalTo: footer.leadingAnchor),
+            footerProgress.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
+            footerProgress.bottomAnchor.constraint(equalTo: footer.bottomAnchor),
+            footerProgress.heightAnchor.constraint(equalToConstant: 6),
 
             topLine.leadingAnchor.constraint(equalTo: footer.leadingAnchor),
             topLine.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
@@ -376,7 +408,9 @@ final class TransfersViewController: NSViewController {
             }
         }
         updateFooterCounts()
-        summaryLabel.stringValue = model.summaryText
+        updateFooterSummary()
+        let totalBytes = model.transfers.totalBytes
+        footerProgress.progress = totalBytes > 0 ? Double(model.transfers.doneBytes) / Double(totalBytes) : 0
         footer.layoutSubtreeIfNeeded()
         if selectedTab == "tasks" { updateInfo() }
     }
@@ -416,6 +450,7 @@ final class TransfersViewController: NSViewController {
         let tasksVisible = id == "tasks"
         tasksContainer.isHidden = !tasksVisible
         infoView.isHidden = tasksVisible
+        logEmptyView.isHidden = true
         filterButtons.forEach { $0.isHidden = !tasksVisible }
 
         if tasksVisible {
@@ -467,11 +502,17 @@ final class TransfersViewController: NSViewController {
     }
 
     private func updateFooterLayout() {
-        let width = tasksScroll.bounds.width
-        summaryLabel.isHidden = width < 680
+        updateFooterSummary()
         filterStack?.invalidateIntrinsicContentSize()
         summaryLabel.invalidateIntrinsicContentSize()
         footer.layoutSubtreeIfNeeded()
+    }
+
+    private func updateFooterSummary() {
+        let width = footer.bounds.width
+        summaryLabel.isHidden = width < 760
+        summaryLabel.stringValue = width >= 900 ? model.summaryText : model.summaryCompactText
+        summaryLabel.toolTip = model.summaryText
     }
 
     private func updateFooterCounts() {
@@ -505,25 +546,43 @@ final class TransfersViewController: NSViewController {
             button.fontSize = 11
             button.translatesAutoresizingMaskIntoConstraints = false
             button.isSelectedState = filter == item.0
+            button.accessibilityTitle = "Show \(item.1.lowercased()) transfers"
+            button.accessibilityHelpText = "\(item.2) \(item.1.lowercased())"
             button.onClick = { [weak self] in self?.toggleFilter(item.0) }
+            button.heightAnchor.constraint(equalToConstant: 24).isActive = true
             filterStack.addArrangedSubview(button)
             filterButtons.append(button)
             filterMap[item.0] = button
         }
-
-        let widths = filterButtons.map { $0.intrinsicContentSize.width }
-        let spacing = CGFloat(max(0, filterButtons.count - 1)) * 2
-        filterWidthConstraint?.constant = widths.reduce(0, +) + spacing
     }
 
     private func updateInfo() {
         let tab = selectedTab
         let item = model.selectedItem
 
-        if tab == "log" {
-            infoView.setText(model.logs.isEmpty ? "No events yet." : model.logs.joined(separator: "\n"))
+        if tab == "tasks" {
+            logEmptyView.isHidden = true
+            infoView.isHidden = true
             return
         }
+
+        if tab == "log" {
+            let isEmpty = model.logs.isEmpty
+            logEmptyView.isHidden = !isEmpty
+            infoView.isHidden = isEmpty
+            if isEmpty {
+                logEmptyView.update(
+                    iconName: "list.bullet.rectangle",
+                    title: "No events yet",
+                    subtitle: "Bucket activity, transfers, and errors will appear here."
+                )
+            } else {
+                infoView.setText(model.logs.joined(separator: "\n"))
+            }
+            return
+        }
+        logEmptyView.isHidden = true
+        infoView.isHidden = false
 
         guard let item else {
             infoView.setPlaceholder("Select a file to see its \(tabDisplayName(tab)).")

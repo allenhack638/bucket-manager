@@ -58,6 +58,9 @@ final class AppMenuBarView: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.menuBar.cgColor
+        setAccessibilityElement(true)
+        setAccessibilityRole(.menuBar)
+        setAccessibilityLabel("Application menu")
         stack.orientation = .horizontal
         stack.spacing = 0
         stack.alignment = .centerY
@@ -80,6 +83,8 @@ final class AppMenuBarView: NSView {
         }
         buttons = menus.map { title, menu in
             let button = FlatButton(title, style: .menu)
+            button.accessibilityTitle = title
+            button.accessibilityHelpText = "Open \(title) menu"
             button.onClick = { [weak self, weak button] in
                 guard let self, let button else { return }
                 button.isSelectedState = true

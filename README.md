@@ -192,12 +192,13 @@ build/S3Companion.app/Contents/MacOS/S3Companion --verify-startup
 .build/debug/S3Companion --snapshot out.png --size 900x480
 .build/debug/S3Companion --snapshot out.png --size 900x480 --tab properties
 .build/debug/S3Companion --snapshot out.png --size 900x480 --empty accounts
+.build/debug/S3Companion --snapshot log-empty.png --size 1120x650 --tab log --empty log
 .build/debug/S3Companion --snapshot out.png --size 900x480 --error "Access denied."
 .build/debug/S3Companion --snapshot-sheet add --out add.png --size 640x500
 .build/debug/S3Companion --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 46 dialog/model checks plus 74 end-to-end checks. The E2E
+The current suite is 49 dialog/model checks plus 74 end-to-end checks. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
 folder markers returned in `Contents`, AccessDenied, deliberately delayed
 responses, folder creation (`PUT .../name/`), metadata request counts, the 60s

@@ -23,7 +23,7 @@ enum Theme {
 
         static let tabBarHeight: CGFloat = 28
         static let transferRowHeight: CGFloat = 18
-        static let transferFooterHeight: CGFloat = 32
+        static let transferFooterHeight: CGFloat = 40
 
         static let initialBrowserHeight: CGFloat = 335
     }

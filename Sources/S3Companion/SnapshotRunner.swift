@@ -19,6 +19,7 @@ enum SnapshotRunner {
             model.loadDemoData()
             if empty == "bucket" { model.clearBucketForDemo() }
             if empty == "folder" { model.clearItemsForDemo() }
+            if empty == "log" { model.clearLogsForSnapshot() }
             if let pathPrefix { model.setPrefixForSnapshot(pathPrefix) }
             if let errorMessage { model.setErrorForSnapshot(errorMessage) }
         }

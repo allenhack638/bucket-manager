@@ -214,6 +214,21 @@ enum UITest {
                 check(sizeElement.accessibilityPerformPress() && sortedColumn == "size",
                       "sort accessibility element performs the sort action")
             }
+            let tabButton = FlatButton("Event Log", style: .tab)
+            check(tabButton.accessibilityRole() == .radioButton,
+                  "inspector tabs expose the radio-button role")
+
+            let menuButton = FlatButton("Tools", style: .menu)
+            var menuOpened = false
+            menuButton.onClick = { menuOpened = true }
+            check(menuButton.accessibilityPerformPress() && menuOpened,
+                  "menu buttons can be opened through accessibility")
+
+            let tabStrip = TabStripView(frame: .zero)
+            check(tabStrip.accessibilityRole() == .tabGroup,
+                  "inspector tab strip exposes the tab-group role")
+
+
 
 
 
