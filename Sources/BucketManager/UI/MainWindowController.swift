@@ -418,7 +418,7 @@ final class MainWindowController: NSWindowController {
                 alert.addButton(withTitle: "OK")
                 alert.beginSheetModal(for: window, completionHandler: nil)
             } catch {
-                self.presentError("Connection failed", BrowserModel.friendly(error))
+                self.presentError("Connection failed", S3ErrorPresenter.message(for: error))
             }
         }
     }

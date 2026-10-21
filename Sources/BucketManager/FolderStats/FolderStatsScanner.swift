@@ -47,7 +47,7 @@ actor FolderStatsScanner {
 
         var grouped: [ParentKey: Set<FolderStatsKey>] = [:]
         for key in keys {
-            let parent = parentPrefix(of: key.prefix)
+            let parent = S3Key.parentPrefix(of: key.prefix)
             grouped[ParentKey(accountID: key.accountID, bucket: key.bucket, parent: parent), default: []]
                 .insert(key)
         }
@@ -134,13 +134,6 @@ actor FolderStatsScanner {
             "folderStats scan bucket=\(group.bucket) target=\(group.target) mode=\(group.mode.rawValue) objects=\(scanned) pages=\(pages) records=\(records.count) partial=\(partial)"
         )
         return records
-    }
-
-    private static func parentPrefix(of prefix: String) -> String {
-        var value = prefix
-        if value.hasSuffix("/") { value.removeLast() }
-        guard let slash = value.range(of: "/", options: .backwards) else { return "" }
-        return String(value[..<slash.upperBound])
     }
 
     private static func folderPrefixes(for key: String, target: String) -> [String] {

@@ -454,7 +454,7 @@ final class AddAccountWindowController: NSWindowController {
                 testLabel.textColor = Theme.Colors.success
             } catch {
                 spinner.stopAnimation(nil)
-                testLabel.stringValue = BrowserModel.friendly(error)
+                testLabel.stringValue = S3ErrorPresenter.message(for: error)
                 testLabel.textColor = Theme.Colors.warning
             }
         }

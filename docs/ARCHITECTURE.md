@@ -301,7 +301,9 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | `UI/AddAccountSheet.swift` | Add/Edit account + Storage Accounts |
 | `ViewModels/BrowserModel.swift` | state and operations |
 | `Services/S3Service.swift` | clients, list, head, tags, ACL, versions, transfers |
+| `Services/S3ErrorPresenter.swift` | one user-facing mapping for S3 and credential errors |
 | `Services/TransferQueue.swift` | queueing, progress, speed, cancel |
+| `Models/S3Key.swift` | shared object-key parent/safe-filename helpers |
 | `Services/ProgressStream.swift` | upload byte accounting |
 | `Services/RateLimiter.swift` | paced folder-size request starts |
 | `FolderStats/FolderStats.swift` | key/record/snapshot/policy types |

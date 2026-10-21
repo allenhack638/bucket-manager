@@ -205,7 +205,7 @@ final class TransferQueue {
             } catch is CancellationError {
                 handleCancellation(id)
             } catch {
-                markFailed(id, message: Self.friendly(error))
+                markFailed(id, message: S3ErrorPresenter.message(for: error))
             }
         }
     }
@@ -277,18 +277,5 @@ final class TransferQueue {
 
     private func log(_ message: String) {
         onLog?(message)
-    }
-
-    private static func friendly(_ error: Error) -> String {
-        let text = String(describing: error)
-        if text.contains("AccessDenied") { return "Access denied by the bucket policy or IAM permissions." }
-        if text.contains("NoSuchBucket") { return "The bucket no longer exists." }
-        if text.contains("NoSuchKey") { return "The object no longer exists." }
-        if text.contains("InvalidAccessKeyId") { return "The access key ID is not valid." }
-        if text.contains("SignatureDoesNotMatch") { return "The secret access key is not valid." }
-        if text.contains("notConnectedToInternet") || text.contains("networkConnectionLost") {
-            return "Network connection lost."
-        }
-        return text.split(separator: "\n").first.map(String.init) ?? text
     }
 }

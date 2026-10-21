@@ -460,7 +460,7 @@ actor S3Service {
         input.contentType = Self.mimeType(for: url)
         let finalInput = input
         _ = try await throttle.run { try await client.putObject(input: finalInput) }
-        invalidateListing(account: account.id, bucket: bucket, prefix: parentPrefix(of: key))
+        invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
     }
 
     func delete(account: Account, secret: String, bucket: String, key: String) async throws {
@@ -468,7 +468,7 @@ actor S3Service {
         _ = try await throttle.run {
             try await client.deleteObject(input: DeleteObjectInput(bucket: bucket, key: key))
         }
-        invalidateListing(account: account.id, bucket: bucket, prefix: parentPrefix(of: key))
+        invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
     }
 
     func createFolder(account: Account, secret: String, bucket: String, prefix: String, name: String) async throws {
@@ -501,13 +501,8 @@ actor S3Service {
                 key: destinationKey
             ))
         }
-        invalidateListing(account: account.id, bucket: sourceBucket, prefix: parentPrefix(of: sourceKey))
-        invalidateListing(account: account.id, bucket: destinationBucket, prefix: parentPrefix(of: destinationKey))
-    }
-
-    private func parentPrefix(of key: String) -> String {
-        guard let range = key.range(of: "/", options: .backwards) else { return "" }
-        return String(key[..<range.upperBound])
+        invalidateListing(account: account.id, bucket: sourceBucket, prefix: S3Key.parentPrefix(of: sourceKey))
+        invalidateListing(account: account.id, bucket: destinationBucket, prefix: S3Key.parentPrefix(of: destinationKey))
     }
 
     nonisolated static func mimeType(for url: URL) -> String {

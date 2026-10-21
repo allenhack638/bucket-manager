@@ -453,7 +453,7 @@ final class BrowserModel {
             guard requestID == bucketRequestID,
                   selectedAccount?.id == account.id else { return }
             isLoadingBuckets = false
-            bucketError = Self.friendly(error)
+            bucketError = S3ErrorPresenter.message(for: error)
             AppLog.shared.error("List buckets failed: \(String(describing: error))")
             onTreeChange?()
             onChromeChange?()
@@ -569,7 +569,7 @@ final class BrowserModel {
             guard requestID == bucketRequestID,
                   selectedAccount?.id == account.id else { return }
             isLoadingBuckets = false
-            bucketError = Self.friendly(error)
+            bucketError = S3ErrorPresenter.message(for: error)
             AppLog.shared.error("Refresh buckets failed: \(String(describing: error))")
             onTreeChange?()
         }
@@ -817,23 +817,6 @@ final class BrowserModel {
         return selection
     }
 
-    /// Object keys can contain "." and ".." segments. Never use them as a
-    /// filesystem path component: they would escape the chosen directory.
-    static func parentPrefix(of key: String) -> String {
-        var value = key
-        if value.hasSuffix("/") { value.removeLast() }
-        guard let slash = value.range(of: "/", options: .backwards) else { return "" }
-        return String(value[..<slash.upperBound])
-    }
-
-    static func safeLocalName(_ name: String) -> String {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty || trimmed == "." || trimmed == ".." { return "_" }
-        return trimmed
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ":", with: "_")
-    }
-
     // MARK: - Operations
 
     func upload(urls: [URL]) {
@@ -881,7 +864,7 @@ final class BrowserModel {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("BucketManagerPreview", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destination = directory.appendingPathComponent(Self.safeLocalName(item.displayName))
+        let destination = directory.appendingPathComponent(S3Key.safeLocalName(item.displayName))
         Task {
             do {
                 try await service.download(
@@ -903,7 +886,7 @@ final class BrowserModel {
             return
         }
         for item in selected where item.kind == .object {
-            let destination = directory.appendingPathComponent(Self.safeLocalName(item.displayName))
+            let destination = directory.appendingPathComponent(S3Key.safeLocalName(item.displayName))
             transfers.enqueueDownload(
                 account: account, secret: secret, bucket: bucket, key: item.key,
                 size: item.size ?? 0, to: destination
@@ -927,7 +910,7 @@ final class BrowserModel {
                 try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
                 appendLog("Deleted \(item.key)")
             } catch {
-                failures.append("\(item.displayName): \(Self.friendly(error))")
+                failures.append("\(item.displayName): \(S3ErrorPresenter.message(for: error))")
             }
         }
         await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
@@ -1074,7 +1057,7 @@ final class BrowserModel {
             if clipboardIsCut { clipboard = [] }
             status = "Ready"
             for entry in pastedEntries {
-                let sourcePrefix = Self.parentPrefix(of: entry.key)
+                let sourcePrefix = S3Key.parentPrefix(of: entry.key)
                 folderStats.invalidate(accountID: account.id, bucket: entry.bucket, prefix: sourcePrefix)
             }
             folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
@@ -1359,7 +1342,7 @@ final class BrowserModel {
             onDetailsChange?()
         } catch {
             guard isCurrent(item, account: account, bucket: bucket) else { return }
-            previewText = "Preview failed: \(Self.friendly(error))"
+            previewText = "Preview failed: \(S3ErrorPresenter.message(for: error))"
             previewKey = item.key
             onDetailsChange?()
         }
@@ -1406,28 +1389,11 @@ final class BrowserModel {
     }
 
     private func setError(_ error: Error) {
-        errorMessage = Self.friendly(error)
+        errorMessage = S3ErrorPresenter.message(for: error)
         status = "Error"
         AppLog.shared.error("\(errorMessage ?? "")\nRAW: \(String(describing: error))")
         appendLog("Error: \(errorMessage ?? "")")
         onChromeChange?()
-    }
-
-    static func friendly(_ error: Error) -> String {
-        let text = String(describing: error)
-        if text.contains("AccessDenied") { return "Access denied. Check the IAM policy for this access key." }
-        if text.contains("InvalidAccessKeyId") { return "The access key ID is not valid." }
-        if text.contains("SignatureDoesNotMatch") { return "The secret access key is not valid." }
-        if text.contains("NoSuchBucket") { return "The bucket does not exist." }
-        if text.contains("NoSuchKey") { return "The object does not exist." }
-        if text.contains("RULESET_EXHAUSTED") { return "The custom endpoint could not be resolved. Check the endpoint URL." }
-        if text.contains("User canceled") || text.contains("-128") {
-            return "Keychain access was denied. Click Always Allow when macOS asks, or re-enter the secret via Accounts → Manage accounts."
-        }
-        if text.contains("notConnectedToInternet") || text.contains("networkConnectionLost") {
-            return "Network connection lost."
-        }
-        return text.split(separator: "\n").first.map(String.init) ?? text
     }
 }
 

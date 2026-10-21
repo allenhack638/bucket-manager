@@ -88,8 +88,19 @@ enum UITest {
         let marker = S3Item.listed(key: "new-folder/", size: 0, lastModified: nil, storageClass: "STANDARD", eTag: "x")
         check(marker.kind == .folder, "trailing-slash markers are folders")
         check(marker.displayName == "new-folder", "folder markers hide the trailing slash")
-        check(BrowserModel.safeLocalName("..") == "_", "download names cannot escape the directory")
-        check(BrowserModel.safeLocalName("a/b") == "a_b", "download names cannot contain separators")
+        check(S3Key.safeLocalName("..") == "_", "download names cannot escape the directory")
+        check(S3Key.safeLocalName("a/b") == "a_b", "download names cannot contain separators")
+        check(S3Key.parentPrefix(of: "folder/sub/item.txt") == "folder/sub/",
+              "object keys resolve to their parent prefix")
+        check(S3Key.parentPrefix(of: "folder/sub/") == "folder/",
+              "folder keys resolve to their parent prefix")
+        let accessDenied = NSError(
+            domain: "Test",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "AccessDenied"]
+        )
+        check(S3ErrorPresenter.message(for: accessDenied).contains("Access denied"),
+              "S3 errors map to a user-facing message")
 
         var secretReads = 0
         let cacheAccount = Account(displayName: "Cache", accessKeyID: "K", kind: .amazonS3)

@@ -223,7 +223,7 @@ final class FolderStatsCoordinator {
             snapshots[key] = FolderStatsSnapshot(
                 key: key,
                 record: cache.record(for: key),
-                state: .failed(BrowserModel.friendly(error))
+                state: .failed(S3ErrorPresenter.message(for: error))
             )
             changed.insert(key)
         }
