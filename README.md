@@ -33,6 +33,8 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
 - **Transfer queue** — real byte progress for uploads and downloads, speed,
   concurrency cap of 4, running/queued/stopped/failed filters, start/stop/cancel,
   retry, open in Finder.
+- **Drag and drop** — drop files or folders from Finder onto the object table to
+  upload them to the current prefix.
 - **Inspector tabs** — Tasks, Permissions (ACL), Headers, Tags, Properties, Preview,
   Versions, Event Log. Details are loaded on demand so selecting rows does not
   bombard the endpoint.

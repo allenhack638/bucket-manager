@@ -13,3 +13,4 @@
 - Limit destructive keyboard shortcuts to the object table.
 - Implement the object filter/search control with ⌘F and filtered empty states.
 - Restore the full keyboard shortcut set for the custom in-window menu bar.
+- Accept files and folders dropped from Finder as uploads.

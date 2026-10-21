@@ -297,6 +297,7 @@ final class BrowserViewController: NSViewController {
         table.allowsEmptySelection = true
         table.selectionHighlightStyle = .regular
         table.focusRingType = .none
+        table.registerForDraggedTypes([.fileURL])
         table.style = .plain
         table.dataSource = self
         table.delegate = self
@@ -879,6 +880,49 @@ final class BrowserViewController: NSViewController {
 }
 
 extension BrowserViewController: NSTableViewDataSource, NSTableViewDelegate {
+    func tableView(
+        _ tableView: NSTableView,
+        validateDrop info: NSDraggingInfo,
+        proposedRow row: Int,
+        proposedDropOperation dropOperation: NSTableView.DropOperation
+    ) -> NSDragOperation {
+        guard model.selectedBucket != nil,
+              !fileURLs(from: info.draggingPasteboard).isEmpty else { return [] }
+        tableView.setDropRow(-1, dropOperation: .on)
+        return .copy
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        acceptDrop info: NSDraggingInfo,
+        row: Int,
+        dropOperation: NSTableView.DropOperation
+    ) -> Bool {
+        guard model.selectedBucket != nil else { return false }
+        let urls = fileURLs(from: info.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+
+        var files: [URL] = []
+        var directories: [URL] = []
+        for url in urls {
+            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+            if isDirectory {
+                directories.append(url)
+            } else {
+                files.append(url)
+            }
+        }
+        if !files.isEmpty { model.upload(urls: files) }
+        for directory in directories { model.uploadDirectory(directory) }
+        return !files.isEmpty || !directories.isEmpty
+    }
+
+    private func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        let objects = pasteboard.readObjects(forClasses: [NSURL.self], options: options) ?? []
+        return objects.compactMap { ($0 as? NSURL) as URL? }
+    }
+
     func numberOfRows(in tableView: NSTableView) -> Int { model.visibleItems.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
