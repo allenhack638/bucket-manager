@@ -9,3 +9,5 @@
 - Add CI, Dependabot, and a unified local verification script.
 - Remove compiler and concurrency warnings from the app target.
 - Bound the S3 listing cache and reduce formatter allocations.
+- Parallelize bulk delete/copy while respecting the global request throttle.
+- Limit destructive keyboard shortcuts to the object table.

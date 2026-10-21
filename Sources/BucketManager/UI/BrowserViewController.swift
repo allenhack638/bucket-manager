@@ -460,6 +460,10 @@ final class BrowserViewController: NSViewController {
         view.window?.makeFirstResponder(table)
     }
 
+    var isTableFirstResponder: Bool {
+        view.window?.firstResponder === table
+    }
+
     // MARK: - Reload / chrome
 
     func reload() {

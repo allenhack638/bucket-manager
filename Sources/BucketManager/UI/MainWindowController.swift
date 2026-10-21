@@ -204,12 +204,15 @@ final class MainWindowController: NSWindowController {
                 Task { await self.model.refresh() }
                 return nil
             case 120:
+                guard self.browser.isTableFirstResponder else { return event }
                 self.browser.renameSelected()
                 return nil
             case 51, 117:
+                guard self.browser.isTableFirstResponder else { return event }
                 self.browser.deleteSelected()
                 return nil
             case 53:
+                guard self.browser.isTableFirstResponder else { return event }
                 self.browser.goUp()
                 return nil
             default:

@@ -904,24 +904,39 @@ final class BrowserModel {
         isBusy = true
         status = "Deleting \(selected.count) object\(selected.count == 1 ? "" : "s")…"
         onChromeChange?()
+        let results = await withTaskGroup(of: (String, String?).self) { group in
+            for item in selected where item.kind == .object {
+                group.addTask { [service, account, secret, bucket] in
+                    do {
+                        try await service.delete(
+                            account: account, secret: secret, bucket: bucket, key: item.key
+                        )
+                        return (item.key, nil)
+                    } catch {
+                        return (item.key, S3ErrorPresenter.message(for: error))
+                    }
+                }
+            }
+            var values: [(String, String?)] = []
+            for await value in group { values.append(value) }
+            return values
+        }
         var failures: [String] = []
-        for item in selected where item.kind == .object {
-            do {
-                try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
-                appendLog("Deleted \(item.key)")
-            } catch {
-                failures.append("\(item.displayName): \(S3ErrorPresenter.message(for: error))")
+        for (key, message) in results {
+            if let message {
+                let name = String(key.split(separator: "/").last ?? Substring(key))
+                failures.append("\(name): \(message)")
+            } else {
+                appendLog("Deleted \(key)")
             }
         }
         await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
+        await reload(useCache: false)
         if !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")
             status = "Some deletes failed"
-        } else {
-            status = "Ready"
         }
         isBusy = false
-        await reload(useCache: false)
         onChromeChange?()
     }
 
@@ -950,7 +965,7 @@ final class BrowserModel {
             appendLog("Created folder \(prefix + clean)/")
             await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
             await reload(useCache: false)
-            } catch {
+        } catch {
             setError(error)
         }
     }
@@ -979,7 +994,7 @@ final class BrowserModel {
             try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
             appendLog("Renamed \(item.key) to \(destination)")
             await reload(useCache: false)
-            } catch {
+        } catch {
             setError(error)
         }
     }
@@ -993,24 +1008,45 @@ final class BrowserModel {
         isBusy = true
         status = "\(move ? "Moving" : "Copying") \(selected.count) object\(selected.count == 1 ? "" : "s")…"
         onChromeChange?()
-        do {
+        let results = await withTaskGroup(of: (String, String?).self) { group in
             for item in selected where item.kind == .object {
-                let destination = toPrefix + item.displayName
-                try await service.copyObject(
-                    account: account, secret: secret,
-                    sourceBucket: bucket, sourceKey: item.key,
-                    destinationBucket: toBucket, destinationKey: destination
-                )
-                if move {
-                    try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
+                group.addTask { [service, account, secret, bucket] in
+                    let destination = toPrefix + item.displayName
+                    do {
+                        try await service.copyObject(
+                            account: account, secret: secret,
+                            sourceBucket: bucket, sourceKey: item.key,
+                            destinationBucket: toBucket, destinationKey: destination
+                        )
+                        if move {
+                            try await service.delete(
+                                account: account, secret: secret, bucket: bucket, key: item.key
+                            )
+                        }
+                        return (item.key, nil)
+                    } catch {
+                        return (item.key, S3ErrorPresenter.message(for: error))
+                    }
                 }
             }
-            appendLog("\(move ? "Moved" : "Copied") \(selected.count) object(s) to /\(toBucket)/\(toPrefix)")
-            status = "Ready"
-            folderStats.invalidate(accountID: account.id, bucket: toBucket, prefix: toPrefix)
-            await reload(useCache: false)
-        } catch {
-            setError(error)
+            var values: [(String, String?)] = []
+            for await value in group { values.append(value) }
+            return values
+        }
+
+        var failures: [String] = []
+        for (key, message) in results {
+            if let message {
+                failures.append("\(key): \(message)")
+            } else {
+                appendLog("\(move ? "Moved" : "Copied") \(key)")
+            }
+        }
+        folderStats.invalidate(accountID: account.id, bucket: toBucket, prefix: toPrefix)
+        await reload(useCache: false)
+        if !failures.isEmpty {
+            errorMessage = failures.joined(separator: "\n")
+            status = "Some \(move ? "moves" : "copies") failed"
         }
         isBusy = false
         onChromeChange?()
