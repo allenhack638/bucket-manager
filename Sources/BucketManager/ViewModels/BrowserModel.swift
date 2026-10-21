@@ -1370,11 +1370,15 @@ final class BrowserModel {
 
     // MARK: - Log
 
-    func appendLog(_ message: String) {
-        AppLog.shared.log(message)
+    private static let logTimeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
-        logs.append("\(formatter.string(from: Date()))  \(message)")
+        return formatter
+    }()
+
+    func appendLog(_ message: String) {
+        AppLog.shared.log(message)
+        logs.append("\(Self.logTimeFormatter.string(from: Date()))  \(message)")
         if logs.count > 1000 { logs.removeFirst(logs.count - 1000) }
         onLogChange?()
     }

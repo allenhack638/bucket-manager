@@ -70,6 +70,8 @@ final class BrowserViewController: NSViewController {
     private var renameButton: FlatButton?
     private var columnWidths: [String: CGFloat] = [:]
 
+    private static let columnWidthsKey = "BucketManagerColumnWidths"
+
     private let checkWidth: CGFloat = 24
     private let sizeWidth: CGFloat = 90
     private let typeWidth: CGFloat = 135
@@ -78,6 +80,10 @@ final class BrowserViewController: NSViewController {
 
     init(model: BrowserModel) {
         self.model = model
+        if !model.isDemoData,
+           let saved = UserDefaults.standard.dictionary(forKey: Self.columnWidthsKey) as? [String: Double] {
+            columnWidths = saved.mapValues { CGFloat($0) }
+        }
         let empty = EmptyStateView(
             iconName: "shippingbox",
             title: "Select a bucket",
@@ -242,6 +248,12 @@ final class BrowserViewController: NSViewController {
             guard let self else { return }
             self.columnWidths[id] = width
             self.table.tableColumn(withIdentifier: .init(id))?.width = width
+            if !self.model.isDemoData {
+                UserDefaults.standard.set(
+                    self.columnWidths.mapValues { Double($0) },
+                    forKey: Self.columnWidthsKey
+                )
+            }
         }
 
         addColumn(id: "check", title: "", width: checkWidth)

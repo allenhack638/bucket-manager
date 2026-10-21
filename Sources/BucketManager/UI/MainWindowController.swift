@@ -83,7 +83,11 @@ final class MainWindowController: NSWindowController {
         browser.reload()
         transfers.reload()
         window?.makeFirstResponder(nil)
-        browser.focusInitial()
+        if model.selectedBucket == nil {
+            sidebar.focusInitial()
+        } else {
+            browser.focusInitial()
+        }
     }
 
     // MARK: - Construction
@@ -656,5 +660,12 @@ extension MainWindowController: NSMenuItemValidation {
 extension MainWindowController: NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
     }
 }

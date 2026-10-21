@@ -51,6 +51,7 @@ actor S3Service {
     private var clients: [UUID: (client: S3Client, key: ClientKey)] = [:]
     private let throttle = Throttle(limit: 4)
     private let cacheTTL: TimeInterval = 60
+    private let maxListCacheEntries = 256
 
     private struct CacheKey: Hashable {
         let account: UUID
@@ -227,7 +228,11 @@ actor S3Service {
             isTruncated: output.isTruncated ?? false
         )
         AppLog.shared.log("listObjectsV2 ok bucket=\(bucket) prefix=\(prefix) count=\(items.count)")
-        if continuationToken == nil { listCache[key] = Cached(page: page, at: Date()) }
+        if continuationToken == nil {
+            let now = Date()
+            listCache[key] = Cached(page: page, at: now)
+            trimListCache(now: now)
+        }
         return page
     }
 
@@ -273,6 +278,15 @@ actor S3Service {
 
     func invalidateListing(account: UUID, bucket: String, prefix: String) {
         listCache[CacheKey(account: account, bucket: bucket, prefix: prefix)] = nil
+    }
+
+    private func trimListCache(now: Date) {
+        listCache = listCache.filter { now.timeIntervalSince($0.value.at) < cacheTTL }
+        guard listCache.count > maxListCacheEntries else { return }
+        let overflow = listCache.count - maxListCacheEntries
+        for entry in listCache.sorted(by: { $0.value.at < $1.value.at }).prefix(overflow) {
+            listCache[entry.key] = nil
+        }
     }
 
     func objectDetails(account: Account, secret: String, bucket: String, key: String) async throws -> ObjectDetails {

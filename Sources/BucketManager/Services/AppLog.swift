@@ -37,7 +37,7 @@ final class AppLog: @unchecked Sendable {
     }
 
     private func write(_ message: String, level: String) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
+        let stamp = Date.now.formatted(.iso8601)
         let line = "\(stamp) [\(level)] \(message)\n"
         let data = Data(line.utf8)
         FileHandle.standardError.write(data)

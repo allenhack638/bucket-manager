@@ -246,6 +246,10 @@ final class SidebarViewController: NSViewController {
         outline.needsDisplay = true
     }
 
+    func focusInitial() {
+        view.window?.makeFirstResponder(outline)
+    }
+
     private func updateAccountPopup() {
         let accounts = model.accounts.accounts
         accountPopup.removeAllItems()

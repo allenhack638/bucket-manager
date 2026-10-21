@@ -149,10 +149,17 @@ extension Int64 {
 }
 
 extension Date {
+    private static let s3ListFormatterLock = NSLock()
+    private static let s3ListFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "M/d/yyyy h:mm:ss a"
+        return formatter
+    }()
+
     var s3ListString: String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "M/d/yyyy h:mm:ss a"
-        return f.string(from: self)
+        Self.s3ListFormatterLock.lock()
+        defer { Self.s3ListFormatterLock.unlock() }
+        return Self.s3ListFormatter.string(from: self)
     }
 }

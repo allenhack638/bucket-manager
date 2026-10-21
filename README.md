@@ -64,6 +64,16 @@ swift run
 Brand assets live in `Assets/AppIcon.svg` and `Assets/AppIcon.icns`; regenerate the
 iconset with `swift scripts/make-icon.swift`.
 
+For a distributable build, pass the version and signing identity:
+
+```bash
+VERSION=0.2.0 BUILD_NUMBER=42 \
+CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
+./make-app.sh release
+```
+
+See [docs/RELEASE.md](docs/RELEASE.md) for signing, notarization, and verification.
+
 The first launch auto-opens **Add New Account** if no account exists. Enter:
 
 - Display name (anything)

@@ -7,6 +7,9 @@ CONFIG="${1:-release}"
 APP_NAME="BucketManager"
 APP_BUNDLE_NAME="Bucket Manager"
 BUNDLE_ID="com.bucketmanager.app"
+VERSION="${VERSION:-0.1.0}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
 echo "Building ($CONFIG)…"
 swift build -c "$CONFIG"
@@ -29,8 +32,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>$APP_BUNDLE_NAME</string>
   <key>CFBundleDisplayName</key><string>Bucket Manager</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
-  <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
+  <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>$APP_NAME</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
@@ -43,8 +46,13 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc sign so Keychain access and Gatekeeper behave on the local machine.
-codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+# Ad-hoc signing is enough for local development. Set CODESIGN_IDENTITY to a
+# Developer ID Application certificate for a distributable, notarizable build.
+if [ "$CODESIGN_IDENTITY" = "-" ]; then
+  codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+else
+  codesign --force --deep --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_DIR"
+fi
 
-echo "Created $APP_DIR"
+echo "Created $APP_DIR (version $VERSION, build $BUILD_NUMBER)"
 echo "Run with: open \"$APP_DIR\"   (or: $MACOS_DIR/$APP_NAME for console logs)"
