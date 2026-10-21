@@ -532,7 +532,7 @@ class HoverTrackingTableView: NSTableView {
 struct HeaderColumn {
     let id: String
     let title: String
-    let width: CGFloat?
+    var width: CGFloat?
     let alignment: NSTextAlignment
 }
 
@@ -558,11 +558,21 @@ final class ColumnHeaderView: NSView {
     override func accessibilityRole() -> NSAccessibility.Role? { .group }
     override func accessibilityLabel() -> String? { "Columns" }
 
-    var columns: [HeaderColumn] = [] { didSet { needsDisplay = true; NSAccessibility.post(element: self, notification: .layoutChanged) } }
+    var columns: [HeaderColumn] = [] {
+        didSet {
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+            NSAccessibility.post(element: self, notification: .layoutChanged)
+        }
+    }
     var sortColumn: String?
     var sortAscending = true
     var onSort: ((String) -> Void)?
+    var onResize: ((String, CGFloat) -> Void)?
     private var axChildren: [ColumnHeaderAXElement] = []
+    private var resizeColumnID: String?
+    private var resizeStartX: CGFloat = 0
+    private var resizeStartWidth: CGFloat = 0
 
     override func draw(_ dirtyRect: NSRect) {
         Theme.Colors.header.setFill()
@@ -608,17 +618,66 @@ final class ColumnHeaderView: NSView {
         return columns[(index + 1)...].compactMap(\.width).reduce(0, +)
     }
 
+    private func columnRects() -> [(column: HeaderColumn, rect: NSRect)] {
+        var x: CGFloat = 0
+        return columns.map { column in
+            let width = column.width ?? (bounds.width - x - fixedWidthAfter(column: column, startX: x))
+            defer { x += width }
+            return (column, NSRect(x: x, y: 0, width: width, height: bounds.height))
+        }
+    }
+
+    private func canResize(_ column: HeaderColumn) -> Bool {
+        column.id != "check" && column.width != nil
+    }
+
+    private func minimumWidth(for id: String) -> CGFloat {
+        switch id {
+        case "name": return 100
+        case "modified": return 100
+        default: return 60
+        }
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        for (column, rect) in columnRects() where canResize(column) {
+            addCursorRect(
+                NSRect(x: rect.maxX - 3, y: 0, width: 6, height: bounds.height),
+                cursor: .resizeLeftRight
+            )
+        }
+    }
+
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        var x: CGFloat = 0
-        for column in columns {
-            let width = column.width ?? (bounds.width - x - fixedWidthAfter(column: column, startX: x))
-            if point.x >= x && point.x < x + width {
-                onSort?(column.id)
+        let rects = columnRects()
+        for (column, rect) in rects where canResize(column) {
+            if abs(point.x - rect.maxX) <= 3 {
+                resizeColumnID = column.id
+                resizeStartX = point.x
+                resizeStartWidth = rect.width
                 return
             }
-            x += width
         }
+        for (column, rect) in rects where rect.contains(point) {
+            onSort?(column.id)
+            return
+        }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let resizeColumnID,
+              let index = columns.firstIndex(where: { $0.id == resizeColumnID }) else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let width = max(minimumWidth(for: resizeColumnID), resizeStartWidth + point.x - resizeStartX)
+        columns[index].width = width
+        needsDisplay = true
+        onResize?(resizeColumnID, width)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        resizeColumnID = nil
     }
 
     override func accessibilityChildren() -> [Any]? {
@@ -641,9 +700,6 @@ final class ColumnHeaderView: NSView {
         return axChildren
     }
 
-    override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .arrow)
-    }
 }
 
 // MARK: - Tab strip
@@ -819,7 +875,7 @@ final class EmptyStateView: NSView {
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.content.cgColor
         icon.image = Theme.Icon.image(iconName, style: Theme.Icon.emptyState)?
-            .tinted(Theme.Colors.tertiaryText)
+            .tinted(Theme.Colors.secondaryText)
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.setAccessibilityElement(false)
         icon.translatesAutoresizingMaskIntoConstraints = false
@@ -845,8 +901,8 @@ final class EmptyStateView: NSView {
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
             center,
             stack.topAnchor.constraint(greaterThanOrEqualTo: topAnchor, constant: 4),
-            icon.widthAnchor.constraint(equalToConstant: 44),
-            icon.heightAnchor.constraint(equalToConstant: 44),
+            icon.widthAnchor.constraint(equalToConstant: Theme.Icon.emptyState.size),
+            icon.heightAnchor.constraint(equalToConstant: Theme.Icon.emptyState.size),
             titleLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -16),
             titleLabel.heightAnchor.constraint(greaterThanOrEqualToConstant: 14),
             subtitleLabel.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor, constant: -16),
@@ -873,7 +929,7 @@ final class EmptyStateView: NSView {
         super.viewDidChangeEffectiveAppearance()
         layer?.backgroundColor = Theme.Colors.content.resolved(for: self).cgColor
         icon.image = Theme.Icon.image(iconName, style: Theme.Icon.emptyState)?
-            .tinted(Theme.Colors.tertiaryText)
+            .tinted(Theme.Colors.secondaryText)
         needsDisplay = true
     }
 
@@ -888,7 +944,7 @@ final class EmptyStateView: NSView {
 
     func update(iconName: String, title: String, subtitle: String) {
         icon.image = Theme.Icon.image(iconName, style: Theme.Icon.emptyState)?
-            .tinted(Theme.Colors.tertiaryText)
+            .tinted(Theme.Colors.secondaryText)
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
     }
@@ -930,7 +986,9 @@ extension FlatButton.Style {
         switch self {
         case .tab, .link:
             return Theme.Icon.tab
-        case .menu, .toolbar, .action, .primary:
+        case .action:
+            return Theme.Icon.action
+        case .menu, .toolbar, .primary:
             return Theme.Icon.toolbar
         }
     }

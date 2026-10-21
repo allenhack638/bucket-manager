@@ -18,8 +18,8 @@ final class FileCellView: NSTableCellView {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
-            icon.heightAnchor.constraint(equalToConstant: 16),
+            icon.widthAnchor.constraint(equalToConstant: Theme.Icon.row.size),
+            icon.heightAnchor.constraint(equalToConstant: Theme.Icon.row.size),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
             label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             label.centerYAnchor.constraint(equalTo: centerYAnchor)
@@ -34,6 +34,7 @@ final class FileCellView: NSTableCellView {
         icon.contentTintColor = selected ? Theme.Colors.selectionText : item.iconTint
         label.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.text
     }
+
 }
 
 final class BrowserTableView: HoverTrackingTableView {
@@ -62,6 +63,12 @@ final class BrowserViewController: NSViewController {
     private let loadMoreButton = FlatButton("Load more…", style: .link)
     private let spinner = NSProgressIndicator()
     private let emptyView: EmptyStateView
+    private var objectActionButtons: [FlatButton] = []
+    private var openButton: FlatButton?
+    private var refreshButton: FlatButton?
+    private var bookmarkButton: FlatButton?
+    private var renameButton: FlatButton?
+    private var columnWidths: [String: CGFloat] = [:]
 
     private let checkWidth: CGFloat = 24
     private let sizeWidth: CGFloat = 90
@@ -74,7 +81,7 @@ final class BrowserViewController: NSViewController {
         let empty = EmptyStateView(
             iconName: "shippingbox",
             title: "Select a bucket",
-            subtitle: "Choose a bucket in the account tree to browse its objects.",
+            subtitle: "Choose a bucket in the sidebar to browse its objects.",
             actionTitle: "Upload files",
             action: nil
         )
@@ -174,6 +181,8 @@ final class BrowserViewController: NSViewController {
 
         let star = FlatButton("", icon: "star", style: .action) { [weak self] in self?.onBookmark?() }
         let edit = FlatButton("", icon: "pencil", style: .action) { [weak self] in self?.renameSelected() }
+        bookmarkButton = star
+        renameButton = edit
         let filter = FlatButton("", icon: "line.3.horizontal.decrease", style: .action) { [weak self] in
             self?.model.appendLog("Filters are not implemented in this build")
         }
@@ -229,6 +238,11 @@ final class BrowserViewController: NSViewController {
             self.model.sort(by: column)
             self.reload()
         }
+        header.onResize = { [weak self] id, width in
+            guard let self else { return }
+            self.columnWidths[id] = width
+            self.table.tableColumn(withIdentifier: .init(id))?.width = width
+        }
 
         addColumn(id: "check", title: "", width: checkWidth)
         addColumn(id: "name", title: "Name", width: 220)
@@ -239,6 +253,7 @@ final class BrowserViewController: NSViewController {
 
         table.setAccessibilityLabel("Files")
         table.headerView = nil
+        table.columnAutoresizingStyle = .noColumnAutoresizing
         table.rowHeight = Theme.Metrics.fileRowHeight
         table.intercellSpacing = .zero
         table.backgroundColor = Theme.Colors.content
@@ -309,6 +324,9 @@ final class BrowserViewController: NSViewController {
         folder.iconTint = NSColor(hex: 0xD18B00)
         let refresh = FlatButton("Refresh", icon: "arrow.clockwise", style: .action) { [weak self] in self?.refresh() }
         refresh.iconTint = NSColor(hex: 0x0F7B0F)
+        objectActionButtons = [upload, download, delete, folder]
+        openButton = open
+        refreshButton = refresh
 
         let stack = NSStackView(views: [upload, download, open, delete, folder, refresh, spinner])
         stack.orientation = .horizontal
@@ -373,9 +391,9 @@ final class BrowserViewController: NSViewController {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
         column.title = title
         column.width = width
-        column.minWidth = id == "name" ? 100 : width
-        column.maxWidth = id == "name" ? 2000 : width
-        column.resizingMask = id == "name" ? .autoresizingMask : []
+        column.minWidth = id == "check" ? width : 60
+        column.maxWidth = id == "check" ? width : 2000
+        column.resizingMask = []
         table.addTableColumn(column)
     }
 
@@ -392,11 +410,21 @@ final class BrowserViewController: NSViewController {
         table.tableColumn(withIdentifier: .init("modified"))?.isHidden = !showModified
         table.tableColumn(withIdentifier: .init("storage"))?.isHidden = !showStorage
 
+        func appliedWidth(_ id: String, default value: CGFloat, minimum: CGFloat) -> CGFloat {
+            max(minimum, columnWidths[id] ?? value)
+        }
+
+        let sizeWidth = appliedWidth("size", default: self.sizeWidth, minimum: 60)
+        let typeWidth = appliedWidth("type", default: self.typeWidth, minimum: 60)
+        let modifiedWidth = appliedWidth("modified", default: self.modifiedWidth, minimum: 100)
+        let storageWidth = appliedWidth("storage", default: self.storageWidth, minimum: 60)
+
         var fixed = checkWidth + sizeWidth
         if showType { fixed += typeWidth }
         if showModified { fixed += modifiedWidth }
         if showStorage { fixed += storageWidth }
-        let nameWidth = max(120, available - fixed)
+        let defaultNameWidth = max(120, available - fixed)
+        let nameWidth = appliedWidth("name", default: defaultNameWidth, minimum: 100)
 
         table.tableColumn(withIdentifier: .init("check"))?.width = checkWidth
         table.tableColumn(withIdentifier: .init("name"))?.width = nameWidth
@@ -425,6 +453,7 @@ final class BrowserViewController: NSViewController {
     func reload() {
         table.reloadData()
         model.requestFolderStats(for: model.items)
+        table.menu = buildContextMenu()
         updateColumnWidths()
         header.sortColumn = model.currentSort.column.rawValue
         header.sortAscending = model.currentSort.ascending
@@ -451,6 +480,14 @@ final class BrowserViewController: NSViewController {
         loadMoreButton.isHidden = !model.isTruncated
         if model.isBusy { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
 
+        let hasBucket = model.selectedBucket != nil
+        objectActionButtons.forEach { $0.isEnabled = hasBucket }
+        openButton?.isEnabled = hasBucket && model.selectedItem != nil
+        refreshButton?.isEnabled = model.selectedAccount != nil
+        bookmarkButton?.isEnabled = hasBucket
+        renameButton?.isEnabled = hasBucket && model.selectedItem != nil
+        table.setAccessibilityLabel("Files")
+
         updateEmptyState()
     }
 
@@ -460,7 +497,20 @@ final class BrowserViewController: NSViewController {
         emptyView.isHidden = !empty
         guard empty else { return }
 
-        if hasBucket, model.isBusy, model.items.isEmpty, model.errorMessage == nil {
+        if !hasBucket {
+            emptyView.action = nil
+            emptyView.update(
+                iconName: "shippingbox",
+                title: model.hasAccounts ? "Select a bucket" : "No storage accounts",
+                subtitle: model.hasAccounts
+                    ? "Choose a bucket in the sidebar to browse its objects."
+                    : "Add an account to browse S3 or compatible storage."
+            )
+            emptyView.setActionVisible(false)
+            return
+        }
+
+        if model.isBusy, model.items.isEmpty, model.errorMessage == nil {
             emptyView.action = nil
             emptyView.update(
                 iconName: "hourglass",
@@ -471,7 +521,7 @@ final class BrowserViewController: NSViewController {
             return
         }
 
-        if let error = model.errorMessage, hasBucket, model.items.isEmpty {
+        if let error = model.errorMessage, model.items.isEmpty {
             let message = error.split(separator: "\n").first.map(String.init) ?? error
             emptyView.update(
                 iconName: "exclamationmark.triangle",
@@ -483,25 +533,13 @@ final class BrowserViewController: NSViewController {
             return
         }
 
-        if !hasBucket {
-            emptyView.action = nil
-            emptyView.update(
-                iconName: "shippingbox",
-                title: model.hasAccounts ? "Select a bucket" : "No storage accounts",
-                subtitle: model.hasAccounts
-                    ? "Choose a bucket in the account tree to browse its objects."
-                    : "Add an account to browse S3 or compatible storage."
-            )
-            emptyView.setActionVisible(false)
-        } else {
-            emptyView.action = { [weak self] in self?.uploadFiles() }
-            emptyView.update(
-                iconName: "folder",
-                title: "This folder is empty",
-                subtitle: "Upload files or create a folder here."
-            )
-            emptyView.setActionVisible(true, title: "Upload files")
-        }
+        emptyView.action = { [weak self] in self?.uploadFiles() }
+        emptyView.update(
+            iconName: "folder",
+            title: "This folder is empty",
+            subtitle: "Upload files or create a folder here."
+        )
+        emptyView.setActionVisible(true, title: "Upload files")
     }
 
     private func updateTextColors() {

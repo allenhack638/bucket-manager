@@ -295,7 +295,7 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | File | Responsibility |
 | --- | --- |
 | `UI/MainWindowController.swift` | window, custom chrome, menus, sheets, shortcuts |
-| `UI/SidebarViewController.swift` | account/bucket/folder outline, lazy loading |
+| `UI/SidebarViewController.swift` | account picker + flat bucket list; bucket selection drives the right pane |
 | `UI/BrowserViewController.swift` | path bar, file table, action bar, status |
 | `UI/TransfersViewController.swift` | queue, tabs, inspector, event log |
 | `UI/AddAccountSheet.swift` | Add/Edit account + Storage Accounts |

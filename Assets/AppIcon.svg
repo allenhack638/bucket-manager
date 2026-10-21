@@ -14,19 +14,21 @@
       <rect width="1024" height="1024" rx="230" ry="230"/>
     </clipPath>
   </defs>
-  <g clip-path="url(#squircle)">
-    <rect width="1024" height="1024" fill="url(#background)"/>
-    <rect y="512" width="1024" height="512" fill="url(#sheen)"/>
+  <g transform="translate(100 100) scale(0.8046875)">
+    <g clip-path="url(#squircle)">
+      <rect width="1024" height="1024" fill="url(#background)"/>
+      <rect y="512" width="1024" height="512" fill="url(#sheen)"/>
 
-    <path d="M 312 384 C 312 159 712 159 712 384"
-          fill="none" stroke="#F7FAFF" stroke-width="53"
-          stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 312 384 C 312 159 712 159 712 384"
+            fill="none" stroke="#F7FAFF" stroke-width="53"
+            stroke-linecap="round" stroke-linejoin="round"/>
 
-    <path d="M 261 384 L 338 717 C 343 773 681 773 686 717 L 763 384 Z"
-          fill="#F7FAFF"/>
-    <ellipse cx="512" cy="435" rx="251" ry="54" fill="#F7FAFF"/>
-    <ellipse cx="512" cy="415" rx="205" ry="36" fill="#0A367F"/>
-    <ellipse cx="512" cy="431" rx="244" ry="49"
-             fill="none" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="4"/>
+      <path d="M 261 384 L 338 717 C 343 773 681 773 686 717 L 763 384 Z"
+            fill="#F7FAFF"/>
+      <ellipse cx="512" cy="435" rx="251" ry="54" fill="#F7FAFF"/>
+      <ellipse cx="512" cy="415" rx="205" ry="36" fill="#0A367F"/>
+      <ellipse cx="512" cy="431" rx="244" ry="49"
+               fill="none" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="4"/>
+    </g>
   </g>
 </svg>

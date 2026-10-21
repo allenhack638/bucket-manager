@@ -175,7 +175,6 @@ enum E2E {
             let pagedFolder = model.items.first { $0.key == "paged/" }
             let deniedFolder = model.items.first { $0.key == "deniedfolder/" }
             let markerFolder = model.items.first { $0.key == "marker/" }
-            let emptyFolder = model.items.first { $0.key == "emptyfolder/" }
             let slowFolder = model.items.first { $0.key == "slowfolder/" }
             check(photosFolder != nil && pagedFolder != nil && deniedFolder != nil && markerFolder != nil,
                   "alpha listing contains the metrics test folders")
@@ -339,7 +338,6 @@ enum E2E {
                           "restarted cache renders without a folder-stat list request (got \(restartedCounts["list"] ?? 0))")
                 }
                 // A stale record must stay visible while one refresh runs.
-                let markerKey = FolderStatsKey(accountID: account.id, bucket: "alpha", prefix: "marker/")
                 folderCache.upsert([FolderStatsRecord(
                     accountID: account.id, bucket: "alpha", prefix: "marker/",
                     size: 5, objectCount: 1, newestObjectDate: Date().addingTimeInterval(-3_600),

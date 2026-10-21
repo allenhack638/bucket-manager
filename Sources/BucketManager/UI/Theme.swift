@@ -76,12 +76,12 @@ enum Theme {
             let scale: NSImage.SymbolScale
         }
 
-        static let toolbar = Style(size: 14, weight: .regular, scale: .medium)
+        static let toolbar = Style(size: 16, weight: .regular, scale: .medium)
         static let action = Style(size: 14, weight: .regular, scale: .medium)
         static let tab = Style(size: 12, weight: .regular, scale: .medium)
         static let link = Style(size: 12, weight: .regular, scale: .medium)
         static let sortIndicator = Style(size: 8, weight: .semibold, scale: .small)
-        static let emptyState = Style(size: 34, weight: .light, scale: .medium)
+        static let emptyState = Style(size: 32, weight: .light, scale: .medium)
         static let row = Style(size: 16, weight: .regular, scale: .medium)
         static let header = Style(size: 28, weight: .regular, scale: .medium)
         static let status = Style(size: 12, weight: .regular, scale: .medium)

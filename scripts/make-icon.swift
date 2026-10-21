@@ -57,6 +57,12 @@ func render(pixels: Int) throws -> Data {
     NSColor.clear.setFill()
     NSRect(x: 0, y: 0, width: u, height: u).fill()
 
+    let contentInsetRatio: CGFloat = 100.0 / 1024.0
+    let contentInset = u * contentInsetRatio
+    let contentScale = 1 - contentInsetRatio * 2
+    context.cgContext.translateBy(x: contentInset, y: contentInset)
+    context.cgContext.scaleBy(x: contentScale, y: contentScale)
+
     let bounds = NSRect(x: 0, y: 0, width: u, height: u)
     let squircle = NSBezierPath(
         roundedRect: bounds,

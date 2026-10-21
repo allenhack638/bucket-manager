@@ -153,8 +153,8 @@ final class AddAccountWindowController: NSWindowController {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: formInset),
             icon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 36),
-            icon.heightAnchor.constraint(equalToConstant: 36),
+            icon.widthAnchor.constraint(equalToConstant: Theme.Icon.header.size),
+            icon.heightAnchor.constraint(equalToConstant: Theme.Icon.header.size),
             headerText.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
             headerText.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             headerText.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -formInset)
@@ -643,8 +643,8 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 24),
             icon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 36),
-            icon.heightAnchor.constraint(equalToConstant: 36),
+            icon.widthAnchor.constraint(equalToConstant: Theme.Icon.header.size),
+            icon.heightAnchor.constraint(equalToConstant: Theme.Icon.header.size),
             headerText.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
             headerText.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             headerText.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -24)

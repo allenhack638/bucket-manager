@@ -236,8 +236,6 @@ final class BrowserModel {
         selectedAccount = demo
         roots = [BrowserNode(kind: .account, title: demo.displayName, accountID: demo.id)]
         buckets = ["analytics-data", "app-logs", "archive", "backups-2026", "customer-uploads", "documents", "media-library", "my-backups", "my-photos", "data-lake", "photos", "production-data", "reports", "demo-storage", "static-content", "tests"].map { S3Bucket(name: $0, creationDate: Date()) }
-        roots[0].children = buckets.map { BrowserNode(kind: .bucket, title: $0.name, accountID: demo.id, bucket: $0.name) }
-        roots[0].didLoad = true
         selectedBucket = "my-photos"
         prefix = ""
 
@@ -409,82 +407,52 @@ final class BrowserModel {
         onFilesChange?()
     }
 
-    func node(forAccountID id: UUID) -> BrowserNode? {
-        roots.first { $0.accountID == id }
-    }
-
-    func loadChildren(of node: BrowserNode) async {
-        guard !node.didLoad, !node.isLoading else { return }
-        node.isLoading = true
-        onTreeChange?()
-
-        do {
-            switch node.kind {
-            case .account:
-                guard let accountID = node.accountID, let account = accounts.account(id: accountID) else { break }
-                let secret = try accounts.secret(for: account)
-                let list = try await service.listBuckets(account: account, secret: secret)
-                if accountID == selectedAccount?.id { buckets = list }
-                node.children = list.map {
-                    BrowserNode(kind: .bucket, title: $0.name, accountID: accountID, bucket: $0.name)
-                }
-            case .bucket:
-                guard let account = account(for: node) else { break }
-                let secret = try accounts.secret(for: account)
-                let page = try await service.list(
-                    account: account, secret: secret,
-                    bucket: node.bucket ?? "", prefix: ""
-                )
-                node.children = folderNodes(from: page.items, accountID: account.id, bucket: node.bucket ?? "")
-            case .folder:
-                guard let account = account(for: node) else { break }
-                let secret = try accounts.secret(for: account)
-                let page = try await service.list(
-                    account: account, secret: secret,
-                    bucket: node.bucket ?? "", prefix: node.prefix ?? ""
-                )
-                node.children = folderNodes(from: page.items, accountID: account.id, bucket: node.bucket ?? "")
-            }
-            node.didLoad = true
-        } catch {
-            errorMessage = Self.friendly(error)
-            status = "Error"
-            AppLog.shared.error("Load children failed for \(node.kind) \"\(node.title)\": \(String(describing: error))")
-        }
-
-        node.isLoading = false
-        onTreeChange?()
-        onChromeChange?()
-    }
-
-    private func folderNodes(from items: [S3Item], accountID: UUID, bucket: String) -> [BrowserNode] {
-        items.filter { $0.kind == .folder }.map {
-            BrowserNode(kind: .folder, title: $0.displayName, accountID: accountID, bucket: bucket, prefix: $0.key)
-        }
-    }
-
     func selectAccount(_ account: Account) {
+        let accountChanged = selectedAccount?.id != account.id
         listingRequestID += 1
+        let requestID = listingRequestID
         selectedAccount = account
         selectedBucket = nil
         prefix = ""
+        if accountChanged { buckets = [] }
         items = []
         nextToken = nil
         isTruncated = false
-        isBusy = false
+        isBusy = true
         errorMessage = nil
-        status = "Ready"
+        status = "Loading buckets"
         selection = []
         checked = []
         resetInspector()
+        onTreeChange?()
         onFilesChange?()
         onChromeChange?()
 
         Task {
-            if let node = node(forAccountID: account.id) {
-                node.didLoad = false
-                await loadChildren(of: node)
-            }
+            await loadBuckets(account: account, requestID: requestID, useCache: true)
+        }
+    }
+
+    private func loadBuckets(account: Account, requestID: Int, useCache: Bool) async {
+        do {
+            let secret = try accounts.secret(for: account)
+            let list = try await service.listBuckets(account: account, secret: secret, useCache: useCache)
+            guard requestID == listingRequestID,
+                  selectedAccount?.id == account.id else { return }
+            buckets = list
+            isBusy = false
+            errorMessage = nil
+            status = "Ready"
+            onTreeChange?()
+            onFilesChange?()
+            onChromeChange?()
+        } catch {
+            guard requestID == listingRequestID,
+                  selectedAccount?.id == account.id else { return }
+            isBusy = false
+            setError(error)
+            onTreeChange?()
+            onFilesChange?()
         }
     }
 
@@ -516,6 +484,7 @@ final class BrowserModel {
         status = "Loading \(bucket)/\(newPrefix)"
         isBusy = true
         resetInspector()
+        onTreeChange?()
         onFilesChange?()
         onChromeChange?()
         Task {
@@ -570,17 +539,28 @@ final class BrowserModel {
 
     func refreshBuckets() async {
         guard let account = selectedAccount else { return }
+        if selectedBucket == nil {
+            isBusy = true
+            status = "Loading buckets"
+            onChromeChange?()
+        }
         do {
             let secret = try accounts.secret(for: account)
-            buckets = try await service.listBuckets(account: account, secret: secret, useCache: false)
-            if let node = node(forAccountID: account.id) {
-                node.didLoad = false
-                node.children = []
-                await loadChildren(of: node)
+            let list = try await service.listBuckets(account: account, secret: secret, useCache: false)
+            guard selectedAccount?.id == account.id else { return }
+            buckets = list
+            if selectedBucket == nil {
+                isBusy = false
+                errorMessage = nil
+                status = "Ready"
             }
+            onTreeChange?()
             onChromeChange?()
         } catch {
+            guard selectedAccount?.id == account.id else { return }
+            if selectedBucket == nil { isBusy = false }
             setError(error)
+            onTreeChange?()
         }
     }
 
@@ -653,9 +633,12 @@ final class BrowserModel {
     }
 
     func refresh() async {
-        if let account = selectedAccount, let bucket = selectedBucket {
-            await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
+        guard let account = selectedAccount else { return }
+        guard let bucket = selectedBucket else {
+            await refreshBuckets()
+            return
         }
+        await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
         await reload(useCache: false)
     }
 
@@ -937,7 +920,6 @@ final class BrowserModel {
             }
         }
         await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
-        await refreshTreeBucket(account: account, bucket: bucket)
         if !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")
             status = "Some deletes failed"
@@ -974,8 +956,7 @@ final class BrowserModel {
             appendLog("Created folder \(prefix + clean)/")
             await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
             await reload(useCache: false)
-            await refreshTreeBucket(account: account, bucket: bucket)
-        } catch {
+            } catch {
             setError(error)
         }
     }
@@ -1004,8 +985,7 @@ final class BrowserModel {
             try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
             appendLog("Renamed \(item.key) to \(destination)")
             await reload(useCache: false)
-            await refreshTreeBucket(account: account, bucket: bucket)
-        } catch {
+            } catch {
             setError(error)
         }
     }
@@ -1035,7 +1015,6 @@ final class BrowserModel {
             status = "Ready"
             folderStats.invalidate(accountID: account.id, bucket: toBucket, prefix: toPrefix)
             await reload(useCache: false)
-            await refreshTreeBucket(account: account, bucket: toBucket)
         } catch {
             setError(error)
         }
@@ -1407,29 +1386,8 @@ final class BrowserModel {
 
     // MARK: - Helpers
 
-    private func account(for node: BrowserNode) -> Account? {
-        guard let id = node.accountID, let account = accounts.account(id: id) else { return nil }
-        if selectedAccount?.id == id { return selectedAccount }
-        return account
-    }
-
-    private func refreshTreeBucket(account: Account, bucket: String) async {
-        if let accountNode = node(forAccountID: account.id),
-           let bucketNode = accountNode.children.first(where: { $0.bucket == bucket }) {
-            bucketNode.didLoad = false
-            bucketNode.children = []
-        }
-    }
-
     private func refreshAfterTransfer() async {
         await reload(useCache: false)
-        if let account = selectedAccount, let bucket = selectedBucket {
-            await refreshTreeBucket(account: account, bucket: bucket)
-            if let accountNode = node(forAccountID: account.id) {
-                accountNode.didLoad = false
-            }
-        }
-        onTreeChange?()
     }
 
     private func setError(_ error: Error) {

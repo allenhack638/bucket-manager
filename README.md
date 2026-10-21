@@ -1,9 +1,9 @@
 # Bucket Manager
 
 A native macOS client for S3-compatible object storage, built with AppKit and the
-AWS SDK for Swift. Bucket Manager gives you an account and bucket tree, a fast file
-browser, a transfer queue, and property, permissions, tag, version, and event-log
-inspectors in one focused desktop app.
+AWS SDK for Swift. Bucket Manager gives you an account picker and bucket sidebar, an
+object browser, a transfer queue, and property, permissions, tag, version, and
+event-log inspectors in one focused desktop app.
 
 Bucket Manager is open source under the MIT License.
 
@@ -18,8 +18,9 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
   **macOS Keychain**. Nothing secret is written to JSON.
 - **Account dialogs** — Add/Edit Account and Storage Accounts, with validation,
   Test Connection, adaptive size, and a scrollable form on short screens.
-- **Account → bucket → folder tree** with lazy loading. Selecting a bucket lists its
-  root; folders load on demand.
+- **Account picker → bucket sidebar → folder browser.** The sidebar lists buckets at
+  bucket-level granularity for the active account; opening one browses its folders
+  and objects in the right pane. Columns are resizable by dragging header dividers.
 - **Object browser** — a clickable breadcrumb (`/ bucket/ folder/ current/`), Name,
   Size, Type, Last Modified, Storage Class; multi-select, per-row checkboxes,
   sortable headers, adaptive columns at small widths.
@@ -141,7 +142,7 @@ Sources/BucketManager/
   main.swift                 entry point + hidden diagnostic modes
   UI/
     MainWindowController     window, custom chrome, menus, sheets, shortcuts
-    SidebarViewController    account/bucket/folder outline
+    SidebarViewController    account picker + flat bucket list
     BrowserViewController    breadcrumb, file table, actions, status
     TransfersViewController  queue, tabs, inspector, event log
     AddAccountSheet          Add/Edit account + Storage Accounts dialogs

@@ -77,6 +77,9 @@ final class MainWindowController: NSWindowController {
             }
         }
         sidebar.reload()
+        if let account = model.selectedAccount, model.selectedBucket == nil {
+            model.selectAccount(account)
+        }
         browser.reload()
         transfers.reload()
         window?.makeFirstResponder(nil)
@@ -224,7 +227,6 @@ final class MainWindowController: NSWindowController {
                     try self.accounts.add(account, secret: secret)
                     self.model.reloadAccounts()
                     self.model.selectAccount(account)
-                    self.sidebar.selectAccount(withID: account.id)
                     self.model.appendLog("Added account \(account.displayName)")
                 } catch {
                     self.presentError("Could not save account", error.localizedDescription)
@@ -262,7 +264,6 @@ final class MainWindowController: NSWindowController {
         guard let idString = sender.representedObject as? String, let id = UUID(uuidString: idString),
               let account = accounts.account(id: id) else { return }
         model.selectAccount(account)
-        sidebar.selectAccount(withID: id)
     }
 
     @objc private func newBucketAction() { sidebar.newBucket() }
@@ -389,7 +390,6 @@ final class MainWindowController: NSWindowController {
         guard parts.count == 3, let id = UUID(uuidString: parts[0]),
               let account = accounts.account(id: id) else { return }
         model.selectAccount(account)
-        sidebar.selectAccount(withID: id)
         model.openLocation(accountID: id, bucket: parts[1], prefix: parts[2])
     }
 

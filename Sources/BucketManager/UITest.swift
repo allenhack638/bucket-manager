@@ -115,6 +115,10 @@ enum UITest {
             check(demoModel.inspectorLoaded("tags", for: demoItem), "tags cache is keyed to the selected object")
         }
 
+        check(demoModel.buckets.count == 16, "account buckets are exposed for the sidebar")
+        check(demoModel.buckets.contains { $0.name == "my-photos" },
+              "the sidebar bucket list contains account buckets")
+
         let locationOne = Account(displayName: "One", accessKeyID: "A", kind: .amazonS3)
         let locationTwo = Account(displayName: "Two", accessKeyID: "B", kind: .amazonS3)
         let locationStore = AccountStore(inMemoryAccounts: [locationOne, locationTwo])
@@ -149,8 +153,13 @@ enum UITest {
         check(chrome.window?.styleMask.contains(.fullSizeContentView) == true,
               "full-size content keeps the custom chrome")
         check(Theme.Metrics.trafficLightInset >= 78, "titlebar reserves space for traffic lights")
-        check(Theme.Icon.toolbar.size == 14 && Theme.Icon.toolbar.weight == .regular,
-              "toolbar icon token is formalized")
+        check(Theme.Icon.toolbar.size == 16 && Theme.Icon.toolbar.weight == .regular,
+              "toolbar icon token follows the standard 16 pt size")
+        check(Theme.Icon.action.size == 14, "action icon token follows the standard 14 pt size")
+        check(Theme.Icon.row.size == 16 && Theme.Icon.status.size == 12,
+              "table and status icon tokens follow their standard sizes")
+        check(Theme.Icon.emptyState.size == 32 && Theme.Icon.header.size == 28,
+              "empty-state and sheet-header icon tokens are not over-scaled")
         check(Theme.Icon.sortIndicator.weight == .semibold,
               "sort indicator weight is formalized")
 
@@ -191,20 +200,51 @@ enum UITest {
             check(customButton.accessibilityPerformPress() && customButtonPressed,
                   "custom action button performs its action through accessibility")
 
-            let header = ColumnHeaderView(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            let header = ColumnHeaderView(frame: NSRect(x: 0, y: 0, width: 400, height: 24))
             let headerWindow = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 300, height: 24),
+                contentRect: NSRect(x: 0, y: 0, width: 400, height: 24),
                 styleMask: [.titled],
                 backing: .buffered,
                 defer: false
             )
             headerWindow.contentView = header
             header.columns = [
-                HeaderColumn(id: "name", title: "Name", width: 100, alignment: .left),
+                HeaderColumn(id: "name", title: "Name", width: 200, alignment: .left),
                 HeaderColumn(id: "size", title: "Size", width: 100, alignment: .right)
             ]
             var sortedColumn: String?
             header.onSort = { sortedColumn = $0 }
+            var resizedColumn: String?
+            var resizedWidth: CGFloat = 0
+            header.onResize = { id, width in
+                resizedColumn = id
+                resizedWidth = width
+            }
+            func mouse(_ type: NSEvent.EventType, x: CGFloat, window: NSWindow) -> NSEvent? {
+                NSEvent.mouseEvent(
+                    with: type,
+                    location: NSPoint(x: x, y: 12),
+                    modifierFlags: [],
+                    timestamp: 0,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    eventNumber: 0,
+                    clickCount: 1,
+                    pressure: 1
+                )
+            }
+            if let down = mouse(.leftMouseDown, x: 200, window: headerWindow),
+               let drag = mouse(.leftMouseDragged, x: 240, window: headerWindow),
+               let up = mouse(.leftMouseUp, x: 240, window: headerWindow) {
+                header.mouseDown(with: down)
+                header.mouseDragged(with: drag)
+                header.mouseUp(with: up)
+            }
+            check(resizedColumn == "name" && abs(resizedWidth - 240) < 1,
+                  "column dividers resize their table column")
+            check(sortedColumn == nil, "dragging a divider does not trigger sorting")
+            check(header.columns.first?.width == 240,
+                  "the header and table column widths stay synchronized")
             let headerChildren = header.accessibilityChildren() ?? []
             check(headerChildren.count == 2,
                   "each table column exposes a sort accessibility element")
