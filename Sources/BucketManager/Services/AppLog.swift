@@ -8,6 +8,8 @@ final class AppLog: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "com.bucketmanager.applog")
     private let fileURL: URL
+    private var lastSizeCheck = Date.distantPast
+    private let maxLogBytes: UInt64 = 5 * 1024 * 1024
 
     private init() {
         let logs = FileManager.default
@@ -41,17 +43,37 @@ final class AppLog: @unchecked Sendable {
         let line = "\(stamp) [\(level)] \(message)\n"
         let data = Data(line.utf8)
         FileHandle.standardError.write(data)
-        let url = fileURL
-        queue.async {
-            if !FileManager.default.fileExists(atPath: url.path) {
-                FileManager.default.createFile(atPath: url.path, contents: nil)
-            }
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            if let handle = try? FileHandle(forWritingTo: url) {
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: data)
-            }
+        queue.async { [weak self] in
+            self?.append(data)
         }
+    }
+
+    private func append(_ data: Data) {
+        let now = Date()
+        if now.timeIntervalSince(lastSizeCheck) > 60 {
+            lastSizeCheck = now
+            rotateIfNeeded()
+        }
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            FileManager.default.createFile(atPath: fileURL.path, contents: nil)
+        }
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: fileURL.path
+        )
+        if let handle = try? FileHandle(forWritingTo: fileURL) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        }
+    }
+
+    private func rotateIfNeeded() {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+        let size = (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+        guard size >= maxLogBytes else { return }
+        let backup = fileURL.appendingPathExtension("1")
+        try? FileManager.default.removeItem(at: backup)
+        try? FileManager.default.moveItem(at: fileURL, to: backup)
     }
 }

@@ -104,18 +104,32 @@ final class AccountStore {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: fileURL),
-              let decoded = try? JSONDecoder().decode([Account].self, from: data) else { return }
-        accounts = decoded
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: fileURL)
+            accounts = try JSONDecoder().decode([Account].self, from: data)
+        } catch {
+            AppLog.shared.error("Could not read accounts.json: \(error.localizedDescription)")
+            let backup = fileURL.appendingPathExtension("corrupt")
+            try? FileManager.default.removeItem(at: backup)
+            try? FileManager.default.copyItem(at: fileURL, to: backup)
+        }
     }
 
     private func save() {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(accounts) else { return }
-        try? data.write(to: fileURL, options: .atomic)
-        if fileURL.path != "/dev/null" {
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        do {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(accounts)
+            try data.write(to: fileURL, options: .atomic)
+            if fileURL.path != "/dev/null" {
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o600],
+                    ofItemAtPath: fileURL.path
+                )
+            }
+        } catch {
+            AppLog.shared.error("Could not save accounts.json: \(error.localizedDescription)")
         }
     }
 }
