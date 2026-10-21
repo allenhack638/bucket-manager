@@ -50,13 +50,13 @@ final class BrowserViewController: NSViewController {
     var onShowInspector: ((String) -> Void)?
     var onBookmark: (() -> Void)?
 
-    private let pathBar = NSView()
+    private let pathBar = ThemedView()
     private let breadcrumb = BreadcrumbView()
     private let header = ColumnHeaderView()
     private let table = BrowserTableView()
     private let scroll = NSScrollView()
-    private let actionBar = NSView()
-    private let statusBar = NSView()
+    private let actionBar = ThemedView()
+    private let statusBar = ThemedView()
     private let statusLabel = Labels.label("Ready", font: Theme.Font.small, color: Theme.Colors.secondaryText)
     private let countLabel = Labels.label("", font: Theme.Font.small, color: Theme.Colors.secondaryText)
     private let loadMoreButton = FlatButton("Load more…", style: .link)
@@ -86,9 +86,8 @@ final class BrowserViewController: NSViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.Colors.content.cgColor
+        let root = ThemedView()
+        root.themeColor = Theme.Colors.content
 
         buildPathBar()
         buildTable()
@@ -163,8 +162,7 @@ final class BrowserViewController: NSViewController {
 
     private func buildPathBar() {
         pathBar.identifier = NSUserInterfaceItemIdentifier("pathBar")
-        pathBar.wantsLayer = true
-        pathBar.layer?.backgroundColor = Theme.Colors.content.cgColor
+        pathBar.themeColor = Theme.Colors.content
 
         breadcrumb.onNavigate = { [weak self] prefix in
             Task { await self?.model.navigate(toPrefix: prefix) }
@@ -293,8 +291,7 @@ final class BrowserViewController: NSViewController {
 
     private func buildActionBar() {
         actionBar.identifier = NSUserInterfaceItemIdentifier("actionBar")
-        actionBar.wantsLayer = true
-        actionBar.layer?.backgroundColor = Theme.Colors.chrome.cgColor
+        actionBar.themeColor = Theme.Colors.chrome
 
         let topLine = SeparatorView(axis: .horizontal)
         topLine.translatesAutoresizingMaskIntoConstraints = false
@@ -339,8 +336,7 @@ final class BrowserViewController: NSViewController {
 
     private func buildStatusBar() {
         statusBar.identifier = NSUserInterfaceItemIdentifier("statusBar")
-        statusBar.wantsLayer = true
-        statusBar.layer?.backgroundColor = Theme.Colors.chrome.cgColor
+        statusBar.themeColor = Theme.Colors.chrome
 
         let topLine = SeparatorView(axis: .horizontal)
         topLine.translatesAutoresizingMaskIntoConstraints = false

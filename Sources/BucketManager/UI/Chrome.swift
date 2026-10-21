@@ -9,7 +9,8 @@ final class TitleBarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.titleBar.cgColor
+        layer?.backgroundColor = Theme.Colors.titleBar.resolved(for: self).cgColor
+        needsDisplay = true
 
         iconView.image = NSApp.applicationIconImage
         iconView.imageScaling = .scaleProportionallyUpOrDown
@@ -32,6 +33,12 @@ final class TitleBarView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = Theme.Colors.titleBar.resolved(for: self).cgColor
+        needsDisplay = true
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         Theme.Colors.titleBar.setFill()
@@ -57,7 +64,8 @@ final class AppMenuBarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.menuBar.cgColor
+        layer?.backgroundColor = Theme.Colors.menuBar.resolved(for: self).cgColor
+        needsDisplay = true
         setAccessibilityElement(true)
         setAccessibilityRole(.menuBar)
         setAccessibilityLabel("Application menu")
@@ -94,6 +102,12 @@ final class AppMenuBarView: NSView {
             stack.addArrangedSubview(button)
             return button
         }
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = Theme.Colors.menuBar.resolved(for: self).cgColor
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {

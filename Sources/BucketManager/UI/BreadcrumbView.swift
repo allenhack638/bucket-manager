@@ -177,13 +177,15 @@ final class BreadcrumbView: NSView {
 private final class BreadcrumbSegmentButton: NSButton {
     var onPress: (() -> Void)?
     private let isCurrent: Bool
+    private let displayTitle: String
     private var hovered = false
     private var trackingAreaRef: NSTrackingArea?
 
     init(title: String, isCurrent: Bool, accessibilityLabel: String) {
         self.isCurrent = isCurrent
+        self.displayTitle = title
         super.init(frame: .zero)
-        self.title = title
+        self.title = ""
         isBordered = false
         bezelStyle = .regularSquare
         alignment = .left
@@ -200,7 +202,7 @@ private final class BreadcrumbSegmentButton: NSButton {
 
     override func draw(_ dirtyRect: NSRect) {
         if isCurrent {
-            NSColor.white.setFill()
+            Theme.Colors.header.setFill()
             NSBezierPath(roundedRect: bounds, xRadius: 2, yRadius: 2).fill()
             Theme.Colors.borderStrong.setStroke()
             let border = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 2, yRadius: 2)
@@ -219,7 +221,7 @@ private final class BreadcrumbSegmentButton: NSButton {
             .foregroundColor: Theme.Colors.text,
             .paragraphStyle: paragraph
         ]
-        let textHeight = ceil((title as NSString).size(withAttributes: [.font: font]).height)
+        let textHeight = ceil((displayTitle as NSString).size(withAttributes: [.font: font]).height)
         let inset: CGFloat = isCurrent ? 6 : 5
         let rect = NSRect(
             x: inset,
@@ -227,7 +229,7 @@ private final class BreadcrumbSegmentButton: NSButton {
             width: max(0, bounds.width - inset * 2),
             height: textHeight
         )
-        (title as NSString).draw(in: rect, withAttributes: attributes)
+        (displayTitle as NSString).draw(in: rect, withAttributes: attributes)
     }
 
     override func updateTrackingAreas() {

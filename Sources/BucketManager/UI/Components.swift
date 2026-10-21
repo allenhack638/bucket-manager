@@ -706,6 +706,12 @@ final class TabStripView: NSView {
         rebuild()
     }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = Theme.Colors.chrome.resolved(for: self).cgColor
+        needsDisplay = true
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         Theme.Colors.chrome.setFill()
         bounds.fill()
@@ -757,6 +763,13 @@ final class InfoTextView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = Theme.Colors.content.resolved(for: self).cgColor
+        textView.textColor = Theme.Colors.text
+        needsDisplay = true
+    }
+
     var string: String {
         get { textView.string }
         set { textView.string = newValue }
@@ -777,6 +790,7 @@ final class InfoTextView: NSView {
 
 final class EmptyStateView: NSView {
     private let icon = NSImageView()
+    private let iconName: String
     private let titleLabel: NSTextField = {
         let field = NSTextField(wrappingLabelWithString: "")
         field.font = Theme.Font.section
@@ -798,6 +812,7 @@ final class EmptyStateView: NSView {
     private var actionStack: NSStackView?
 
     init(iconName: String, title: String, subtitle: String, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        self.iconName = iconName
         self.action = action
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -854,6 +869,14 @@ final class EmptyStateView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        layer?.backgroundColor = Theme.Colors.content.resolved(for: self).cgColor
+        icon.image = Theme.Icon.image(iconName, style: Theme.Icon.emptyState)?
+            .tinted(Theme.Colors.tertiaryText)
+        needsDisplay = true
+    }
+
     override func layout() {
         super.layout()
         let width = max(80, bounds.width - 16)
@@ -884,8 +907,9 @@ final class ToastView: NSView {
     init(message: String) {
         super.init(frame: .zero)
         wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.toastBackground.cgColor
-        layer?.borderColor = Theme.Colors.borderStrong.cgColor
+        layer?.backgroundColor = Theme.Colors.toastBackground.resolved(for: self).cgColor
+        layer?.borderColor = Theme.Colors.borderStrong.resolved(for: self).cgColor
+        needsDisplay = true
         layer?.borderWidth = 1
         layer?.cornerRadius = 3
         label.stringValue = message

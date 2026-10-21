@@ -5,7 +5,9 @@ enum SnapshotRunner {
     static func runMain(path: String, size: NSSize, tab: String?, empty: String?, pathPrefix: String?, errorMessage: String?) {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
-        app.appearance = NSAppearance(named: .aqua)
+        app.appearance = ProcessInfo.processInfo.environment["S3C_APPEARANCE"] == "dark"
+            ? NSAppearance(named: .darkAqua)
+            : NSAppearance(named: .aqua)
 
         let demoAccount = Account(
             displayName: "Amazon S3 Storage",
@@ -45,7 +47,9 @@ enum SnapshotRunner {
     static func runSheet(path: String, size: NSSize, kind: String) {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
-        app.appearance = NSAppearance(named: .aqua)
+        app.appearance = ProcessInfo.processInfo.environment["S3C_APPEARANCE"] == "dark"
+            ? NSAppearance(named: .darkAqua)
+            : NSAppearance(named: .aqua)
 
         let accounts = AccountStore(inMemoryAccounts: [
             Account(displayName: "Amazon S3 Storage", accessKeyID: "EXAMPLE_ACCESS_KEY", kind: .amazonS3, region: "us-east-1"),

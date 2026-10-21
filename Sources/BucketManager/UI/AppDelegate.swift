@@ -5,9 +5,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let accounts = AccountStore()
     lazy var model = BrowserModel(accounts: accounts)
     private var mainWindow: MainWindowController!
+    private var appearanceMode: AppAppearance = .system
+    private var appearanceMenuItems: [AppAppearance: NSMenuItem] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.appearance = NSAppearance(named: .aqua)
+        appearanceMode = .saved
+        NSApp.appearance = appearanceMode.appearance
         AppLog.shared.log("Launched Bucket Manager; \(accounts.accounts.count) saved account(s); log=\(AppLog.path)")
         if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
@@ -72,6 +75,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         eventLog.keyEquivalentModifierMask = [.command, .shift]
         eventLog.target = mainWindow
         viewMenu.addItem(eventLog)
+
+        viewMenu.addItem(.separator())
+        let appearanceItem = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
+        let appearanceMenu = NSMenu(title: "Appearance")
+        for mode in AppAppearance.allCases {
+            let item = NSMenuItem(title: mode.title, action: #selector(changeAppearance(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = mode == appearanceMode ? .on : .off
+            appearanceMenu.addItem(item)
+            appearanceMenuItems[mode] = item
+        }
+        appearanceItem.submenu = appearanceMenu
+        viewMenu.addItem(appearanceItem)
         viewItem.submenu = viewMenu
 
         let windowItem = NSMenuItem()
@@ -94,5 +111,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.helpMenu = helpMenu
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func changeAppearance(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let mode = AppAppearance(rawValue: raw) else { return }
+        appearanceMode = mode
+        AppAppearance.apply(mode)
+        for (itemMode, item) in appearanceMenuItems {
+            item.state = itemMode == mode ? .on : .off
+        }
+        mainWindow.window?.contentView?.needsDisplay = true
     }
 }

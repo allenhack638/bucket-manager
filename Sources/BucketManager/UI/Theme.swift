@@ -29,37 +29,44 @@ enum Theme {
     }
 
     enum Colors {
-        static let titleBar = NSColor(hex: 0xF3F3F3)
-        static let window = NSColor(hex: 0xF3F3F3)
-        static let menuBar = NSColor(hex: 0xF0F0F0)
-        static let chrome = NSColor(hex: 0xF0F0F0)
-        static let sidebar = NSColor(hex: 0xFDFDFD)
-        static let content = NSColor.white
-        static let header = NSColor(hex: 0xFAFAFA)
-        static let divider = NSColor(hex: 0x8C8C8C)
-        static let border = NSColor(hex: 0xE5E5E5)
-        static let borderStrong = NSColor(hex: 0xC0C0C0)
+        private static func adaptive(_ light: UInt32, _ dark: UInt32) -> NSColor {
+            NSColor(name: nil) { appearance in
+                let match = appearance.bestMatch(from: [.darkAqua, .aqua])
+                return NSColor(hex: match == .darkAqua ? dark : light)
+            }
+        }
 
-        static let accent = NSColor(hex: 0x0078D4)
-        static let accentHover = NSColor(hex: 0x106EBE)
-        static let accentPressed = NSColor(hex: 0x005A9E)
-        static let selection = NSColor(hex: 0x0078D4)
-        static let hover = NSColor(hex: 0xF2F2F2)
-        static let pressed = NSColor(hex: 0xE5E5E5)
+        static let titleBar = adaptive(0xF3F3F3, 0x2B2B2D)
+        static let window = adaptive(0xF3F3F3, 0x1F1F21)
+        static let menuBar = adaptive(0xF0F0F0, 0x262628)
+        static let chrome = adaptive(0xF0F0F0, 0x262628)
+        static let sidebar = adaptive(0xFDFDFD, 0x1C1C1E)
+        static let content = adaptive(0xFFFFFF, 0x18181A)
+        static let header = adaptive(0xFAFAFA, 0x222224)
+        static let divider = adaptive(0x8C8C8C, 0x5A5A5E)
+        static let border = adaptive(0xE5E5E5, 0x3A3A3C)
+        static let borderStrong = adaptive(0xC0C0C0, 0x4A4A4E)
 
-        static let text = NSColor(hex: 0x000000)
-        static let secondaryText = NSColor(hex: 0x605E5C)
-        static let tertiaryText = NSColor(hex: 0x8A8886)
-        static let disabledText = NSColor(hex: 0xB0B0B0)
+        static let accent = adaptive(0x0078D4, 0x0A84FF)
+        static let accentHover = adaptive(0x106EBE, 0x409CFF)
+        static let accentPressed = adaptive(0x005A9E, 0x0060DF)
+        static let selection = adaptive(0x0078D4, 0x0A84FF)
+        static let hover = adaptive(0xF2F2F2, 0x2C2C2E)
+        static let pressed = adaptive(0xE5E5E5, 0x3A3A3C)
+
+        static let text = NSColor.labelColor
+        static let secondaryText = NSColor.secondaryLabelColor
+        static let tertiaryText = NSColor.tertiaryLabelColor
+        static let disabledText = NSColor.disabledControlTextColor
         static let selectionText = NSColor.white
 
-        static let progress = NSColor(hex: 0x0F7B0F)
-        static let progressTrack = NSColor(hex: 0xE6E6E6)
-        static let warning = NSColor(hex: 0xA4262C)
-        static let success = NSColor(hex: 0x0F7B0F)
-        static let link = NSColor(hex: 0x0067C0)
-        static let errorBackground = NSColor(hex: 0xFDE7E9)
-        static let toastBackground = NSColor(hex: 0xFFFFB6)
+        static let progress = adaptive(0x0F7B0F, 0x30D158)
+        static let progressTrack = adaptive(0xE6E6E6, 0x3A3A3C)
+        static let warning = adaptive(0xA4262C, 0xFF453A)
+        static let success = adaptive(0x0F7B0F, 0x30D158)
+        static let link = adaptive(0x0067C0, 0x64D2FF)
+        static let errorBackground = adaptive(0xFDE7E9, 0x3A1B1E)
+        static let toastBackground = adaptive(0xFFFFB6, 0x3B3B1F)
     }
 
     enum Icon {
@@ -109,6 +116,14 @@ enum Theme {
 }
 
 extension NSColor {
+    func resolved(for view: NSView) -> NSColor {
+        var result = self
+        view.effectiveAppearance.performAsCurrentDrawingAppearance {
+            result = self.usingColorSpace(.sRGB) ?? self
+        }
+        return result
+    }
+
     convenience init(hex: UInt32, alpha: CGFloat = 1) {
         self.init(
             srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,

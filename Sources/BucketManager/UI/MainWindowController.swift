@@ -35,7 +35,6 @@ final class MainWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.appearance = NSAppearance(named: .aqua)
         window.title = "Bucket Manager"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
@@ -93,9 +92,8 @@ final class MainWindowController: NSWindowController {
 
     private func buildContent() {
         guard let window else { return }
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.Colors.window.cgColor
+        let root = ThemedView()
+        root.themeColor = Theme.Colors.window
 
         titleBar = TitleBarView()
         titleBar.title = "Bucket Manager"

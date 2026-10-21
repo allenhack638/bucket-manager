@@ -52,7 +52,7 @@ final class SidebarViewController: NSViewController {
 
     private let outline = NSOutlineView()
     private let scroll = NSScrollView()
-    private let toolbar = NSView()
+    private let toolbar = ThemedView()
     private let emptyView: EmptyStateView
     private var externalButton: FlatButton?
     private var isReloading = false
@@ -73,12 +73,10 @@ final class SidebarViewController: NSViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.Colors.sidebar.cgColor
+        let root = ThemedView()
+        root.themeColor = Theme.Colors.sidebar
 
-        toolbar.wantsLayer = true
-        toolbar.layer?.backgroundColor = Theme.Colors.sidebar.cgColor
+        toolbar.themeColor = Theme.Colors.sidebar
         toolbar.translatesAutoresizingMaskIntoConstraints = false
 
         let addBucket = FlatButton("New bucket", icon: "plus", style: .action) { [weak self] in self?.newBucket() }

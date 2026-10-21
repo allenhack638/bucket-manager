@@ -83,12 +83,12 @@ final class TransfersViewController: NSViewController {
     ]
 
     private let tabStrip = TabStripView()
-    private let content = NSView()
+    private let content = ThemedView()
     private let tasksContainer = NSView()
     private let tasksHeader = ColumnHeaderView()
     private let tasksTable = HoverTrackingTableView()
     private let tasksScroll = NSScrollView()
-    private let footer = NSView()
+    private let footer = ThemedView()
     private let infoView = InfoTextView()
 
     private let taskHeading = Labels.label("Task", font: Theme.Font.small, color: Theme.Colors.secondaryText)
@@ -128,17 +128,15 @@ final class TransfersViewController: NSViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.Colors.chrome.cgColor
+        let root = ThemedView()
+        root.themeColor = Theme.Colors.chrome
 
         tabStrip.tabs = tabs.map { TabStripView.Tab(id: $0.id, title: $0.title) }
         tabStrip.selectedID = selectedTab
         tabStrip.onSelect = { [weak self] id in self?.selectTab(id) }
         tabStrip.translatesAutoresizingMaskIntoConstraints = false
 
-        content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.Colors.content.cgColor
+        content.themeColor = Theme.Colors.content
         content.translatesAutoresizingMaskIntoConstraints = false
 
         buildTasks()
@@ -259,8 +257,7 @@ final class TransfersViewController: NSViewController {
     }
 
     private func buildFooter() {
-        footer.wantsLayer = true
-        footer.layer?.backgroundColor = Theme.Colors.chrome.cgColor
+        footer.themeColor = Theme.Colors.chrome
 
         let topLine = SeparatorView(axis: .horizontal)
         topLine.translatesAutoresizingMaskIntoConstraints = false

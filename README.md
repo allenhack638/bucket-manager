@@ -37,9 +37,12 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
   bombard the endpoint.
 - **Bookmarks**, **Generate Web URL** (copies a URL to the clipboard), and an
   on-disk **event log**.
-- **Purpose-built theme** — a light, restrained palette, native macOS window
-  controls, a custom bucket icon, accessible controls, keyboard activation, and
-  visible focus states.
+- **Appearance** — native macOS **View → Appearance** with System, Light, and Dark
+  modes. The custom chrome, tables, inspector, transfer footer, and menus all follow
+  the selected appearance.
+- **Purpose-built theme** — a restrained palette, native macOS window controls, a
+  custom bucket icon, accessible controls, keyboard activation, and visible focus
+  states.
 - **Empty states** for no accounts, no bucket, empty folders, a failed bucket load
   (with **Retry**), and an empty queue.
 
@@ -193,6 +196,7 @@ S3C_ENDPOINT=... S3C_REGION=... S3C_ACCESS_KEY=... S3C_SECRET=... \
 
 # Offscreen UI snapshot, optional tab / empty state / window size
 .build/debug/BucketManager --snapshot out.png --size 900x480
+S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x480
 .build/debug/BucketManager --snapshot out.png --size 900x480 --tab properties
 .build/debug/BucketManager --snapshot out.png --size 900x480 --empty accounts
 .build/debug/BucketManager --snapshot log-empty.png --size 1120x650 --tab log --empty log
@@ -227,7 +231,6 @@ headers, never the secret).
 - Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.
 - Image previews show a placeholder; text/UTF-8 previews render.
-- The theme is fixed light; dark mode is not themed.
 - Versioning, tags, metadata, and ACLs are read-only.
 - Ad-hoc signing means Keychain may re-prompt after each rebuild.
 - The window uses native macOS traffic lights at top-left; offscreen snapshot

@@ -45,7 +45,6 @@ final class AddAccountWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.appearance = NSAppearance(named: .aqua)
         window.title = account == nil ? "Add New Account" : "Edit Account"
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -83,9 +82,8 @@ final class AddAccountWindowController: NSWindowController {
 
     private func build() {
         guard let window else { return }
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.Colors.content.cgColor
+        let root = ThemedView()
+        root.themeColor = Theme.Colors.content
 
         let header = buildHeader()
         let scroll = buildScroll()
@@ -536,7 +534,6 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
             backing: .buffered,
             defer: false
         )
-        window.appearance = NSAppearance(named: .aqua)
         window.title = "Storage Accounts"
         window.isReleasedWhenClosed = false
         super.init(window: window)
@@ -560,9 +557,8 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
 
     private func build() {
         guard let window else { return }
-        let root = NSView()
-        root.wantsLayer = true
-        root.layer?.backgroundColor = Theme.Colors.content.cgColor
+        let root = ThemedView()
+        root.themeColor = Theme.Colors.content
 
         let header = buildHeader()
         let footer = buildFooter()
