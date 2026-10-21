@@ -1,6 +1,6 @@
 import AppKit
 
-/// A clickable path trail, matching the reference: `/ bucket/ folder/ current/`
+/// A clickable path trail: `/ bucket/ folder/ current/`
 /// with the current segment drawn in a thin box. Leading segments collapse into
 /// an ellipsis menu when the pane is narrow.
 @MainActor

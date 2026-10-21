@@ -21,4 +21,4 @@ if [ -z "$PORT" ]; then
   exit 1
 fi
 
-.build/debug/S3Companion --e2e "$PORT"
+.build/debug/BucketManager --e2e "$PORT"

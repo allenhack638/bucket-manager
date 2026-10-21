@@ -54,7 +54,7 @@ final class BrowserModel {
 
     var calculateFolderSizes: Bool = true {
         didSet {
-            UserDefaults.standard.set(calculateFolderSizes, forKey: "S3CompanionCalculateFolderSizes")
+            UserDefaults.standard.set(calculateFolderSizes, forKey: "BucketManagerCalculateFolderSizes")
         }
     }
 
@@ -92,7 +92,15 @@ final class BrowserModel {
             cache: folderStatsCache,
             scanner: FolderStatsScanner(service: S3Service.shared)
         )
-        self.calculateFolderSizes = UserDefaults.standard.object(forKey: "S3CompanionCalculateFolderSizes") as? Bool ?? true
+        let defaults = UserDefaults.standard
+        if let current = defaults.object(forKey: "BucketManagerCalculateFolderSizes") as? Bool {
+            self.calculateFolderSizes = current
+        } else if let legacy = defaults.object(forKey: "\(LegacyImport.defaultsPrefix)CalculateFolderSizes") as? Bool {
+            self.calculateFolderSizes = legacy
+            defaults.set(legacy, forKey: "BucketManagerCalculateFolderSizes")
+        } else {
+            self.calculateFolderSizes = true
+        }
         transfers.onChange = { [weak self] in self?.onTransferChange?() }
         transfers.onLog = { [weak self] message in self?.appendLog(message) }
         transfers.onFinished = { [weak self] in
@@ -227,7 +235,7 @@ final class BrowserModel {
         )
         selectedAccount = demo
         roots = [BrowserNode(kind: .account, title: demo.displayName, accountID: demo.id)]
-        buckets = ["analytics-data", "app-logs", "archive", "backups-2026", "customer-uploads", "documents", "media-library", "my-backups", "my-photos", "netsdk", "photos", "production-data", "reports", "s3browser", "static-content", "tests"].map { S3Bucket(name: $0, creationDate: Date()) }
+        buckets = ["analytics-data", "app-logs", "archive", "backups-2026", "customer-uploads", "documents", "media-library", "my-backups", "my-photos", "data-lake", "photos", "production-data", "reports", "demo-storage", "static-content", "tests"].map { S3Bucket(name: $0, creationDate: Date()) }
         roots[0].children = buckets.map { BrowserNode(kind: .bucket, title: $0.name, accountID: demo.id, bucket: $0.name) }
         roots[0].didLoad = true
         selectedBucket = "my-photos"
@@ -877,7 +885,7 @@ final class BrowserModel {
         guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
         guard let secret = try? accounts.secret(for: account) else { return }
         let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("S3CompanionPreview", isDirectory: true)
+            .appendingPathComponent("BucketManagerPreview", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(Self.safeLocalName(item.displayName))
         Task {
@@ -946,13 +954,13 @@ final class BrowserModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let clean = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !clean.isEmpty else {
-            setError(NSError(domain: "S3Companion", code: 1, userInfo: [
+            setError(NSError(domain: "BucketManager", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "Enter a folder name."
             ]))
             return
         }
         guard !clean.contains("/") else {
-            setError(NSError(domain: "S3Companion", code: 2, userInfo: [
+            setError(NSError(domain: "BucketManager", code: 2, userInfo: [
                 NSLocalizedDescriptionKey: "Folder names cannot contain /."
             ]))
             return
@@ -981,7 +989,7 @@ final class BrowserModel {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != item.displayName else { return }
         guard !trimmed.contains("/") else {
-            setError(NSError(domain: "S3Companion", code: 3, userInfo: [
+            setError(NSError(domain: "BucketManager", code: 3, userInfo: [
                 NSLocalizedDescriptionKey: "Names cannot contain /."
             ]))
             return
@@ -1056,7 +1064,7 @@ final class BrowserModel {
         do {
             for entry in clipboard {
                 guard entry.accountID == account.id else {
-                    throw NSError(domain: "S3Companion", code: 1, userInfo: [
+                    throw NSError(domain: "BucketManager", code: 1, userInfo: [
                         NSLocalizedDescriptionKey: "Copying between different accounts is not supported in this build."
                     ])
                 }

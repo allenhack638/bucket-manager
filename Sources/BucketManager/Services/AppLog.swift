@@ -1,18 +1,18 @@
 import Foundation
 
 /// Small append-only diagnostic log. Writes to stderr and to
-/// ~/Library/Logs/S3Companion/app.log so failures are inspectable without a
+/// ~/Library/Logs/BucketManager/app.log so failures are inspectable without a
 /// debugger or screen recording permission.
 final class AppLog: @unchecked Sendable {
     static let shared = AppLog()
 
-    private let queue = DispatchQueue(label: "com.local.s3companion.applog")
+    private let queue = DispatchQueue(label: "com.bucketmanager.applog")
     private let fileURL: URL
 
     private init() {
         let logs = FileManager.default
             .urls(for: .libraryDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Logs/S3Companion", isDirectory: true)
+            .appendingPathComponent("Logs/BucketManager", isDirectory: true)
         try? FileManager.default.createDirectory(
             at: logs,
             withIntermediateDirectories: true,
@@ -25,7 +25,7 @@ final class AppLog: @unchecked Sendable {
     static var path: String {
         FileManager.default
             .urls(for: .libraryDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Logs/S3Companion/app.log").path
+            .appendingPathComponent("Logs/BucketManager/app.log").path
     }
 
     func log(_ message: String) {

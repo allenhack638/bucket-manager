@@ -11,7 +11,7 @@ final class FolderStatsCache: @unchecked Sendable {
     private let fileURL: URL?
     private let maxEntries: Int
     private let lock = NSLock()
-    private let saveQueue = DispatchQueue(label: "com.local.s3companion.folder-stats", qos: .utility)
+    private let saveQueue = DispatchQueue(label: "com.bucketmanager.folder-stats", qos: .utility)
     private var records: [FolderStatsKey: FolderStatsRecord] = [:]
     private var saveScheduled = false
 
@@ -26,7 +26,7 @@ final class FolderStatsCache: @unchecked Sendable {
             return nil
         }
         return support
-            .appendingPathComponent("S3Companion", isDirectory: true)
+            .appendingPathComponent("BucketManager", isDirectory: true)
             .appendingPathComponent("folder-stats.json")
     }
 

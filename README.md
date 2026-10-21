@@ -1,15 +1,13 @@
-# Bucket Manager (S3Companion)
+# Bucket Manager
 
-> Active repository: **bucket-manager**. The app/product name remains S3Companion.
+A native macOS client for S3-compatible object storage, built with AppKit and the
+AWS SDK for Swift. Bucket Manager gives you an account and bucket tree, a fast file
+browser, a transfer queue, and property, permissions, tag, version, and event-log
+inspectors in one focused desktop app.
 
-A native macOS S3 browser built with SwiftUI-free AppKit and the AWS SDK for Swift.
-It is a from-first-principles reimplementation of the classic S3 Browser / CS Browser
-desktop client: a tree of accounts and buckets, a file table, a transfer queue, and
-property/permissions/version inspectors.
+Bucket Manager is open source under the MIT License.
 
-It is an independent learning project, not affiliated with Netsdk Software.
-
-For the "how and why" behind the code, read **[docs/LEARNING.md](docs/LEARNING.md)**.
+For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
 ## What works
 
@@ -39,17 +37,18 @@ For the "how and why" behind the code, read **[docs/LEARNING.md](docs/LEARNING.m
   bombard the endpoint.
 - **Bookmarks**, **Generate Web URL** (copies a URL to the clipboard), and an
   on-disk **event log**.
-- **Light S3 Browser theme**, Windows-style custom title/menu chrome, extracted
-  application icon, accessible controls, keyboard activation, focus rings.
+- **Purpose-built theme** — a light, restrained palette, native macOS window
+  controls, a custom bucket icon, accessible controls, keyboard activation, and
+  visible focus states.
 - **Empty states** for no accounts, no bucket, empty folders, a failed bucket load
   (with **Retry**), and an empty queue.
 
 ## Quick start
 
 ```bash
-cd /Users/allen/Documents/Projects/Practise/rea
+cd /Users/allen/Documents/Projects/Practise/bucket-manager
 ./make-app.sh
-open build/S3Companion.app
+open "build/Bucket Manager.app"
 ```
 
 Or run from the toolchain:
@@ -57,6 +56,9 @@ Or run from the toolchain:
 ```bash
 swift run
 ```
+
+Brand assets live in `Assets/AppIcon.svg` and `Assets/AppIcon.icns`; regenerate the
+iconset with `swift scripts/make-icon.swift`.
 
 The first launch auto-opens **Add New Account** if no account exists. Enter:
 
@@ -67,7 +69,7 @@ The first launch auto-opens **Add New Account** if no account exists. Enter:
 - For S3-compatible storage: the endpoint, e.g.
   `https://in-maa-1.linodeobjects.com`, and path-style if the provider requires it.
 
-The secret is stored in the login Keychain under `com.local.s3companion.secret`
+The secret is stored in the login Keychain under `com.bucketmanager.secret`
 (service) / the account UUID (account), marked **accessible when unlocked, this
 device only**. It is read **once per account per launch** and cached in memory, so
 an operation does not re-prompt. `accounts.json` contains only the account ID,
@@ -93,7 +95,7 @@ The browser is deliberately conservative with an S3 endpoint:
   starts per second**, capped at **100,000 objects** with a `≥` partial result.
   Failed/denied scans show `—`.
 - Folder stats are **cache-first**: an on-disk cache at
-  `~/Library/Application Support/S3Companion/folder-stats.json` (0600) is loaded
+  `~/Library/Application Support/BucketManager/folder-stats.json` (0600) is loaded
   at launch, so values render immediately with no request. Entries fresher than
   5 minutes are reused silently; older entries stay visible while one background
   refresh runs. Writes invalidate the affected prefix and its ancestors, and the
@@ -104,7 +106,7 @@ The browser is deliberately conservative with an S3 endpoint:
 Logs are written to:
 
 ```
-~/Library/Logs/S3Companion/app.log
+~/Library/Logs/BucketManager/app.log
 ```
 
 ## Keyboard shortcuts
@@ -132,9 +134,8 @@ Logs are written to:
 ## Architecture at a glance
 
 ```
-Sources/S3Companion/
+Sources/BucketManager/
   main.swift                 entry point + hidden diagnostic modes
-  App/
   UI/
     MainWindowController     window, custom chrome, menus, sheets, shortcuts
     SidebarViewController    account/bucket/folder outline
@@ -143,7 +144,7 @@ Sources/S3Companion/
     AddAccountSheet          Add/Edit account + Storage Accounts dialogs
     Components.swift         FlatButton, checkbox, progress, InfoTextView, …
     Chrome.swift             custom title bar + in-app menu bar
-    Theme.swift              measured colors, fonts, metrics
+    Theme.swift              theme colors, fonts, metrics
   Models/                    Account, S3Item, TransferTask, BrowserNode
   Services/
     S3Service                clients, listing, metadata, transfers, cache
@@ -158,7 +159,7 @@ Sources/S3Companion/
   UITest.swift              headless dialog interaction tests
 ```
 
-## The S3 Browser compatibility fix
+## S3-compatible signing fix
 
 Linode (and some other S3-compatible services) returned:
 
@@ -178,26 +179,26 @@ for buckets the key is not allowed to list — i.e. the request is now correctly
 ```bash
 # Headless signing probe (reads credentials from env, never logs the secret)
 S3C_ENDPOINT=... S3C_REGION=... S3C_ACCESS_KEY=... S3C_SECRET=... \
-  .build/debug/S3Companion --probe
+  .build/debug/BucketManager --probe
 
 # Headless dialog/model tests (validation, breadcrumb, folder markers, paths)
-.build/debug/S3Companion --uitest
+.build/debug/BucketManager --uitest
 
 # Full end-to-end suite: real AWS SDK + model + transfers against a local fake S3
 ./scripts/run-e2e.sh
 
 # Real-account startup check (the first run of a rebuilt bundle may prompt
 # once for Keychain access; the log then shows one read plus cache hits)
-build/S3Companion.app/Contents/MacOS/S3Companion --verify-startup
+"build/Bucket Manager.app/Contents/MacOS/BucketManager" --verify-startup
 
 # Offscreen UI snapshot, optional tab / empty state / window size
-.build/debug/S3Companion --snapshot out.png --size 900x480
-.build/debug/S3Companion --snapshot out.png --size 900x480 --tab properties
-.build/debug/S3Companion --snapshot out.png --size 900x480 --empty accounts
-.build/debug/S3Companion --snapshot log-empty.png --size 1120x650 --tab log --empty log
-.build/debug/S3Companion --snapshot out.png --size 900x480 --error "Access denied."
-.build/debug/S3Companion --snapshot-sheet add --out add.png --size 640x500
-.build/debug/S3Companion --snapshot-sheet accounts --out accounts.png --size 760x460
+.build/debug/BucketManager --snapshot out.png --size 900x480
+.build/debug/BucketManager --snapshot out.png --size 900x480 --tab properties
+.build/debug/BucketManager --snapshot out.png --size 900x480 --empty accounts
+.build/debug/BucketManager --snapshot log-empty.png --size 1120x650 --tab log --empty log
+.build/debug/BucketManager --snapshot out.png --size 900x480 --error "Access denied."
+.build/debug/BucketManager --snapshot-sheet add --out add.png --size 640x500
+.build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
 The current suite is 49 dialog/model checks plus 74 end-to-end checks. The E2E
@@ -210,7 +211,6 @@ paginated/cancelled/partial scans, folder-size sorting, 2-scan and 8 req/s
 pacing, the global 4-request cap, cross-bucket folder paths, downloads and
 uploads.
 
-The snapshot matrix used during development lives in `.commandcode/refs/`.
 `S3C_A11Y=1` adds an accessibility audit (missing labels on interactive controls).
 `S3C_LOG=1` turns on AWS SDK request logging (debug builds only; signatures and
 headers, never the secret).
@@ -224,11 +224,15 @@ headers, never the secret).
   invalidated by this app's own writes.
 - Large uploads use a single streaming PUT; multipart upload/resume is not implemented.
 - Cross-account copy/move is intentionally rejected; copy within one account works.
-- Some S3 Browser menu commands (ACL editor, bucket policy, lifecycle, CORS, website,
-  replication, CloudFront, sync, sharing wizard) are present but disabled.
+- Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
+  website, replication, CloudFront, sync, sharing wizard) are present but disabled.
 - Image previews show a placeholder; text/UTF-8 previews render.
-- The theme is fixed light, matching the reference; dark mode is not themed.
+- The theme is fixed light; dark mode is not themed.
 - Versioning, tags, metadata, and ACLs are read-only.
 - Ad-hoc signing means Keychain may re-prompt after each rebuild.
 - The window uses native macOS traffic lights at top-left; offscreen snapshot
   images do not include the native titlebar controls.
+
+## License
+
+Bucket Manager is released under the MIT License. See [LICENSE](LICENSE).

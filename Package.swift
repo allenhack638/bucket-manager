@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "S3Companion",
+    name: "BucketManager",
     platforms: [.macOS(.v14)],
     dependencies: [
         .package(url: "https://github.com/awslabs/aws-sdk-swift.git", exact: "1.8.10"),
@@ -11,7 +11,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "S3Companion",
+            name: "BucketManager",
             dependencies: [
                 .product(name: "AWSS3", package: "aws-sdk-swift"),
                 .product(name: "AWSSDKIdentity", package: "aws-sdk-swift"),
@@ -21,7 +21,7 @@ let package = Package(
                 .product(name: "SmithyHTTPAPI", package: "smithy-swift"),
                 .product(name: "Logging", package: "swift-log")
             ],
-            path: "Sources/S3Companion"
+            path: "Sources/BucketManager"
         )
     ]
 )

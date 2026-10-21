@@ -36,14 +36,14 @@ final class MainWindowController: NSWindowController {
             defer: false
         )
         window.appearance = NSAppearance(named: .aqua)
-        window.title = "S3 Browser 13.6.3 - Pro"
+        window.title = "Bucket Manager"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.backgroundColor = Theme.Colors.titleBar
         window.minSize = NSSize(width: 900, height: 480)
         window.collectionBehavior = [.fullScreenPrimary]
         window.isReleasedWhenClosed = false
-        window.setFrameAutosaveName("S3CompanionMainWindow")
+        window.setFrameAutosaveName("BucketManagerMainWindow")
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             window.standardWindowButton(button)?.isHidden = false
         }
@@ -98,7 +98,7 @@ final class MainWindowController: NSWindowController {
         root.layer?.backgroundColor = Theme.Colors.window.cgColor
 
         titleBar = TitleBarView()
-        titleBar.title = "S3 Browser 13.6.3 - Pro"
+        titleBar.title = "Bucket Manager"
         titleBar.translatesAutoresizingMaskIntoConstraints = false
 
         menuBar = AppMenuBarView()
@@ -107,7 +107,7 @@ final class MainWindowController: NSWindowController {
         let rightSplit = NSSplitView()
         rightSplit.isVertical = false
         rightSplit.dividerStyle = .thin
-        rightSplit.autosaveName = "S3CompanionRightSplit"
+        rightSplit.autosaveName = "BucketManagerRightSplit"
         rightSplit.translatesAutoresizingMaskIntoConstraints = false
         rightSplit.addArrangedSubview(browser.view)
         rightSplit.addArrangedSubview(transfers.view)
@@ -116,7 +116,7 @@ final class MainWindowController: NSWindowController {
         let split = NSSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
-        split.autosaveName = "S3CompanionMainSplit"
+        split.autosaveName = "BucketManagerMainSplit"
         split.translatesAutoresizingMaskIntoConstraints = false
         split.addArrangedSubview(sidebar.view)
         split.addArrangedSubview(rightSplit)
@@ -303,7 +303,7 @@ final class MainWindowController: NSWindowController {
         let alert = NSAlert()
         alert.messageText = "Options"
         alert.informativeText = """
-        This learning build uses the light theme measured from S3 Browser 13.5/13.6.
+        A calm, low-noise workspace for S3-compatible object storage.
 
         • Page size: 1,000 keys per request
         • Listing cache: 60 seconds
@@ -332,15 +332,16 @@ final class MainWindowController: NSWindowController {
     }
 
     @objc func aboutAction() {
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
         let alert = NSAlert()
-        alert.messageText = "S3 Browser for Mac"
+        alert.icon = NSApp.applicationIconImage
+        alert.messageText = "Bucket Manager"
         alert.informativeText = """
-        A native AppKit reimplementation of the S3 Browser/CS Browser desktop client.
+        A native macOS client for S3-compatible object storage.
 
-        Built from first principles with Swift, AppKit and the AWS SDK for Swift.
-        Accounts: unlimited. Secrets: macOS Keychain.
+        Manage accounts, buckets, objects, transfers, and metadata in one focused workspace.
 
-        This is an independent learning clone and is not affiliated with Netsdk Software.
+        Version \(version) · MIT License
         """
         alert.addButton(withTitle: "OK")
         alert.runModal()
@@ -367,12 +368,6 @@ final class MainWindowController: NSWindowController {
         """
         alert.addButton(withTitle: "OK")
         alert.runModal()
-    }
-
-    @objc func openOnlineHelp() {
-        if let url = URL(string: "https://s3browser.com/help.aspx") {
-            NSWorkspace.shared.open(url)
-        }
     }
 
     @objc private func addBookmarkAction() {
@@ -453,14 +448,20 @@ final class MainWindowController: NSWindowController {
     // MARK: - Bookmarks persistence
 
     private func loadBookmarks() {
-        guard let data = UserDefaults.standard.data(forKey: "S3CompanionBookmarks"),
+        let defaults = UserDefaults.standard
+        let legacyKey = "\(LegacyImport.defaultsPrefix)Bookmarks"
+        guard let data = defaults.data(forKey: "BucketManagerBookmarks")
+                ?? defaults.data(forKey: legacyKey),
               let decoded = try? JSONDecoder().decode([Bookmark].self, from: data) else { return }
         bookmarks = decoded
+        if defaults.data(forKey: "BucketManagerBookmarks") == nil {
+            defaults.set(data, forKey: "BucketManagerBookmarks")
+        }
     }
 
     private func saveBookmarks() {
         guard let data = try? JSONEncoder().encode(bookmarks) else { return }
-        UserDefaults.standard.set(data, forKey: "S3CompanionBookmarks")
+        UserDefaults.standard.set(data, forKey: "BucketManagerBookmarks")
     }
 
     // MARK: - Menus
@@ -605,9 +606,8 @@ final class MainWindowController: NSWindowController {
     private func helpMenu() -> NSMenu {
         let menu = baseMenu()
         _ = item(menu, "Keyboard Shortcuts", #selector(shortcutsAction))
-        _ = item(menu, "S3 Browser Online Help", #selector(openOnlineHelp))
         menu.addItem(.separator())
-        _ = item(menu, "About S3 Browser for Mac", #selector(aboutAction))
+        _ = item(menu, "About Bucket Manager", #selector(aboutAction))
         return menu
     }
 }

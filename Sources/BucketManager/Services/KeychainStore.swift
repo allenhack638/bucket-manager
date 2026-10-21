@@ -3,7 +3,8 @@ import Security
 
 /// Stores S3 secret access keys in the macOS login Keychain, one item per account.
 enum KeychainStore {
-    private static let service = "com.local.s3companion.secret"
+    private static let service = "com.bucketmanager.secret"
+    private static let legacyService = LegacyImport.keychainService
 
     static func saveSecret(_ secret: String, for accountID: UUID) throws {
         let account = accountID.uuidString
@@ -26,6 +27,19 @@ enum KeychainStore {
     }
 
     static func loadSecret(for accountID: UUID) throws -> String {
+        do {
+            return try readSecret(service: service, for: accountID)
+        } catch {
+            guard let legacy = try? readSecret(service: legacyService, for: accountID) else {
+                throw error
+            }
+            // Promote the legacy item so subsequent launches use the new service.
+            try? saveSecret(legacy, for: accountID)
+            return legacy
+        }
+    }
+
+    private static func readSecret(service: String, for accountID: UUID) throws -> String {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -43,12 +57,14 @@ enum KeychainStore {
     }
 
     static func deleteSecret(for accountID: UUID) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: accountID.uuidString
-        ]
-        SecItemDelete(query as CFDictionary)
+        for service in [service, legacyService] {
+            let query: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: accountID.uuidString
+            ]
+            SecItemDelete(query as CFDictionary)
+        }
     }
 
     enum KeychainError: Error, CustomStringConvertible {

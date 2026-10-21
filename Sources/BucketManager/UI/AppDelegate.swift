@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.appearance = NSAppearance(named: .aqua)
-        AppLog.shared.log("Launched S3 Companion; \(accounts.accounts.count) saved account(s); log=\(AppLog.path)")
+        AppLog.shared.log("Launched Bucket Manager; \(accounts.accounts.count) saved account(s); log=\(AppLog.path)")
         if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = icon
@@ -38,16 +38,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
-        let appMenu = NSMenu(title: "S3 Browser for Mac")
-        let about = NSMenuItem(title: "About S3 Browser for Mac", action: #selector(MainWindowController.aboutAction), keyEquivalent: "")
+        let appMenu = NSMenu(title: "Bucket Manager")
+        let about = NSMenuItem(title: "About Bucket Manager", action: #selector(MainWindowController.aboutAction), keyEquivalent: "")
         about.target = mainWindow
         appMenu.addItem(about)
         let options = NSMenuItem(title: "Options…", action: #selector(MainWindowController.showOptionsAction), keyEquivalent: ",")
         options.target = mainWindow
         appMenu.addItem(options)
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide S3 Browser", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Quit S3 Browser", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "Hide Bucket Manager", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: "Quit Bucket Manager", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
 
         let editItem = NSMenuItem()
@@ -90,9 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let shortcuts = NSMenuItem(title: "Keyboard Shortcuts", action: #selector(MainWindowController.shortcutsAction), keyEquivalent: "")
         shortcuts.target = mainWindow
         helpMenu.addItem(shortcuts)
-        let online = NSMenuItem(title: "S3 Browser Online Help", action: #selector(MainWindowController.openOnlineHelp), keyEquivalent: "?")
-        online.target = mainWindow
-        helpMenu.addItem(online)
         helpItem.submenu = helpMenu
         NSApp.helpMenu = helpMenu
 

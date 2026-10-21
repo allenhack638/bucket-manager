@@ -4,14 +4,15 @@
 set -euo pipefail
 
 CONFIG="${1:-release}"
-APP_NAME="S3Companion"
-BUNDLE_ID="com.local.s3companion"
+APP_NAME="BucketManager"
+APP_BUNDLE_NAME="Bucket Manager"
+BUNDLE_ID="com.bucketmanager.app"
 
 echo "Building ($CONFIG)…"
 swift build -c "$CONFIG"
 
 BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
-APP_DIR="build/$APP_NAME.app"
+APP_DIR="build/$APP_BUNDLE_NAME.app"
 MACOS_DIR="$APP_DIR/Contents/MacOS"
 
 rm -rf "$APP_DIR"
@@ -25,16 +26,17 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>$APP_NAME</string>
-  <key>CFBundleDisplayName</key><string>$APP_NAME</string>
+  <key>CFBundleName</key><string>$APP_BUNDLE_NAME</string>
+  <key>CFBundleDisplayName</key><string>Bucket Manager</string>
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleVersion</key><string>1</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>$APP_NAME</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Allen Benny. MIT License.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 </dict>

@@ -1,8 +1,8 @@
-# S3Companion from first principles
+# Architecture and S3 notes
 
-This document explains what the application actually does, why the code is shaped
-the way it is, and how to reason about S3 when something goes wrong. It is written
-for someone who is new to the codebase and new to S3.
+This document explains what the application does, why the code is shaped the way it
+is, and how to reason about S3 when something goes wrong. It is intended as a
+maintainer and contributor reference.
 
 ---
 
@@ -143,7 +143,7 @@ folder:
 - At most **2 scans** run at once; request starts are paced at **8 per second**.
   The global 4-request limiter still applies.
 - Results are written to a persistent cache at
-  `~/Library/Application Support/S3Companion/folder-stats.json` (0600). On
+  `~/Library/Application Support/BucketManager/folder-stats.json` (0600). On
   restart the cache is loaded synchronously, so cached values render before any
   request. Fresh entries (5 minutes) are reused; stale entries stay visible while
   one refresh runs.
@@ -213,7 +213,7 @@ removes a partial download.
 Account metadata is JSON in:
 
 ```
-~/Library/Application Support/S3Companion/accounts.json
+~/Library/Application Support/BucketManager/accounts.json
 ```
 
 It contains display name, access key ID, kind, region, endpoint, path-style/SSL
@@ -221,7 +221,7 @@ flags, and a UUID. The **secret never goes in this file**. It is a generic passw
 in the login Keychain:
 
 ```
-service: com.local.s3companion.secret
+service: com.bucketmanager.secret
 account: <account UUID>
 ```
 
@@ -311,19 +311,18 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | `Services/StripXIDInterceptor.swift` | S3-compatible signing fix |
 | `Services/AccountStore.swift` | JSON metadata + Keychain lookup |
 | `Services/KeychainStore.swift` | Keychain primitives |
-| `UI/Theme.swift` | measured palette and metrics |
+| `UI/Theme.swift` | theme palette and metrics |
 | `UI/Components.swift` | custom controls, header, progress, text view |
 
 ---
 
-## 8. Layout and the reference measurements
+## 8. Layout metrics
 
-The clone targets the S3 Browser 13.5/13.6 layout:
+The app uses a compact desktop object-browser layout:
 
 - Window: **1120 × 650** logical points; minimum **900 × 480**.
 - Title bar: **30 pt**; in-app menu bar: **20 pt**.
-- Sidebar: **321 pt** (measured from the tree panel; the 392 px edge in the
-  marketing screenshot is the open menu, not the divider).
+- Sidebar: **321 pt** (resizable from 240–620 pt).
 - Folder rows: **16 pt**; file/transfer rows: **18 pt**.
 - File columns: checkbox 24, Name flexible, Size 90, Type 135, Last Modified 168,
   Storage Class 130.
@@ -340,7 +339,7 @@ Responsive behavior:
 - The sidebar is constrained so the transfer tabs always fit.
 - Both dialogs adapt to the parent window and scroll their forms.
 
-The reference is light-only, so the app forces `NSAppearance.aqua`. Native controls
+The app is light-only, so it forces `NSAppearance.aqua`. Native controls
 (text fields, tables, checkboxes) otherwise render dark on a dark-mode Mac and become
 invisible on the custom light chrome.
 
@@ -365,7 +364,7 @@ invisible on the custom light chrome.
 
 ## 10. Error playbook
 
-Read `~/Library/Logs/S3Companion/app.log` first. It records account names, endpoints,
+Read `~/Library/Logs/BucketManager/app.log` first. It records account names, endpoints,
 Keychain results, S3 request context, and raw errors. The Event Log tab shows the
 user-facing version.
 
@@ -392,22 +391,22 @@ there.
 swift build
 
 # 2. Exercise the endpoint resolver with dummy credentials
-.build/debug/S3Companion --selftest
+.build/debug/BucketManager --selftest
 
 # 3. Prove signing against a real endpoint without the GUI.
 #    The secret is read from the environment and never logged.
 S3C_ENDPOINT=https://… S3C_REGION=… S3C_ACCESS_KEY=… S3C_SECRET=… \
-  .build/debug/S3Companion --probe
+  .build/debug/BucketManager --probe
 #    Add S3C_BUCKET=… to also run ListObjectsV2.
 
 # 4. Headless interaction tests (validation, save, cancel, storage list)
-.build/debug/S3Companion --uitest
+.build/debug/BucketManager --uitest
 
 # 5. Render the UI offscreen for visual review
-.build/debug/S3Companion --snapshot /tmp/main.png --size 900x480
-.build/debug/S3Companion --snapshot /tmp/props.png --size 900x480 --tab properties
-.build/debug/S3Companion --snapshot /tmp/empty.png --size 900x480 --empty accounts
-.build/debug/S3Companion --snapshot-sheet add --out /tmp/add.png --size 520x420
+.build/debug/BucketManager --snapshot /tmp/main.png --size 900x480
+.build/debug/BucketManager --snapshot /tmp/props.png --size 900x480 --tab properties
+.build/debug/BucketManager --snapshot /tmp/empty.png --size 900x480 --empty accounts
+.build/debug/BucketManager --snapshot-sheet add --out /tmp/add.png --size 520x420
 ```
 
 Offscreen rendering is used because macOS screen recording permission is not

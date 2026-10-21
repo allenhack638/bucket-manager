@@ -5,7 +5,6 @@ build/
 DerivedData/
 *.dSYM/
 *.xcuserstate
-s3browser-13-6-3.exe
 .commandcode/
 __pycache__/
 *.pyc
