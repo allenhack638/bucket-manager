@@ -741,6 +741,7 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
             onSave: { [weak self] updated, newSecret in
                 guard let self else { return }
                 do {
+                    let wasSelected = self.model.selectedAccount?.id == updated.id
                     if account == nil {
                         try self.accounts.add(updated, secret: newSecret ?? "")
                     } else {
@@ -748,6 +749,9 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
                         self.model.invalidateFolderStats(accountID: updated.id)
                     }
                     self.model.reloadAccounts()
+                    if wasSelected, let selected = self.model.selectedAccount {
+                        self.model.selectAccount(selected)
+                    }
                     self.reload()
                 } catch {
                     self.showError("Could not save account", error.localizedDescription)
@@ -769,8 +773,12 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
+            let wasSelected = self.model.selectedAccount?.id == account.id
             self.accounts.remove(account)
             self.model.reloadAccounts()
+            if wasSelected, let selected = self.model.selectedAccount {
+                self.model.selectAccount(selected)
+            }
             self.reload()
         }
     }

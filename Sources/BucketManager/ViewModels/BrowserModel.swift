@@ -27,7 +27,6 @@ final class BrowserModel {
     var onLogChange: (() -> Void)?
     var onFolderMetric: ((String) -> Void)?
 
-    private(set) var roots: [BrowserNode] = []
     private(set) var buckets: [S3Bucket] = []
 
     private(set) var selectedAccount: Account?
@@ -41,7 +40,9 @@ final class BrowserModel {
     private(set) var checked: Set<String> = []
 
     private(set) var isBusy = false
+    private(set) var isLoadingBuckets = false
     private(set) var status = "Ready"
+    private(set) var bucketError: String?
     private(set) var errorMessage: String?
     private(set) var lastUpdated: Date?
 
@@ -64,6 +65,7 @@ final class BrowserModel {
     private var clipboardIsCut = false
 
     private var listingRequestID = 0
+    private var bucketRequestID = 0
     private var sortRefreshScheduled = false
     private var detailsKey: String?
     private var versionsKey: String?
@@ -234,7 +236,6 @@ final class BrowserModel {
             region: "us-east-1"
         )
         selectedAccount = demo
-        roots = [BrowserNode(kind: .account, title: demo.displayName, accountID: demo.id)]
         buckets = ["analytics-data", "app-logs", "archive", "backups-2026", "customer-uploads", "documents", "media-library", "my-backups", "my-photos", "data-lake", "photos", "production-data", "reports", "demo-storage", "static-content", "tests"].map { S3Bucket(name: $0, creationDate: Date()) }
         selectedBucket = "my-photos"
         prefix = ""
@@ -373,9 +374,6 @@ final class BrowserModel {
 
     func reloadAccounts() {
         let selectedID = selectedAccount?.id
-        roots = accounts.accounts.map { account in
-            BrowserNode(kind: .account, title: account.displayName, accountID: account.id)
-        }
         if let selectedID, let account = accounts.account(id: selectedID) {
             selectedAccount = account
         } else if let first = accounts.accounts.first {
@@ -399,6 +397,8 @@ final class BrowserModel {
         nextToken = nil
         isTruncated = false
         isBusy = false
+        isLoadingBuckets = false
+        bucketError = nil
         errorMessage = nil
         status = "Ready"
         selection = []
@@ -410,7 +410,8 @@ final class BrowserModel {
     func selectAccount(_ account: Account) {
         let accountChanged = selectedAccount?.id != account.id
         listingRequestID += 1
-        let requestID = listingRequestID
+        bucketRequestID += 1
+        let requestID = bucketRequestID
         selectedAccount = account
         selectedBucket = nil
         prefix = ""
@@ -418,7 +419,9 @@ final class BrowserModel {
         items = []
         nextToken = nil
         isTruncated = false
-        isBusy = true
+        isBusy = false
+        isLoadingBuckets = true
+        bucketError = nil
         errorMessage = nil
         status = "Loading buckets"
         selection = []
@@ -437,22 +440,23 @@ final class BrowserModel {
         do {
             let secret = try accounts.secret(for: account)
             let list = try await service.listBuckets(account: account, secret: secret, useCache: useCache)
-            guard requestID == listingRequestID,
+            guard requestID == bucketRequestID,
                   selectedAccount?.id == account.id else { return }
             buckets = list
-            isBusy = false
-            errorMessage = nil
-            status = "Ready"
+            isLoadingBuckets = false
+            bucketError = nil
+            if selectedBucket == nil { status = "Ready" }
             onTreeChange?()
             onFilesChange?()
             onChromeChange?()
         } catch {
-            guard requestID == listingRequestID,
+            guard requestID == bucketRequestID,
                   selectedAccount?.id == account.id else { return }
-            isBusy = false
-            setError(error)
+            isLoadingBuckets = false
+            bucketError = Self.friendly(error)
+            AppLog.shared.error("List buckets failed: \(String(describing: error))")
             onTreeChange?()
-            onFilesChange?()
+            onChromeChange?()
         }
     }
 
@@ -466,7 +470,8 @@ final class BrowserModel {
     /// updating only the prefix would leave the path bar on the old bucket.
     func openLocation(accountID: UUID, bucket: String, prefix newPrefix: String) {
         guard let account = accounts.account(id: accountID) else { return }
-        if selectedAccount?.id != accountID {
+        let accountChanged = selectedAccount?.id != accountID
+        if accountChanged {
             selectedAccount = account
             buckets = []
         }
@@ -539,27 +544,33 @@ final class BrowserModel {
 
     func refreshBuckets() async {
         guard let account = selectedAccount else { return }
+        bucketRequestID += 1
+        let requestID = bucketRequestID
+        isLoadingBuckets = true
         if selectedBucket == nil {
-            isBusy = true
             status = "Loading buckets"
             onChromeChange?()
         }
         do {
             let secret = try accounts.secret(for: account)
             let list = try await service.listBuckets(account: account, secret: secret, useCache: false)
-            guard selectedAccount?.id == account.id else { return }
+            guard requestID == bucketRequestID,
+                  selectedAccount?.id == account.id else { return }
             buckets = list
+            isLoadingBuckets = false
+            bucketError = nil
             if selectedBucket == nil {
-                isBusy = false
                 errorMessage = nil
                 status = "Ready"
             }
             onTreeChange?()
             onChromeChange?()
         } catch {
-            guard selectedAccount?.id == account.id else { return }
-            if selectedBucket == nil { isBusy = false }
-            setError(error)
+            guard requestID == bucketRequestID,
+                  selectedAccount?.id == account.id else { return }
+            isLoadingBuckets = false
+            bucketError = Self.friendly(error)
+            AppLog.shared.error("Refresh buckets failed: \(String(describing: error))")
             onTreeChange?()
         }
     }

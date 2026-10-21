@@ -189,7 +189,7 @@ final class SidebarViewController: NSViewController {
         if model.buckets.isEmpty {
             emptyView.isHidden = false
             scroll.isHidden = true
-            if model.isBusy {
+            if model.isLoadingBuckets {
                 emptyView.action = nil
                 emptyView.update(
                     iconName: "hourglass",
@@ -197,7 +197,7 @@ final class SidebarViewController: NSViewController {
                     subtitle: "Fetching buckets for \(model.selectedAccount?.displayName ?? "this account")."
                 )
                 emptyView.setActionVisible(false)
-            } else if let error = model.errorMessage {
+            } else if let error = model.bucketError {
                 emptyView.action = { [weak self] in self?.refreshBuckets() }
                 emptyView.update(
                     iconName: "exclamationmark.triangle",
