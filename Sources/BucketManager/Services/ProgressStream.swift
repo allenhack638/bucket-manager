@@ -47,6 +47,6 @@ final class ProgressStream: Smithy.Stream, @unchecked Sendable {
     }
 
     func write(contentsOf data: Data) throws {}
-    func close() { try? inner.close() }
-    func closeWithError(_ error: Error) { try? inner.close() }
+    func close() { inner.close() }
+    func closeWithError(_ error: Error) { inner.close() }
 }

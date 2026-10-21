@@ -43,6 +43,7 @@ extension NSImage {
 
 // MARK: - Labels
 
+@MainActor
 enum Labels {
     static func label(_ text: String, font: NSFont = Theme.Font.body, color: NSColor = Theme.Colors.text) -> NSTextField {
         let field = NSTextField(labelWithString: text)
@@ -188,7 +189,8 @@ final class FlatButton: NSControl {
     override func accessibilityActionNames() -> [NSAccessibility.Action] { [.press] }
 
     override func accessibilityPerformAction(_ action: NSAccessibility.Action) {
-        if action == .press { _ = accessibilityPerformPress() }
+        guard action == .press else { return }
+        MainActor.assumeIsolated { _ = accessibilityPerformPress() }
     }
 
     override func drawFocusRingMask() {
@@ -536,13 +538,18 @@ struct HeaderColumn {
     let alignment: NSTextAlignment
 }
 
+private final class HeaderActionBox: @unchecked Sendable {
+    @MainActor var action: (() -> Void)?
+
+    nonisolated init() {}
+}
+
 private final class ColumnHeaderAXElement: NSAccessibilityElement {
-    weak var owner: ColumnHeaderView?
-    var columnID = ""
+    let actionBox = HeaderActionBox()
 
     override func accessibilityPerformPress() -> Bool {
-        guard let owner else { return false }
-        owner.onSort?(columnID)
+        let box = actionBox
+        MainActor.assumeIsolated { box.action?() }
         return true
     }
 }
@@ -688,8 +695,7 @@ final class ColumnHeaderView: NSView {
             let width = column.width ?? (bounds.width - x - fixedWidthAfter(column: column, startX: x))
             let rect = NSRect(x: x, y: 0, width: width, height: bounds.height)
             let element = ColumnHeaderAXElement()
-            element.owner = self
-            element.columnID = column.id
+            element.actionBox.action = { [weak self] in self?.onSort?(column.id) }
             element.setAccessibilityParent(self)
             element.setAccessibilityRole(.button)
             element.setAccessibilityLabel("Sort by \(column.title)")

@@ -185,7 +185,10 @@ for buckets the key is not allowed to list — i.e. the request is now correctly
 S3C_ENDPOINT=... S3C_REGION=... S3C_ACCESS_KEY=... S3C_SECRET=... \
   .build/debug/BucketManager --probe
 
-# Headless dialog/model tests (validation, breadcrumb, folder markers, paths)
+# Everything: build, headless UI/model checks, then fake-S3 end-to-end checks
+./scripts/test.sh
+
+# Headless dialog/model tests (validation, breadcrumb, column resizing, paths)
 .build/debug/BucketManager --uitest
 
 # Full end-to-end suite: real AWS SDK + model + transfers against a local fake S3
@@ -206,7 +209,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 49 dialog/model checks plus 74 end-to-end checks. The E2E
+The current suite is 57 dialog/model checks plus 74 end-to-end checks. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
 folder markers returned in `Contents`, AccessDenied, deliberately delayed
 responses, folder creation (`PUT .../name/`), metadata request counts, the 60s

@@ -116,6 +116,7 @@ enum Theme {
 }
 
 extension NSColor {
+    @MainActor
     func resolved(for view: NSView) -> NSColor {
         var result = self
         view.effectiveAppearance.performAsCurrentDrawingAppearance {

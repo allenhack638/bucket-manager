@@ -49,7 +49,7 @@ final class AppLog: @unchecked Sendable {
             try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             if let handle = try? FileHandle(forWritingTo: url) {
                 defer { try? handle.close() }
-                try? handle.seekToEnd()
+                _ = try? handle.seekToEnd()
                 try? handle.write(contentsOf: data)
             }
         }
