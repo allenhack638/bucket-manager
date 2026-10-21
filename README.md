@@ -1,4 +1,6 @@
-# S3Companion
+# Bucket Manager (S3Companion)
+
+> Active repository: **bucket-manager**. The app/product name remains S3Companion.
 
 A native macOS S3 browser built with SwiftUI-free AppKit and the AWS SDK for Swift.
 It is a from-first-principles reimplementation of the classic S3 Browser / CS Browser
