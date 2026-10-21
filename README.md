@@ -23,7 +23,7 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
   and objects in the right pane. Columns are resizable by dragging header dividers.
 - **Object browser** — a clickable breadcrumb (`/ bucket/ folder/ current/`), Name,
   Size, Type, Last Modified, Storage Class; multi-select, per-row checkboxes,
-  sortable headers, adaptive columns at small widths.
+  sortable headers, filter/search, and resizable columns.
 - **Folder sizes and dates** — recursive prefix totals shown for every folder row
   in the current listing, with cached/refreshing/partial/unavailable states and
   sorting by the computed values.
@@ -132,6 +132,7 @@ Logs are written to:
 | ⌘D | Download selected |
 | ⌘R | Refresh listing |
 | ⌘A | Select all |
+| ⌘F | Filter objects |
 | ⌘X / ⌘C / ⌘V | Cut / Copy / Paste objects |
 | ⇧⌘C / ⇧⌘X | Copy to / Move to |
 | ⇧⌘N | Create folder |
@@ -215,6 +216,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot out.png --size 900x480 --empty accounts
 .build/debug/BucketManager --snapshot log-empty.png --size 1120x650 --tab log --empty log
 .build/debug/BucketManager --snapshot out.png --size 900x480 --error "Access denied."
+.build/debug/BucketManager --snapshot filtered.png --size 900x480 --filter Border
 .build/debug/BucketManager --snapshot-sheet add --out add.png --size 640x500
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```

@@ -30,7 +30,8 @@ if let path = argumentValue("--snapshot") {
         tab: argumentValue("--tab"),
         empty: argumentValue("--empty"),
         pathPrefix: argumentValue("--prefix"),
-        errorMessage: argumentValue("--error")
+        errorMessage: argumentValue("--error"),
+        filter: argumentValue("--filter")
     )
     exit(0)
 }

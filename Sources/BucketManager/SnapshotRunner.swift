@@ -2,7 +2,7 @@ import AppKit
 
 @MainActor
 enum SnapshotRunner {
-    static func runMain(path: String, size: NSSize, tab: String?, empty: String?, pathPrefix: String?, errorMessage: String?) {
+    static func runMain(path: String, size: NSSize, tab: String?, empty: String?, pathPrefix: String?, errorMessage: String?, filter: String?) {
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.appearance = ProcessInfo.processInfo.environment["S3C_APPEARANCE"] == "dark"
@@ -35,6 +35,9 @@ enum SnapshotRunner {
         if let tab {
             if tab != "tasks" && tab != "log" { model.loadDemoDetails() }
             controller.selectTabForSnapshot(tab)
+        }
+        if let filter {
+            controller.showFilterForSnapshot(filter)
         }
 
         guard let window = controller.window else { return }

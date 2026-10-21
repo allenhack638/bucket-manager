@@ -129,6 +129,15 @@ enum UITest {
         check(demoModel.buckets.count == 16, "account buckets are exposed for the sidebar")
         check(demoModel.buckets.contains { $0.name == "my-photos" },
               "the sidebar bucket list contains account buckets")
+        demoModel.setFilter("Border_2px")
+        check(demoModel.visibleItems.count == 1, "filtering narrows the object list")
+        check(demoModel.statusText.contains("of"), "filtered status reports the visible and total counts")
+        demoModel.setSelection(Set(demoModel.visibleItems.map(\.key)))
+        demoModel.setFilter("Border_1px")
+        check(demoModel.selection.isEmpty, "filtering clears selections that are no longer visible")
+        demoModel.setFilter("")
+        check(demoModel.visibleItems.count == demoModel.items.count,
+              "clearing the filter restores every object")
 
         let locationOne = Account(displayName: "One", accessKeyID: "A", kind: .amazonS3)
         let locationTwo = Account(displayName: "Two", accessKeyID: "B", kind: .amazonS3)

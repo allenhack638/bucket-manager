@@ -68,6 +68,9 @@ final class BrowserViewController: NSViewController {
     private var refreshButton: FlatButton?
     private var bookmarkButton: FlatButton?
     private var renameButton: FlatButton?
+    private var filterButton: FlatButton?
+    private let filterField = NSSearchField()
+    private var filterWidthConstraint: NSLayoutConstraint!
     private var columnWidths: [String: CGFloat] = [:]
 
     private static let columnWidthsKey = "BucketManagerColumnWidths"
@@ -190,17 +193,28 @@ final class BrowserViewController: NSViewController {
         bookmarkButton = star
         renameButton = edit
         let filter = FlatButton("", icon: "line.3.horizontal.decrease", style: .action) { [weak self] in
-            self?.model.appendLog("Filters are not implemented in this build")
+            self?.toggleFilter()
         }
+        filterButton = filter
         let refresh = FlatButton("", icon: "arrow.clockwise", style: .action) { [weak self] in self?.refresh() }
         star.toolTip = "Bookmark this location"
         edit.toolTip = "Rename selected object"
-        filter.toolTip = "Filter"
+        filter.toolTip = "Filter objects (⌘F)"
         refresh.toolTip = "Refresh"
         star.accessibilityTitle = "Bookmark this location"
         edit.accessibilityTitle = "Rename selected object"
-        filter.accessibilityTitle = "Filter"
+        filter.accessibilityTitle = "Filter objects"
         refresh.accessibilityTitle = "Refresh"
+
+        filterField.placeholderString = "Filter objects"
+        filterField.controlSize = .small
+        filterField.font = Theme.Font.small
+        filterField.sendsWholeSearchString = false
+        filterField.sendsSearchStringImmediately = true
+        filterField.delegate = self
+        filterField.isHidden = true
+        filterField.setAccessibilityLabel("Filter objects")
+        filterField.translatesAutoresizingMaskIntoConstraints = false
 
         let tools = NSStackView(views: [star, edit, filter, refresh])
         tools.identifier = NSUserInterfaceItemIdentifier("pathTools")
@@ -217,14 +231,22 @@ final class BrowserViewController: NSViewController {
         }
 
         pathBar.addSubview(breadcrumb)
+        pathBar.addSubview(filterField)
         pathBar.addSubview(tools)
         pathBar.addSubview(bottomLine)
 
+        filterWidthConstraint = filterField.widthAnchor.constraint(equalToConstant: 0)
+
         NSLayoutConstraint.activate([
             breadcrumb.leadingAnchor.constraint(equalTo: pathBar.leadingAnchor, constant: 10),
-            breadcrumb.trailingAnchor.constraint(equalTo: tools.leadingAnchor, constant: -8),
+            breadcrumb.trailingAnchor.constraint(equalTo: filterField.leadingAnchor, constant: -8),
             breadcrumb.topAnchor.constraint(equalTo: pathBar.topAnchor),
             breadcrumb.bottomAnchor.constraint(equalTo: pathBar.bottomAnchor),
+
+            filterField.trailingAnchor.constraint(equalTo: tools.leadingAnchor, constant: -8),
+            filterField.centerYAnchor.constraint(equalTo: pathBar.centerYAnchor),
+            filterField.heightAnchor.constraint(equalToConstant: 20),
+            filterWidthConstraint,
 
             tools.trailingAnchor.constraint(equalTo: pathBar.trailingAnchor, constant: -6),
             tools.centerYAnchor.constraint(equalTo: pathBar.centerYAnchor),
@@ -464,18 +486,53 @@ final class BrowserViewController: NSViewController {
         view.window?.firstResponder === table
     }
 
+    @objc func toggleFilter() {
+        if filterField.isHidden {
+            filterField.isHidden = false
+            filterWidthConstraint.constant = 170
+            filterButton?.isSelectedState = true
+            view.window?.makeFirstResponder(filterField)
+        } else {
+            filterField.stringValue = ""
+            filterField.isHidden = true
+            filterWidthConstraint.constant = 0
+            filterButton?.isSelectedState = false
+            model.setFilter("")
+            focusInitial()
+        }
+        view.needsLayout = true
+    }
+
+    @objc func focusFilter() {
+        if filterField.isHidden {
+            toggleFilter()
+        } else {
+            view.window?.makeFirstResponder(filterField)
+            filterField.selectText(nil)
+        }
+    }
+
+    func showFilterForSnapshot(_ text: String) {
+        filterField.isHidden = false
+        filterWidthConstraint.constant = 170
+        filterField.stringValue = text
+        model.setFilter(text)
+        view.layoutSubtreeIfNeeded()
+    }
+
     // MARK: - Reload / chrome
 
     func reload() {
         table.reloadData()
-        model.requestFolderStats(for: model.items)
+        let visible = model.visibleItems
+        model.requestFolderStats(for: visible)
         table.menu = buildContextMenu()
         updateColumnWidths()
         header.sortColumn = model.currentSort.column.rawValue
         header.sortAscending = model.currentSort.ascending
         header.needsDisplay = true
 
-        let rows = IndexSet(model.items.enumerated().compactMap { model.selection.contains($0.element.key) ? $0.offset : nil })
+        let rows = IndexSet(visible.enumerated().compactMap { model.selection.contains($0.element.key) ? $0.offset : nil })
         table.selectRowIndexes(rows, byExtendingSelection: false)
         updateChrome()
         updateTextColors()
@@ -502,6 +559,11 @@ final class BrowserViewController: NSViewController {
         refreshButton?.isEnabled = model.selectedAccount != nil
         bookmarkButton?.isEnabled = hasBucket
         renameButton?.isEnabled = hasBucket && model.selectedItem != nil
+        filterButton?.isEnabled = hasBucket
+        filterButton?.isSelectedState = !filterField.isHidden
+        if !filterField.isHidden, model.filterText.isEmpty, !filterField.stringValue.isEmpty {
+            filterField.stringValue = ""
+        }
         table.setAccessibilityLabel("Files")
 
         updateEmptyState()
@@ -509,7 +571,8 @@ final class BrowserViewController: NSViewController {
 
     private func updateEmptyState() {
         let hasBucket = model.selectedBucket != nil
-        let empty = !hasBucket || model.items.isEmpty
+        let visible = model.visibleItems
+        let empty = !hasBucket || visible.isEmpty
         emptyView.isHidden = !empty
         guard empty else { return }
 
@@ -549,6 +612,17 @@ final class BrowserViewController: NSViewController {
             return
         }
 
+        if model.isFiltering, !model.items.isEmpty {
+            emptyView.update(
+                iconName: "line.3.horizontal.decrease",
+                title: "No matches",
+                subtitle: "No objects match “\(model.filterText)”."
+            )
+            emptyView.action = { [weak self] in self?.toggleFilter() }
+            emptyView.setActionVisible(true, title: "Clear filter")
+            return
+        }
+
         emptyView.action = { [weak self] in self?.uploadFiles() }
         emptyView.update(
             iconName: "folder",
@@ -559,12 +633,13 @@ final class BrowserViewController: NSViewController {
     }
 
     private func updateTextColors() {
+        let visible = model.visibleItems
         for row in 0..<table.numberOfRows {
             let selected = table.selectedRowIndexes.contains(row)
             let color = selected ? Theme.Colors.selectionText : Theme.Colors.text
             if let cell = table.view(atColumn: 1, row: row, makeIfNecessary: false) as? FileCellView,
-               row < model.items.count {
-                cell.configure(item: model.items[row], selected: selected)
+               row < visible.count {
+                cell.configure(item: visible[row], selected: selected)
             }
             for column in 2..<table.numberOfColumns {
                 (table.view(atColumn: column, row: row, makeIfNecessary: false) as? NSTableCellView)?
@@ -576,11 +651,11 @@ final class BrowserViewController: NSViewController {
     // MARK: - Folder stats
 
     func refreshFolderStatsForListing() {
-        model.requestFolderStats(for: model.items)
+        model.requestFolderStats(for: model.visibleItems)
     }
 
     func updateFolderMetric(_ key: String) {
-        guard let row = model.items.firstIndex(where: { $0.key == key }) else { return }
+        guard let row = model.visibleItems.firstIndex(where: { $0.key == key }) else { return }
         table.reloadData(
             forRowIndexes: IndexSet(integer: row),
             columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns)
@@ -603,8 +678,9 @@ final class BrowserViewController: NSViewController {
 
     @objc func openSelected() {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
-        guard row >= 0, row < model.items.count else { return }
-        let item = model.items[row]
+        let visible = model.visibleItems
+        guard row >= 0, row < visible.count else { return }
+        let item = visible[row]
         if item.kind == .folder {
             Task { await model.open(item) }
         } else {
@@ -714,7 +790,7 @@ final class BrowserViewController: NSViewController {
     }
 
     @objc func selectAllItems() {
-        model.setSelection(Set(model.items.map(\.key)))
+        model.setSelection(Set(model.visibleItems.map(\.key)))
         reload()
     }
 
@@ -802,11 +878,12 @@ final class BrowserViewController: NSViewController {
 }
 
 extension BrowserViewController: NSTableViewDataSource, NSTableViewDelegate {
-    func numberOfRows(in tableView: NSTableView) -> Int { model.items.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { model.visibleItems.count }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let column = tableColumn, row < model.items.count else { return nil }
-        let item = model.items[row]
+        let visible = model.visibleItems
+        guard let column = tableColumn, row < visible.count else { return nil }
+        let item = visible[row]
         let selected = tableView.selectedRowIndexes.contains(row)
 
         switch column.identifier.rawValue {
@@ -903,10 +980,31 @@ extension BrowserViewController: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let keys = Set(table.selectedRowIndexes.compactMap { $0 < model.items.count ? model.items[$0].key : nil })
+        let visible = model.visibleItems
+        let keys = Set(table.selectedRowIndexes.compactMap {
+            $0 < visible.count ? visible[$0].key : nil
+        })
         model.setSelection(keys)
         updateTextColors()
         updateChrome()
+    }
+}
+
+extension BrowserViewController: NSSearchFieldDelegate {
+    func controlTextDidChange(_ notification: Notification) {
+        guard notification.object as? NSSearchField === filterField else { return }
+        model.setFilter(filterField.stringValue)
+    }
+
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy commandSelector: Selector
+    ) -> Bool {
+        guard control === filterField,
+              commandSelector == #selector(NSResponder.cancelOperation(_:)) else { return false }
+        toggleFilter()
+        return true
     }
 }
 

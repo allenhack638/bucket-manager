@@ -64,6 +64,10 @@ final class MainWindowController: NSWindowController {
         transfers.selectTab(id)
     }
 
+    func showFilterForSnapshot(_ text: String) {
+        browser.showFilterForSnapshot(text)
+    }
+
     func show() {
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -291,6 +295,7 @@ final class MainWindowController: NSWindowController {
     @objc private func copyToAction() { browser.copyTo() }
     @objc private func moveToAction() { browser.moveTo() }
     @objc private func selectAllAction() { browser.selectAllItems() }
+    @objc private func filterAction() { browser.focusFilter() }
     @objc private func propertiesAction() { browser.showProperties() }
     @objc private func versionsAction() { browser.showVersions() }
 
@@ -363,6 +368,7 @@ final class MainWindowController: NSWindowController {
         ⌘D  Download selected
         ⌘R  Refresh listing
         ⌘A  Select all
+        ⌘F  Filter objects
         ⌘X / ⌘C / ⌘V  Cut / Copy / Paste objects
         ⇧⌘C / ⇧⌘X  Copy to / Move to
         ⌘I  Properties
@@ -577,6 +583,7 @@ final class MainWindowController: NSWindowController {
         _ = item(menu, "Versions", #selector(versionsAction), key: "v", modifiers: [.command, .shift])
         menu.addItem(.separator())
         _ = item(menu, "Select All", #selector(selectAllAction), key: "a")
+        _ = item(menu, "Filter Objects…", #selector(filterAction), key: "f")
         _ = item(menu, "Refresh", #selector(refreshAction), key: "r")
         return menu
     }
@@ -646,8 +653,8 @@ extension MainWindowController: NSMenuItemValidation {
             return model.hasClipboard && model.selectedBucket != nil
         case #selector(copyToAction), #selector(moveToAction):
             return !model.selection.isEmpty && model.selectedBucket != nil
-        case #selector(selectAllAction):
-            return !model.items.isEmpty
+        case #selector(selectAllAction), #selector(filterAction):
+            return !model.visibleItems.isEmpty
         case #selector(deleteBucketAction):
             return model.selectedBucket != nil
         case #selector(testConnectionAction), #selector(refreshBucketsAction):

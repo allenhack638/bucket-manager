@@ -34,6 +34,7 @@ final class BrowserModel {
     private(set) var prefix: String = ""
 
     private(set) var items: [S3Item] = []
+    private(set) var filterText = ""
     private(set) var nextToken: String?
     private(set) var isTruncated = false
     private(set) var selection: Set<String> = []
@@ -141,6 +142,16 @@ final class BrowserModel {
 
     var selectedItems: [S3Item] { items.filter { selection.contains($0.key) } }
 
+    var visibleItems: [S3Item] {
+        guard !filterText.isEmpty else { return items }
+        return items.filter {
+            $0.displayName.localizedCaseInsensitiveContains(filterText)
+                || $0.key.localizedCaseInsensitiveContains(filterText)
+        }
+    }
+
+    var isFiltering: Bool { !filterText.isEmpty }
+
     var hasAccounts: Bool { !accounts.accounts.isEmpty }
 
     var currentPath: String {
@@ -192,10 +203,16 @@ final class BrowserModel {
     var statusText: String {
         guard selectedBucket != nil else { return errorMessage ?? status }
         if errorMessage != nil, items.isEmpty { return "" }
-        let total = items.reduce(Int64(0)) { $0 + (sizeForDisplay($1) ?? 0) }
-        let count = items.count
+        let visible = visibleItems
+        let total = visible.reduce(Int64(0)) { $0 + (sizeForDisplay($1) ?? 0) }
+        let count = visible.count
         let noun = count == 1 ? "file" : "files"
-        var text = "\(count) \(noun) (\(total.byteString))"
+        var text: String
+        if isFiltering {
+            text = "\(count) of \(items.count) \(noun) (\(total.byteString))"
+        } else {
+            text = "\(count) \(noun) (\(total.byteString))"
+        }
         if !selection.isEmpty {
             text += ", \(selection.count) file\(selection.count == 1 ? "" : "s") selected"
         }
@@ -236,6 +253,7 @@ final class BrowserModel {
             region: "us-east-1"
         )
         selectedAccount = demo
+        filterText = ""
         buckets = ["analytics-data", "app-logs", "archive", "backups-2026", "customer-uploads", "documents", "media-library", "my-backups", "my-photos", "data-lake", "photos", "production-data", "reports", "demo-storage", "static-content", "tests"].map { S3Bucket(name: $0, creationDate: Date()) }
         selectedBucket = "my-photos"
         prefix = ""
@@ -394,6 +412,7 @@ final class BrowserModel {
         prefix = ""
         buckets = []
         items = []
+        filterText = ""
         nextToken = nil
         isTruncated = false
         isBusy = false
@@ -415,6 +434,7 @@ final class BrowserModel {
         selectedAccount = account
         selectedBucket = nil
         prefix = ""
+        filterText = ""
         if accountChanged { buckets = [] }
         items = []
         nextToken = nil
@@ -480,6 +500,7 @@ final class BrowserModel {
         let requestID = listingRequestID
         selectedBucket = bucket
         prefix = newPrefix
+        filterText = ""
         items = []
         nextToken = nil
         isTruncated = false
@@ -509,6 +530,7 @@ final class BrowserModel {
         listingRequestID += 1
         let requestID = listingRequestID
         prefix = newPrefix
+        filterText = ""
         items = []
         nextToken = nil
         isTruncated = false
@@ -779,11 +801,20 @@ final class BrowserModel {
     }
 
     private func pruneSelection() {
-        let keys = Set(items.map(\.key))
+        let keys = Set(visibleItems.map(\.key))
         let oldSelection = selection
         selection = selection.intersection(keys)
         checked = checked.intersection(keys)
         if selection != oldSelection { resetInspector() }
+    }
+
+    func setFilter(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != filterText else { return }
+        filterText = trimmed
+        pruneSelection()
+        onFilesChange?()
+        onChromeChange?()
     }
 
     // MARK: - Selection
