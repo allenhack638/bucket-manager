@@ -298,7 +298,7 @@ final class AddAccountWindowController: NSWindowController {
         style(secretField)
 
         nameField.placeholderString = "New Account"
-        accessField.placeholderString = "EXAMPLE_ACCESS_KEY"
+        accessField.placeholderString = "Access Key ID"
         secretField.placeholderString = existing == nil ? "Secret access key" : "Leave blank to keep existing"
         endpointField.placeholderString = "https://s3.example.com"
         bucketField.placeholderString = "bucket-name (optional)"

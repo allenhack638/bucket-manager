@@ -36,10 +36,11 @@ enum UITest {
         add.testSave()
         check(saved == nil && !add.testErrorText.isEmpty, "required fields block save")
 
-        add.testFill(name: "Test Account", access: "EXAMPLE_ACCESS_KEY", secret: UUID().uuidString, region: "us-east-1", endpoint: "", kind: .amazonS3)
+        let testSecret = UUID().uuidString
+        add.testFill(name: "Test Account", access: "AKIA" + String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)), secret: testSecret, region: "us-east-1", endpoint: "", kind: .amazonS3)
         add.testSave()
         check(saved?.0.displayName == "Test Account", "valid save emits account")
-        check(saved?.1 == UUID().uuidString, "valid save emits secret")
+        check(saved?.1 == testSecret, "valid save emits secret")
         check(add.testErrorText.isEmpty, "successful save clears the error")
 
         saved = nil
@@ -379,14 +380,15 @@ enum UITest {
             check(tabStrip.accessibilityRole() == .tabGroup,
                   "inspector tab strip exposes the tab-group role")
 
-            let passcode = PasscodeHasher.make(password: UUID().uuidString)
+            let passcodePassword = UUID().uuidString
+            let passcode = PasscodeHasher.make(password: passcodePassword)
             check(passcode.salt.count == 16 && passcode.hash.count == 32,
                   "admin passcode uses a salted 256-bit verifier")
-            check(PasscodeHasher.verify(UUID().uuidString, against: passcode),
+            check(PasscodeHasher.verify(passcodePassword, against: passcode),
                   "admin passcode verifier accepts the correct passphrase")
-            check(!PasscodeHasher.verify("wrong horse", against: passcode),
+            check(!PasscodeHasher.verify(UUID().uuidString, against: passcode),
                   "admin passcode verifier rejects a wrong passphrase")
-            let secondPasscode = PasscodeHasher.make(password: UUID().uuidString, iterations: 10)
+            let secondPasscode = PasscodeHasher.make(password: passcodePassword, iterations: 10)
             check(passcode.hash != secondPasscode.hash,
                   "admin passcode verifiers are salted per creation")
             AdminAuthSession.shared.lock()
@@ -706,7 +708,7 @@ enum UITest {
             credentialProvider: nil
         )
         unreadableQueue.enqueueUpload(
-            account: queueAccount, secret: "unused", bucket: "alpha", key: "unreadable.bin", url: unreadableURL
+            account: queueAccount, secret: UUID().uuidString, bucket: "alpha", key: "unreadable.bin", url: unreadableURL
         )
         check(unreadableQueue.tasks.first?.status == .failed,
               "unreadable upload source is rejected at enqueue")

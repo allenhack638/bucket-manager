@@ -45,7 +45,7 @@ enum SelfTest {
     private static func probe(label: String, region: String, endpoint: String?, pathStyle: Bool) async {
         print("── \(label) ──")
         do {
-            let creds = AWSCredentialIdentity(accessKey: "EXAMPLE_ACCESS_KEY", secret: UUID().uuidString + UUID().uuidString)
+            let creds = AWSCredentialIdentity(accessKey: "AKIA" + String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(16)), secret: UUID().uuidString + UUID().uuidString)
             let resolver = StaticAWSCredentialIdentityResolver(creds)
             var config = try await S3Client.S3ClientConfig(
                 awsCredentialIdentityResolver: resolver,

@@ -71,9 +71,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+RCLONE_ACCESS_KEY="bmadmin$(uuidgen | tr -d '-')"
+RCLONE_SECRET_KEY="$(uuidgen)$(uuidgen)"
 rclone serve s3 \
   --addr "127.0.0.1:$PORT" \
-  --auth-key "bmadmin,$(uuidgen)" \
+  --auth-key "$RCLONE_ACCESS_KEY,$RCLONE_SECRET_KEY" \
   ":local:$DATA" >"$LOG" 2>&1 &
 SERVER=$!
 
@@ -91,7 +93,7 @@ fi
 
 BM_ACCEPT_ENDPOINT="http://127.0.0.1:$PORT" \
 BM_ACCEPT_REGION="us-east-1" \
-BM_ACCEPT_ACCESS_KEY="bmadmin" \
-BM_ACCEPT_SECRET="$(uuidgen)" \
+BM_ACCEPT_ACCESS_KEY="$RCLONE_ACCESS_KEY" \
+BM_ACCEPT_SECRET="$RCLONE_SECRET_KEY" \
 BM_ACCEPT_PATH_STYLE="1" \
   run_acceptance
