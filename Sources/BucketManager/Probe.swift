@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 
 /// Headless S3 signing probe used during development. Reads credentials from
@@ -39,3 +40,4 @@ enum Probe {
         semaphore.wait()
     }
 }
+#endif

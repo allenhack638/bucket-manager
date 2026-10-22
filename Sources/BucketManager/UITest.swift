@@ -1,3 +1,4 @@
+#if DEBUG
 import AppKit
 
 /// Headless interaction checks for the dialog controllers. These call the same
@@ -94,6 +95,19 @@ enum UITest {
               "recursive downloads preserve safe nested paths")
         check(S3Key.safeRelativePath("../../etc/passwd") == "_/_/etc/passwd",
               "recursive downloads cannot escape the destination")
+        check((try? EndpointValidator.normalized("s3.example.com", useSSL: true)) == "https://s3.example.com",
+              "bare endpoints are upgraded to HTTPS")
+        check((try? EndpointValidator.normalized("http://127.0.0.1:9000", useSSL: false)) != nil,
+              "plain HTTP is allowed for loopback endpoints")
+        check((try? EndpointValidator.normalized("http://s3.example.com", useSSL: false)) == nil,
+              "plain HTTP is rejected for remote endpoints")
+        check((try? EndpointValidator.normalized("https://user:pass@example.com", useSSL: true)) == nil,
+              "endpoint userinfo is rejected")
+        check((try? EndpointValidator.normalized("ftp://example.com", useSSL: true)) == nil,
+              "non-HTTP endpoint schemes are rejected")
+        check((try? EndpointValidator.normalized("https://example.com/path?q=1", useSSL: true)) == nil,
+              "endpoint query strings are rejected")
+
         check(S3Key.parentPrefix(of: "folder/sub/item.txt") == "folder/sub/",
               "object keys resolve to their parent prefix")
         check(S3Key.parentPrefix(of: "folder/sub/") == "folder/",
@@ -300,3 +314,4 @@ enum UITest {
         exit(failed == 0 ? 0 : 1)
     }
 }
+#endif

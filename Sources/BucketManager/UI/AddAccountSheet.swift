@@ -196,7 +196,7 @@ final class AddAccountWindowController: NSWindowController {
         }
 
         let endpoint = formRow("Custom endpoint:", endpointField)
-        let endpointHelp = helpRow("For MinIO, Wasabi, Cloudflare R2, Backblaze B2 and other S3-compatible services.")
+        let endpointHelp = helpRow("For MinIO, Wasabi, Cloudflare R2, Backblaze B2 and other S3-compatible services. HTTPS is required for remote hosts; plain HTTP is limited to local/private networks.")
         endpointRow = endpoint
         endpointHelpRow = endpointHelp
         addRow(endpoint, help: nil)
@@ -401,13 +401,10 @@ final class AddAccountWindowController: NSWindowController {
         if requireSecret && secret.isEmpty { return fail("Secret Access Key is required.") }
         if selectedKind == .compatible {
             let endpoint = endpointField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if endpoint.isEmpty {
-                return fail("A custom endpoint is required for S3-compatible storage.")
-            }
-            if endpoint.contains("://"),
-               !endpoint.lowercased().hasPrefix("http://"),
-               !endpoint.lowercased().hasPrefix("https://") {
-                return fail("The endpoint must start with http:// or https://.")
+            do {
+                _ = try EndpointValidator.normalized(endpoint, useSSL: sslCheck.state == .on)
+            } catch {
+                return fail(error.localizedDescription)
             }
         }
         errorLabel.stringValue = ""

@@ -251,7 +251,11 @@ headers, never the secret).
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.
 - Preview renders common image formats and UTF-8 text; other binary objects show a size summary.
 - Versioning, tags, metadata, and ACLs are read-only.
-- Ad-hoc signing means Keychain may re-prompt after each rebuild.
+- Local builds are ad-hoc signed with Hardened Runtime; Developer ID signing and
+  notarization are required for distribution. Ad-hoc rebuilds may re-prompt for
+  Keychain access.
+- The app is not App Sandboxed; see [SECURITY.md](SECURITY.md) for the migration
+  requirements before enabling it.
 - The window uses native macOS traffic lights at top-left; offscreen snapshot
   images do not include the native titlebar controls.
 

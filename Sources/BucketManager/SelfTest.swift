@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 import AWSS3
 import AWSSDKIdentity
@@ -66,3 +67,4 @@ enum SelfTest {
         }
     }
 }
+#endif

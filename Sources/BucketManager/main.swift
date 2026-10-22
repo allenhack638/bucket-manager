@@ -1,6 +1,7 @@
 import AppKit
 import Logging
 
+#if DEBUG
 if ProcessInfo.processInfo.environment["S3C_LOG"] == "1" {
     LoggingSystem.bootstrap { label in
         var handler = StreamLogHandler.standardError(label: label)
@@ -8,6 +9,7 @@ if ProcessInfo.processInfo.environment["S3C_LOG"] == "1" {
         return handler
     }
 }
+#endif
 
 private func argumentValue(_ name: String) -> String? {
     guard let index = CommandLine.arguments.firstIndex(of: name),
@@ -22,6 +24,7 @@ private func parsedSize(default fallback: NSSize) -> NSSize {
     return NSSize(width: w, height: h)
 }
 
+#if DEBUG
 // Hidden diagnostics and offscreen rendering for visual verification.
 if let path = argumentValue("--snapshot") {
     SnapshotRunner.runMain(
@@ -70,6 +73,7 @@ if CommandLine.arguments.contains("--selftest") {
     SelfTest.run()
     exit(0)
 }
+#endif
 
 // AppKit entry point (SwiftPM executable). Keeps the app running as a regular,
 // focusable GUI application.

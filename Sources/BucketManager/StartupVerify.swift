@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 
 /// Hidden diagnostic: reads the saved account, asks for the secret twice to
@@ -39,3 +40,4 @@ enum StartupVerify {
         RunLoop.main.run()
     }
 }
+#endif

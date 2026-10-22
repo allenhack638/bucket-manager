@@ -20,12 +20,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildMainMenu()
         mainWindow.show()
 
+        #if DEBUG
         if CommandLine.arguments.contains("--demo") {
             model.loadDemoData()
             AppLog.shared.log("Demo data loaded for UI automation")
         }
+        #endif
 
-        if accounts.accounts.isEmpty && !CommandLine.arguments.contains("--demo") {
+        if accounts.accounts.isEmpty {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
                 self?.mainWindow.presentAddAccount()
             }

@@ -1,3 +1,4 @@
+#if DEBUG
 import Foundation
 
 /// End-to-end harness against `scripts/fake_s3.py`. It drives the real AWS SDK
@@ -546,3 +547,4 @@ enum E2E {
         RunLoop.main.run()
     }
 }
+#endif

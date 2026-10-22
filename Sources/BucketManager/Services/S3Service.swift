@@ -71,7 +71,7 @@ actor S3Service {
     func client(for account: Account, secret: String) async throws -> S3Client {
         let trimmedSecret = secret.trimmingCharacters(in: .whitespacesAndNewlines)
         let region = account.region.isEmpty ? "us-east-1" : account.region
-        let endpoint = endpointString(for: account)
+        let endpoint = try endpointString(for: account)
         let key = ClientKey(
             accessKey: account.accessKeyID,
             secret: trimmedSecret,
@@ -82,7 +82,7 @@ actor S3Service {
         )
         if let cached = clients[account.id], cached.key == key { return cached.client }
 
-        AppLog.shared.log("S3 credential shape: accessKeyLen=\(account.accessKeyID.count) secretLen=\(secret.count) hasNewline=\(secret.contains("\n")) hasSpace=\(secret.contains(" ")) hasTab=\(secret.contains("\t"))")
+        AppLog.shared.log("S3 credential shape: accessKeyLen=\(account.accessKeyID.count)")
         let credentials = AWSCredentialIdentity(accessKey: account.accessKeyID, secret: trimmedSecret)
         let resolver = StaticAWSCredentialIdentityResolver(credentials)
         var config = try await S3Client.S3ClientConfig(
@@ -91,9 +91,11 @@ actor S3Service {
             endpoint: endpoint
         )
         config.signingRegion = region
+        #if DEBUG
         if ProcessInfo.processInfo.environment["S3C_LOG"] == "1" {
             config.clientLogMode = .request
         }
+        #endif
         if account.usePathStyle { config.forcePathStyle = true }
         if account.kind == .compatible {
             config.interceptorProviders = [S3KeyPathInterceptorProvider(), StripXIDInterceptorProvider()]
@@ -106,19 +108,13 @@ actor S3Service {
         return client
     }
 
-    private func endpointString(for account: Account) -> String? {
+    private func endpointString(for account: Account) throws -> String? {
         guard account.kind == .compatible else { return nil }
-        guard var endpoint = account.endpoint?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !endpoint.isEmpty else { return nil }
-        let lower = endpoint.lowercased()
-        if lower.hasPrefix("http://") {
-            if account.useSSL { endpoint = "https://" + endpoint.dropFirst(7) }
-        } else if lower.hasPrefix("https://") {
-            if !account.useSSL { endpoint = "http://" + endpoint.dropFirst(8) }
-        } else {
-            endpoint = (account.useSSL ? "https://" : "http://") + endpoint
+        do {
+            return try EndpointValidator.normalized(account.endpoint ?? "", useSSL: account.useSSL)
+        } catch {
+            throw S3ServiceError.invalidEndpoint
         }
-        return endpoint
     }
 
     func invalidateClient(_ accountID: UUID) {
@@ -451,7 +447,11 @@ actor S3Service {
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         if !fileManager.fileExists(atPath: url.path) {
-            fileManager.createFile(atPath: url.path, contents: nil)
+            fileManager.createFile(
+                atPath: url.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            )
         }
         let handle = try FileHandle(forWritingTo: url)
         try handle.truncate(atOffset: 0)

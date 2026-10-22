@@ -1,3 +1,4 @@
+#if DEBUG
 import AppKit
 
 @MainActor
@@ -138,3 +139,4 @@ enum SnapshotRunner {
         for subview in view.subviews { auditAccessibility(subview, depth: depth + 1) }
     }
 }
+#endif

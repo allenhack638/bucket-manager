@@ -21,9 +21,9 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 ./make-app.sh release
 ```
 
-The script signs the bundle with the hardened runtime and a secure timestamp.
-Unsigned local builds continue to use ad-hoc signing when `CODESIGN_IDENTITY`
-is omitted.
+The script signs the bundle with the hardened runtime and a secure timestamp,
+then runs `codesign --verify --strict`. Local builds use ad-hoc signing with the
+same Hardened Runtime when `CODESIGN_IDENTITY` is omitted.
 
 ## Notarize
 

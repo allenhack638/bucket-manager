@@ -46,13 +46,15 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signing is enough for local development. Set CODESIGN_IDENTITY to a
-# Developer ID Application certificate for a distributable, notarizable build.
+# Hardened Runtime is enabled for every build, including ad-hoc development
+# builds. Set CODESIGN_IDENTITY to a Developer ID Application certificate for a
+# distributable, notarizable build.
 if [ "$CODESIGN_IDENTITY" = "-" ]; then
-  codesign --force --deep --sign - "$APP_DIR" 2>/dev/null || true
+  codesign --force --options runtime --sign - "$APP_DIR"
 else
-  codesign --force --deep --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_DIR"
+  codesign --force --options runtime --timestamp --sign "$CODESIGN_IDENTITY" "$APP_DIR"
 fi
+codesign --verify --strict --verbose=2 "$APP_DIR"
 
 echo "Created $APP_DIR (version $VERSION, build $BUILD_NUMBER)"
 echo "Run with: open \"$APP_DIR\"   (or: $MACOS_DIR/$APP_NAME for console logs)"
