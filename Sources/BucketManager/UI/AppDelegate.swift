@@ -12,6 +12,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appearanceMode = .saved
         NSApp.appearance = appearanceMode.appearance
         AppLog.shared.log("Launched Bucket Manager; \(accounts.accounts.count) saved account(s); log=\(AppLog.path)")
+        LogStore.shared.audit(
+            event: "app.launched",
+            message: "Bucket Manager launched",
+            outcome: "success",
+            metadata: ["accounts": String(accounts.accounts.count)]
+        )
         if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
             NSApp.applicationIconImage = icon
@@ -77,6 +83,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let refresh = NSMenuItem(title: "Refresh", action: #selector(MainWindowController.refreshAction), keyEquivalent: "r")
         refresh.target = mainWindow
         viewMenu.addItem(refresh)
+        let logs = NSMenuItem(title: "Logs & Statistics…", action: #selector(MainWindowController.showLogsAction), keyEquivalent: "l")
+        logs.keyEquivalentModifierMask = [.command, .option]
+        logs.target = mainWindow
+        viewMenu.addItem(logs)
         let eventLog = NSMenuItem(title: "Show Event Log", action: #selector(MainWindowController.showEventLogAction), keyEquivalent: "l")
         eventLog.keyEquivalentModifierMask = [.command, .shift]
         eventLog.target = mainWindow

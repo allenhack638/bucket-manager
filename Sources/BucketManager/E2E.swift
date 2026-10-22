@@ -82,7 +82,7 @@ enum E2E {
                 usePathStyle: true,
                 useSSL: false
             )
-            let secret = UUID().uuidString
+            let secret = "e2e-" + UUID().uuidString.lowercased()
             let store = AccountStore(inMemoryAccounts: [account], secrets: [account.id: secret])
             let folderCacheURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("s3c-folder-stats-\(UUID().uuidString).json")
@@ -90,6 +90,15 @@ enum E2E {
             let folderCache = FolderStatsCache(fileURL: folderCacheURL)
             let model = BrowserModel(accounts: store, folderStatsCache: folderCache)
             let service = S3Service.shared
+            let logs = LogStore.shared
+            var loggingSettings = logs.currentSettings()
+            loggingSettings.diagnosticsEnabled = true
+            loggingSettings.minimumLevel = .debug
+            loggingSettings.auditEnabled = true
+            loggingSettings.includeObjectKeys = true
+            logs.updateSettings(loggingSettings)
+            try? store.update(account, secret: nil)
+            logs.flush()
 
             do {
                 let buckets = try await service.listBuckets(
@@ -117,6 +126,29 @@ enum E2E {
             } catch {
                 check(false, "alpha listing failed: \(error)")
             }
+
+            await resetStats()
+            let metricsBefore = RequestMetricsStore.shared.snapshot()
+            do {
+                _ = try await service.list(
+                    account: account, secret: secret, bucket: "alpha",
+                    prefix: "", useCache: false
+                )
+            } catch {
+                check(false, "metrics list request failed: \(error)")
+            }
+            let metricsAfter = RequestMetricsStore.shared.snapshot()
+            let metricKey = "\(account.id.uuidString)|alpha|ListObjectsV2"
+            let beforeCount = metricsBefore.first { $0.id == metricKey }?.count ?? 0
+            let afterCount = metricsAfter.first { $0.id == metricKey }?.count ?? 0
+            check(afterCount - beforeCount == 1,
+                  "request metrics count a ListObjectsV2 request")
+            logs.flush()
+            let requestRecords = logs.recent()
+            check(requestRecords.contains {
+                $0.category == .s3Request && $0.operation == "ListObjectsV2"
+                    && $0.bucket == "alpha" && $0.outcome == "success"
+            }, "structured S3 request log is written")
 
             do {
                 let details = try await service.objectDetails(
@@ -802,6 +834,33 @@ enum E2E {
             check((await objects())[boundaryName] == threshold + 1,
                   "boundary multipart object has the full size")
             try? FileManager.default.removeItem(at: boundaryURL)
+
+            logs.flush()
+            let finalLogs = logs.recent(limit: 20_000)
+            check(finalLogs.contains { $0.event == "object.uploaded" && $0.category == .audit },
+                  "upload completion is audited")
+            check(finalLogs.contains { $0.event == "multipart.completed" && $0.category == .audit },
+                  "multipart completion is audited")
+            check(finalLogs.contains { $0.event == "account.updated" && $0.category == .audit },
+                  "account changes are audited")
+            check(finalLogs.contains { $0.event == "settings.logging.changed" && $0.category == .audit },
+                  "logging settings changes are audited")
+            let finalMetrics = RequestMetricsStore.shared.snapshot()
+            check(finalMetrics.contains { $0.accountID == account.id && $0.bucket == "alpha" },
+                  "request metrics are grouped by account and bucket")
+            check(finalMetrics.contains { $0.bucket == "denied" && $0.failures > 0 },
+                  "request metrics count denied requests")
+            let logFiles = (try? FileManager.default.contentsOfDirectory(
+                at: LogStore.defaultDirectoryURL,
+                includingPropertiesForKeys: nil
+            )) ?? []
+            let allLogText = logFiles.compactMap {
+                try? String(contentsOf: $0, encoding: .utf8)
+            }.joined(separator: "\n")
+            check(!allLogText.isEmpty, "log files contain records")
+            check(!allLogText.contains(secret), "secrets never appear in log files")
+            check(!allLogText.lowercased().contains("authorization"),
+                  "authorization headers never appear in log files")
 
             print("E2E SUMMARY passed=\(passed) failed=\(failed)")
             exit(failed == 0 ? 0 : 1)

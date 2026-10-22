@@ -33,5 +33,11 @@ enum AppAppearance: String, CaseIterable {
     static func apply(_ mode: AppAppearance) {
         NSApp.appearance = mode.appearance
         UserDefaults.standard.set(mode.rawValue, forKey: defaultsKey)
+        LogStore.shared.audit(
+            event: "settings.appearance.changed",
+            message: "Appearance setting changed",
+            outcome: "success",
+            metadata: ["mode": mode.rawValue]
+        )
     }
 }

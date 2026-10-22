@@ -379,9 +379,154 @@ enum UITest {
             check(tabStrip.accessibilityRole() == .tabGroup,
                   "inspector tab strip exposes the tab-group role")
 
+            let logDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("s3c-log-test-\(UUID().uuidString)", isDirectory: true)
+            let defaultsName = "BucketManagerLoggingTests-\(UUID().uuidString)"
+            let testDefaults = UserDefaults(suiteName: defaultsName) ?? .standard
+            testDefaults.removePersistentDomain(forName: defaultsName)
+            let logStore = LogStore(directoryURL: logDirectory, defaults: testDefaults)
+            let initialSettings = logStore.currentSettings()
+            check(!initialSettings.diagnosticsEnabled, "diagnostic logging defaults off")
+            check(initialSettings.auditEnabled, "audit logging defaults on")
 
+            logStore.log(.info, category: .app, event: "test.disabled", message: "hidden")
+            logStore.audit(event: "test.audit", message: "visible audit")
+            logStore.flush()
+            let defaultRecords = logStore.recent()
+            check(defaultRecords.contains { $0.event == "test.audit" },
+                  "audit records are written while diagnostics are off")
+            check(!defaultRecords.contains { $0.event == "test.disabled" },
+                  "diagnostic records are suppressed by default")
 
+            var enabled = initialSettings
+            enabled.diagnosticsEnabled = true
+            enabled.minimumLevel = .debug
+            enabled.includeObjectKeys = false
+            logStore.updateSettings(enabled)
+            logStore.log(
+                .debug,
+                category: .s3Request,
+                event: "test.request",
+                message: "request",
+                accountID: UUID(),
+                accountName: "Test",
+                bucket: "bucket",
+                key: "private/key.txt",
+                operation: "ListObjectsV2",
+                outcome: "success",
+                metadata: [
+                    "Authorization": "super-secret-value",
+                    "x-amz-security-token": "super-secret-value"
+                ]
+            )
+            logStore.flush()
+            let diagnosticRecords = logStore.recent()
+            check(diagnosticRecords.contains { $0.event == "test.request" },
+                  "enabled diagnostics write structured records")
+            check(diagnosticRecords.first { $0.event == "test.request" }?.key == nil,
+                  "object keys are redacted when disabled")
+            check(diagnosticRecords.first { $0.event == "test.request" }?.metadata["Authorization"] == "<redacted>",
+                  "authorization metadata is redacted")
+            let diagnosticFiles = (try? FileManager.default.contentsOfDirectory(
+                at: logDirectory, includingPropertiesForKeys: nil
+            )) ?? []
+            let diagnosticFile = diagnosticFiles.first { $0.lastPathComponent.hasPrefix("diagnostic-") }
+            let diagnosticText = diagnosticFile.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
+            check(!diagnosticText.contains("super-secret-value"),
+                  "redacted secrets never reach disk")
+            let permissions = diagnosticFile.flatMap {
+                (try? FileManager.default.attributesOfItem(atPath: $0.path)[.posixPermissions] as? NSNumber)?
+                    .intValue
+            } ?? 0
+            check(permissions == 0o600, "diagnostic log files are owner-only")
 
+            var rotationSettings = logStore.currentSettings()
+            rotationSettings.diagnosticsEnabled = true
+            rotationSettings.minimumLevel = .trace
+            rotationSettings.maxFileBytes = 200
+            rotationSettings.diagnosticRetentionDays = 1
+            let oldLog = logDirectory.appendingPathComponent("diagnostic-2000-01-01.jsonl")
+            try? Data("{}\n".utf8).write(to: oldLog)
+            logStore.updateSettings(rotationSettings)
+            logStore.flush()
+            check(!FileManager.default.fileExists(atPath: oldLog.path),
+                  "retention removes expired diagnostic files")
+            for index in 0..<10 {
+                logStore.log(
+                    .info, category: .app, event: "rotation.\(index)",
+                    message: String(repeating: "x", count: 300)
+                )
+            }
+            logStore.flush()
+            let rotatedFiles = (try? FileManager.default.contentsOfDirectory(
+                at: logDirectory, includingPropertiesForKeys: nil
+            )) ?? []
+            check(rotatedFiles.contains { $0.lastPathComponent.hasSuffix(".jsonl.1") },
+                  "size rotation keeps a backup log file")
+
+            enabled.minimumLevel = .error
+            logStore.updateSettings(enabled)
+            logStore.log(.warning, category: .app, event: "test.warning", message: "filtered")
+            logStore.flush()
+            check(!logStore.recent().contains { $0.event == "test.warning" },
+                  "minimum log level filters lower-severity records")
+
+            let metricsURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("s3c-metrics-test-\(UUID().uuidString).json")
+            let metrics = RequestMetricsStore(fileURL: metricsURL)
+            let metricsAccount = Account(
+                displayName: "Metrics Test",
+                accessKeyID: "KEY",
+                kind: .compatible,
+                endpoint: "https://example.com"
+            )
+            metrics.record(
+                account: metricsAccount, bucket: "alpha", operation: "ListObjectsV2",
+                outcome: "success", durationMs: 12, bytes: 100
+            )
+            metrics.record(
+                account: metricsAccount, bucket: "alpha", operation: "GetObject",
+                outcome: "failure", durationMs: 30
+            )
+            let metricSnapshot = metrics.snapshot()
+            check(metricSnapshot.contains { $0.operation == "ListObjectsV2" && $0.count == 1 && $0.bytes == 100 },
+                  "request metrics aggregate per operation")
+            check(metricSnapshot.contains { $0.operation == "GetObject" && $0.failures == 1 },
+                  "request metrics count failures")
+            metrics.flush()
+            let metricsPermissions = (try? FileManager.default.attributesOfItem(
+                atPath: metricsURL.path
+            )[.posixPermissions] as? NSNumber)?.intValue ?? 0
+            check(metricsPermissions == 0o600, "request metrics file is owner-only")
+            let reopenedMetrics = RequestMetricsStore(fileURL: metricsURL)
+            let reloadedMetrics = reopenedMetrics.snapshot()
+            check(reloadedMetrics.contains { $0.operation == "ListObjectsV2" && $0.count == 1 },
+                  "request metrics persist across store reload")
+            check(reloadedMetrics.allSatisfy { $0.sessionCount == 0 },
+                  "request metric session counts reset on reload")
+            reopenedMetrics.clear()
+            check(reopenedMetrics.snapshot().isEmpty, "request metrics can be cleared")
+            reopenedMetrics.record(
+                account: metricsAccount, bucket: "alpha", operation: "ListObjectsV2",
+                outcome: "success", durationMs: 8, bytes: 50
+            )
+            let logsWindow = LogsWindowController(logStore: logStore, metricsStore: reopenedMetrics)
+            logsWindow.reloadForTesting()
+            check(logsWindow.testVisibleLogCount > 0,
+                  "logs window loads persisted audit records")
+            check(logsWindow.testMetricRowCount > 0,
+                  "logs window loads request statistics")
+            logsWindow.testSetSearch("no-such-record-\(UUID().uuidString)")
+            check(logsWindow.testVisibleLogCount == 0,
+                  "logs search filters records")
+            logsWindow.testSetSearch("test.audit")
+            check(logsWindow.testVisibleLogCount > 0,
+                  "logs search finds matching records")
+            logsWindow.window?.close()
+
+            try? FileManager.default.removeItem(at: logDirectory)
+            try? FileManager.default.removeItem(at: metricsURL)
+            testDefaults.removePersistentDomain(forName: defaultsName)
 
         print("UITEST SUMMARY passed=\(passed) failed=\(failed)")
         exit(failed == 0 ? 0 : 1)

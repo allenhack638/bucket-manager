@@ -42,8 +42,13 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
 - **Inspector tabs** — Tasks, Permissions (ACL), Headers, Tags, Properties, Preview,
   Versions, Event Log. Details are loaded on demand so selecting rows does not
   bombard the endpoint.
-- **Bookmarks**, **Generate Web URL** (copies a URL to the clipboard), and an
-  on-disk **event log**.
+- **Bookmarks** and **Generate Web URL** (copies a URL to the clipboard).
+- **Logs & Statistics** — diagnostic logging is off by default; enabling it records
+  structured request/UI events by level and category. Audit logging is always on for
+  account, bucket, object, transfer, and settings changes. A dedicated window provides
+  search, level/category/account filters, live tail, detail inspection, redacted export,
+  per-account/bucket request counters, and logging settings. Credentials, authorization
+  headers, and signatures are never logged.
 - **Appearance** — native macOS **View → Appearance** with System, Light, and Dark
   modes. The custom chrome, tables, inspector, transfer footer, and menus all follow
   the selected appearance.
@@ -123,11 +128,17 @@ The browser is deliberately conservative with an S3 endpoint:
 - Transfers cap at four concurrent requests. Credentials are removed from queue
   memory when a task completes, fails or is cancelled.
 
-Logs are written to:
+Logs are stored as structured JSONL under:
 
 ```
-~/Library/Logs/BucketManager/app.log
+~/Library/Logs/BucketManager/diagnostic-YYYY-MM-DD.jsonl
+~/Library/Logs/BucketManager/audit-YYYY-MM-DD.jsonl
 ```
+
+Diagnostic logging is off by default. Audit records are always retained and contain
+no credentials, authorization headers, or signatures. Both use `0600` files inside a
+`0700` directory. Request counters live in
+`~/Library/Application Support/BucketManager/request-metrics.json` (`0600`).
 
 ## Keyboard shortcuts
 
@@ -145,6 +156,7 @@ Logs are written to:
 | ⌘I | Properties |
 | ⇧⌘V | Versions |
 | ⌥⌘N / ⌥⌘M | Add / Manage accounts |
+| ⌥⌘L | Open Logs & Statistics |
 | F2 | Rename |
 | Delete | Delete selected |
 | Esc | Go to parent folder |
@@ -166,16 +178,19 @@ Sources/BucketManager/
     Components.swift         FlatButton, checkbox, progress, InfoTextView, …
     Chrome.swift             custom title bar + in-app menu bar
     Theme.swift              theme colors, fonts, metrics
-  Models/                    Account, S3Item, S3Key, BucketNode, EndpointValidator,
-                             MultipartUploadRecord
+    LogsWindowController     Logs, Statistics, and logging settings
+  Models/                    LogRecord, LoggingSettings, Account, S3Item, S3Key,
+                             BucketNode, EndpointValidator, MultipartUploadRecord
   Services/
     S3Service                clients, listing, metadata, transfers, cache, multipart
     TransferQueue            queue, concurrency, progress, speed, resume/cancel
     MultipartUploadStore     resumable part state (0600 JSON)
+    LogStore                 structured JSONL logs, rotation, retention, redaction
+    RequestMetricsStore      per-account/bucket/operation request counters
     KeychainStore            secrets
     AccountStore             account JSON + secret lookup
     StripXIDInterceptor     S3-compatible signing fix
-    AppLog                   stderr + size-rotated file log
+    AppLog                   compatibility bridge into LogStore
   ViewModels/BrowserModel    state, operations, inspector loaders
   Debug harness (excluded from release builds):
   SnapshotRunner.swift       offscreen PNG rendering for UI review
@@ -237,9 +252,12 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet add --out add.png --size 640x500
 .build/debug/BucketManager --snapshot-sheet edit --out edit.png --size 640x600
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
+.build/debug/BucketManager --snapshot-logs logs.png --size 1080x680
+.build/debug/BucketManager --snapshot-logs statistics.png --size 1080x680 --tab stats
+.build/debug/BucketManager --snapshot-logs settings.png --size 1080x680 --tab settings
 ```
 
-The current suite is 84 dialog/model checks plus 117 end-to-end checks. The
+The current suite is 106 dialog/model checks plus 128 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
@@ -273,6 +291,9 @@ headers, never the secret).
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.
 - Preview renders common image formats and UTF-8 text; other binary objects show a size summary.
 - Versioning, tags, metadata, and ACLs are read-only.
+- Diagnostic logs default off and are pruned after 14 days; audit logs are always on
+  and retained for 90 days. Request counters persist across launches; session and
+  all-time totals are shown in Statistics.
 - Local builds are ad-hoc signed with Hardened Runtime; Developer ID signing and
   notarization are required for distribution. Ad-hoc rebuilds may re-prompt for
   Keychain access.

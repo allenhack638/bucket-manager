@@ -431,6 +431,11 @@ final class BrowserModel {
         selectedBucket = nil
         prefix = ""
         filterText = ""
+        LogStore.shared.log(
+            .info, category: .ui, event: "ui.account.opened",
+            message: "Account opened", accountID: account.id,
+            accountName: account.displayName
+        )
         if accountChanged { buckets = [] }
         items = []
         nextToken = nil
@@ -486,7 +491,7 @@ final class BrowserModel {
             } else {
                 bucketError = detail
             }
-            AppLog.shared.error("List buckets failed: \(String(describing: error))")
+            AppLog.shared.error("List buckets failed: \(S3ErrorPresenter.message(for: error))")
             onTreeChange?()
             onChromeChange?()
         }
@@ -521,6 +526,12 @@ final class BrowserModel {
         errorMessage = nil
         status = "Loading \(bucket)/\(newPrefix)"
         isBusy = true
+        LogStore.shared.log(
+            .info, category: .ui, event: "ui.bucket.opened",
+            message: "Bucket opened", accountID: account.id,
+            accountName: account.displayName, bucket: bucket,
+            operation: "openBucket", metadata: ["prefix": newPrefix]
+        )
         resetInspector()
         onTreeChange?()
         onFilesChange?()
@@ -551,6 +562,12 @@ final class BrowserModel {
         errorMessage = nil
         status = "Loading \(selectedBucket ?? "")/\(prefix)"
         isBusy = true
+        LogStore.shared.log(
+            .info, category: .ui, event: "ui.prefix.opened",
+            message: "Prefix opened", accountID: account.id,
+            accountName: account.displayName, bucket: bucket,
+            operation: "openPrefix", metadata: ["prefix": newPrefix]
+        )
         resetInspector()
         onFilesChange?()
         onChromeChange?()
@@ -614,7 +631,7 @@ final class BrowserModel {
                   selectedAccount?.id == account.id else { return }
             isLoadingBuckets = false
             bucketError = S3ErrorPresenter.message(for: error)
-            AppLog.shared.error("Refresh buckets failed: \(String(describing: error))")
+            AppLog.shared.error("Refresh buckets failed: \(S3ErrorPresenter.message(for: error))")
             onTreeChange?()
         }
     }
@@ -677,7 +694,7 @@ final class BrowserModel {
                   selectedAccount?.id == account.id,
                   selectedBucket == bucket,
                   prefix == targetPrefix else { return }
-            AppLog.shared.error("List bucket=\(bucket) prefix=\(targetPrefix): \(String(describing: error))")
+            AppLog.shared.error("List bucket=\(bucket) prefix=\(targetPrefix): \(S3ErrorPresenter.message(for: error))")
             setError(error)
         }
 
@@ -796,6 +813,12 @@ final class BrowserModel {
 
     func setCalculateFolderSizes(_ enabled: Bool) {
         calculateFolderSizes = enabled
+        LogStore.shared.audit(
+            event: "settings.folder_sizes.changed",
+            message: "Folder size setting changed",
+            outcome: "success",
+            metadata: ["enabled": String(enabled)]
+        )
         if !enabled {
             folderStats.cancelAll()
             onFilesChange?()
@@ -1055,6 +1078,19 @@ final class BrowserModel {
             errorMessage = failures.joined(separator: "\n")
             status = "Some deletes failed"
         }
+        auditOperation(
+            event: targets.count == 1 ? "object.deleted" : "objects.deleted",
+            message: failures.isEmpty ? "Objects deleted" : "Some objects failed to delete",
+            account: account,
+            bucket: bucket,
+            key: selected.count == 1 ? selected[0].key : nil,
+            outcome: failures.isEmpty ? "success" : "failure",
+            metadata: [
+                "count": String(targets.count),
+                "folders": String(selected.filter { $0.kind == .folder }.count),
+                "failed": String(failures.count)
+            ]
+        )
         isBusy = false
         onChromeChange?()
     }
@@ -1082,10 +1118,25 @@ final class BrowserModel {
         do {
             try await service.createFolder(account: account, secret: secret, bucket: bucket, prefix: prefix, name: clean)
             appendLog("Created folder \(prefix + clean)/")
+            auditOperation(
+                event: "folder.created",
+                message: "Folder created",
+                account: account,
+                bucket: bucket,
+                key: prefix + clean + "/"
+            )
             await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
             folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
             await reload(useCache: false)
         } catch {
+            auditOperation(
+                event: "folder.create.failed",
+                message: "Folder creation failed",
+                account: account,
+                bucket: bucket,
+                key: prefix + clean + "/",
+                outcome: "failure"
+            )
             setError(error)
         }
     }
@@ -1113,9 +1164,25 @@ final class BrowserModel {
             )
             try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
             appendLog("Renamed \(item.key) to \(destination)")
+            auditOperation(
+                event: "object.renamed",
+                message: "Object renamed",
+                account: account,
+                bucket: bucket,
+                key: destination,
+                metadata: ["sourceKey": item.key]
+            )
             folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
             await reload(useCache: false)
         } catch {
+            auditOperation(
+                event: "object.rename.failed",
+                message: "Object rename failed",
+                account: account,
+                bucket: bucket,
+                key: destination,
+                outcome: "failure"
+            )
             setError(error)
         }
     }
@@ -1172,6 +1239,22 @@ final class BrowserModel {
             errorMessage = failures.joined(separator: "\n")
             status = "Some \(move ? "moves" : "copies") failed"
         }
+        auditOperation(
+            event: move ? "objects.moved" : "objects.copied",
+            message: failures.isEmpty
+                ? (move ? "Objects moved" : "Objects copied")
+                : "Some object transfers failed",
+            account: account,
+            bucket: toBucket,
+            key: toPrefix,
+            outcome: failures.isEmpty ? "success" : "failure",
+            metadata: [
+                "count": String(selected.count),
+                "failed": String(failures.count),
+                "sourceBucket": bucket,
+                "sourcePrefix": prefix
+            ]
+        )
         isBusy = false
         onChromeChange?()
     }
@@ -1213,6 +1296,14 @@ final class BrowserModel {
                 }
             }
             appendLog("Pasted \(clipboard.count) object(s) into \(currentPath)")
+            auditOperation(
+                event: clipboardIsCut ? "clipboard.moved" : "clipboard.copied",
+                message: "Clipboard paste completed",
+                account: account,
+                bucket: bucket,
+                key: prefix,
+                metadata: ["count": String(clipboard.count)]
+            )
             let pastedEntries = clipboard
             if clipboardIsCut { clipboard = [] }
             status = "Ready"
@@ -1238,8 +1329,21 @@ final class BrowserModel {
         do {
             try await service.createBucket(account: account, secret: secret, name: name)
             appendLog("Created bucket \(name)")
+            auditOperation(
+                event: "bucket.created",
+                message: "Bucket created",
+                account: account,
+                bucket: name
+            )
             await refreshBuckets()
         } catch {
+            auditOperation(
+                event: "bucket.create.failed",
+                message: "Bucket creation failed",
+                account: account,
+                bucket: name,
+                outcome: "failure"
+            )
             setError(error)
         }
     }
@@ -1253,6 +1357,12 @@ final class BrowserModel {
         do {
             try await service.deleteBucket(account: account, secret: secret, name: name)
             appendLog("Deleted bucket \(name)")
+            auditOperation(
+                event: "bucket.deleted",
+                message: "Bucket deleted",
+                account: account,
+                bucket: name
+            )
             folderStats.invalidateBucket(accountID: account.id, bucket: name)
             if selectedBucket == name {
                 selectedBucket = nil
@@ -1262,8 +1372,36 @@ final class BrowserModel {
             onFilesChange?()
             onChromeChange?()
         } catch {
+            auditOperation(
+                event: "bucket.delete.failed",
+                message: "Bucket deletion failed",
+                account: account,
+                bucket: name,
+                outcome: "failure"
+            )
             setError(error)
         }
+    }
+
+    private func auditOperation(
+        event: String,
+        message: String,
+        account: Account,
+        bucket: String?,
+        key: String? = nil,
+        outcome: String = "success",
+        metadata: [String: String] = [:]
+    ) {
+        LogStore.shared.audit(
+            event: event,
+            message: message,
+            accountID: account.id,
+            accountName: account.displayName,
+            bucket: bucket,
+            key: key,
+            outcome: outcome,
+            metadata: metadata
+        )
     }
 
     // MARK: - Inspector
@@ -1552,7 +1690,7 @@ final class BrowserModel {
     private func setError(_ error: Error) {
         errorMessage = S3ErrorPresenter.message(for: error)
         status = "Error"
-        AppLog.shared.error("\(errorMessage ?? "")\nRAW: \(String(describing: error))")
+        AppLog.shared.error(errorMessage ?? "S3 operation failed")
         appendLog("Error: \(errorMessage ?? "")")
         onChromeChange?()
     }

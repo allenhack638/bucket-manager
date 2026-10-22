@@ -27,3 +27,8 @@
 - Add regression coverage for account edit, endpoint changes, type switching, update, and removal.
 - Support bucket-scoped credentials by letting accounts specify one bucket and skip ListBuckets.
 - Test Connection checks the configured bucket directly for bucket-scoped accounts.
+- Add structured JSONL diagnostic and audit logging with levels, categories, filtering, live tail, redacted export, and owner-only retention.
+- Add always-on audit events for accounts, buckets, objects, transfers, folders, settings, and app lifecycle.
+- Add per-account/bucket/operation request counters with session and all-time statistics.
+- Add a Logs & Statistics window with logging settings; diagnostic logging defaults off.
+- Instrument every S3 request with duration, bytes, outcome, and redacted error context without logging credentials, authorization headers, or signatures.

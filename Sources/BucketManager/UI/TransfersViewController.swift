@@ -447,6 +447,10 @@ final class TransfersViewController: NSViewController {
     }
 
     func selectTab(_ id: String) {
+        LogStore.shared.log(
+            .debug, category: .ui, event: "ui.tab.changed",
+            message: "Inspector tab changed", metadata: ["tab": id]
+        )
         pendingDetailLoad?.cancel()
         pendingDetailLoad = nil
         selectedTab = id

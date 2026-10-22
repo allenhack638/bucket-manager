@@ -13,10 +13,30 @@ cd "$(dirname "$0")/.."
 
 swift build >/dev/null
 
+LOGDIR=$(mktemp -d /tmp/bm-acceptance-logs.XXXXXX)
+METRICS=$(mktemp /tmp/bm-acceptance-metrics.XXXXXX)
+MULTIPART=$(mktemp /tmp/bm-acceptance-multipart.XXXXXX)
+SETTINGS_SUITE="BucketManagerAcceptanceSettings.$$"
+rm -f "$METRICS" "$MULTIPART"
+cleanup_runtime() {
+  rm -rf "$LOGDIR" "$METRICS" "$MULTIPART"
+  defaults delete "$SETTINGS_SUITE" >/dev/null 2>&1 || true
+}
+trap cleanup_runtime EXIT
+
+run_acceptance() {
+  S3C_LOG_DIR="$LOGDIR" \
+  S3C_METRICS_FILE="$METRICS" \
+  S3C_MULTIPART_STATE="$MULTIPART" \
+  S3C_LOG_SETTINGS_SUITE="$SETTINGS_SUITE" \
+    .build/debug/BucketManager --acceptance
+}
+
 if [ -n "${BM_ACCEPT_ENDPOINT:-}" ]; then
   : "${BM_ACCEPT_ACCESS_KEY:?set BM_ACCEPT_ACCESS_KEY}"
   : "${BM_ACCEPT_SECRET:?set BM_ACCEPT_SECRET}"
-  exec .build/debug/BucketManager --acceptance
+  run_acceptance
+  exit $?
 fi
 
 if ! command -v rclone >/dev/null 2>&1; then
@@ -43,6 +63,7 @@ cleanup() {
     wait "$SERVER" 2>/dev/null || true
   fi
   rm -rf "$DATA"
+  cleanup_runtime
 }
 trap cleanup EXIT
 
@@ -69,4 +90,4 @@ BM_ACCEPT_REGION="us-east-1" \
 BM_ACCEPT_ACCESS_KEY="bmadmin" \
 BM_ACCEPT_SECRET="$(uuidgen)" \
 BM_ACCEPT_PATH_STYLE="1" \
-  .build/debug/BucketManager --acceptance
+  run_acceptance

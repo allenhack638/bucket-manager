@@ -39,6 +39,15 @@ if let path = argumentValue("--snapshot") {
     exit(0)
 }
 
+if let path = argumentValue("--snapshot-logs") {
+    SnapshotRunner.runLogs(
+        path: path,
+        size: parsedSize(default: NSSize(width: 1080, height: 680)),
+        tab: argumentValue("--tab")
+    )
+    exit(0)
+}
+
 if let kind = argumentValue("--snapshot-sheet") {
     SnapshotRunner.runSheet(
         path: argumentValue("--out") ?? ".commandcode/refs/sheet-\(kind).png",

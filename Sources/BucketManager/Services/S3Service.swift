@@ -90,7 +90,6 @@ actor S3Service {
         )
         if let cached = clients[account.id], cached.key == key { return cached.client }
 
-        AppLog.shared.log("S3 credential shape: accessKeyLen=\(account.accessKeyID.count)")
         let credentials = AWSCredentialIdentity(accessKey: account.accessKeyID, secret: trimmedSecret)
         let resolver = StaticAWSCredentialIdentityResolver(credentials)
         var config = try await S3Client.S3ClientConfig(
@@ -112,7 +111,20 @@ actor S3Service {
         }
         let client = S3Client(config: config)
         clients[account.id] = (client, key)
-        AppLog.shared.log("S3 client: account=\"\(account.displayName)\" kind=\(account.kind.rawValue) region=\(region) endpoint=\(endpoint ?? "aws") pathStyle=\(account.usePathStyle)")
+        LogStore.shared.log(
+            .info,
+            category: .security,
+            event: "s3.client.created",
+            message: "S3 client created",
+            accountID: account.id,
+            accountName: account.displayName,
+            metadata: [
+                "kind": account.kind.rawValue,
+                "region": region,
+                "endpointHost": LogRedactor.endpointHost(endpoint) ?? "aws",
+                "pathStyle": String(account.usePathStyle)
+            ]
+        )
         return client
     }
 
@@ -131,6 +143,71 @@ actor S3Service {
         listCache = listCache.filter { $0.key.account != accountID }
     }
 
+    private func measured<T>(
+        _ operation: String,
+        account: Account,
+        bucket: String? = nil,
+        key: String? = nil,
+        bytes: Int64 = 0,
+        _ request: () async throws -> T
+    ) async throws -> T {
+        let started = Date()
+        do {
+            let result = try await request()
+            let duration = Date().timeIntervalSince(started) * 1_000
+            RequestMetricsStore.shared.record(
+                account: account,
+                bucket: bucket,
+                operation: operation,
+                outcome: "success",
+                durationMs: duration,
+                bytes: bytes
+            )
+            LogStore.shared.log(
+                .debug,
+                category: .s3Request,
+                event: "s3.request",
+                message: "\(operation) succeeded",
+                accountID: account.id,
+                accountName: account.displayName,
+                bucket: bucket,
+                key: key,
+                operation: operation,
+                outcome: "success",
+                durationMs: duration,
+                bytes: bytes
+            )
+            return result
+        } catch {
+            let duration = Date().timeIntervalSince(started) * 1_000
+            let canceled = error is CancellationError
+            let outcome = canceled ? "canceled" : "failure"
+            RequestMetricsStore.shared.record(
+                account: account,
+                bucket: bucket,
+                operation: operation,
+                outcome: outcome,
+                durationMs: duration
+            )
+            LogStore.shared.log(
+                canceled ? .debug : .warning,
+                category: .s3Request,
+                event: "s3.request",
+                message: "\(operation) \(canceled ? "canceled" : "failed")",
+                accountID: account.id,
+                accountName: account.displayName,
+                bucket: bucket,
+                key: key,
+                operation: operation,
+                outcome: outcome,
+                durationMs: duration,
+                requestID: LogRedactor.requestID(from: error),
+                metadata: canceled ? [:] : ["error": S3ErrorPresenter.message(for: error)]
+            )
+            throw error
+        }
+    }
+
     // MARK: - Buckets
 
     func listBuckets(account: Account, secret: String, useCache: Bool = true) async throws -> [S3Bucket] {
@@ -138,20 +215,16 @@ actor S3Service {
             return hit.buckets
         }
         let client = try await client(for: account, secret: secret)
-        AppLog.shared.log("listBuckets start account=\"\(account.displayName)\"")
-        let output: ListBucketsOutput
-        do {
-            output = try await throttle.run { try await client.listBuckets(input: ListBucketsInput()) }
-        } catch {
-            AppLog.shared.error("listBuckets failed account=\"\(account.displayName)\": \(String(describing: error))")
-            throw error
+        let output: ListBucketsOutput = try await measured(
+            "ListBuckets", account: account, key: nil
+        ) {
+            try await throttle.run { try await client.listBuckets(input: ListBucketsInput()) }
         }
         let buckets = (output.buckets ?? []).compactMap { bucket -> S3Bucket? in
             guard let name = bucket.name else { return nil }
             return S3Bucket(name: name, creationDate: bucket.creationDate)
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         bucketCache[account.id] = (buckets, Date())
-        AppLog.shared.log("listBuckets ok account=\"\(account.displayName)\" count=\(buckets.count)")
         return buckets
     }
 
@@ -164,13 +237,17 @@ actor S3Service {
             )
         }
         let finalInput = input
-        _ = try await throttle.run { try await client.createBucket(input: finalInput) }
+        _ = try await measured("CreateBucket", account: account, bucket: name) {
+            try await throttle.run { try await client.createBucket(input: finalInput) }
+        }
         bucketCache[account.id] = nil
     }
 
     func deleteBucket(account: Account, secret: String, name: String) async throws {
         let client = try await client(for: account, secret: secret)
-        _ = try await throttle.run { try await client.deleteBucket(input: DeleteBucketInput(bucket: name)) }
+        _ = try await measured("DeleteBucket", account: account, bucket: name) {
+            try await throttle.run { try await client.deleteBucket(input: DeleteBucketInput(bucket: name)) }
+        }
         bucketCache[account.id] = nil
         listCache = listCache.filter { $0.key.bucket != name || $0.key.account != account.id }
     }
@@ -193,8 +270,12 @@ actor S3Service {
                 maxKeys: 1000,
                 prefix: prefix
             )
-            let output = try await throttle.run {
-                try await client.listObjectsV2(input: input)
+            let output: ListObjectsV2Output = try await measured(
+                "ListObjectsV2", account: account, bucket: bucket, key: prefix
+            ) {
+                try await throttle.run {
+                    try await client.listObjectsV2(input: input)
+                }
             }
             for object in output.contents ?? [] {
                 guard let key = object.key else { continue }
@@ -209,7 +290,6 @@ actor S3Service {
             token = output.nextContinuationToken
             if output.isTruncated != true { break }
         } while token != nil
-        AppLog.shared.log("Recursive list ok bucket=\(bucket) prefix=\(prefix) count=\(items.count)")
         return items
     }
 
@@ -235,12 +315,10 @@ actor S3Service {
             maxKeys: 1000,
             prefix: prefix
         )
-        let output: ListObjectsV2Output
-        do {
-            output = try await throttle.run { try await client.listObjectsV2(input: input) }
-        } catch {
-            AppLog.shared.error("ListObjectsV2 failed bucket=\(bucket) prefix=\(prefix): \(String(describing: error))")
-            throw error
+        let output: ListObjectsV2Output = try await measured(
+            "ListObjectsV2", account: account, bucket: bucket, key: prefix
+        ) {
+            try await throttle.run { try await client.listObjectsV2(input: input) }
         }
 
         var items: [S3Item] = []
@@ -267,7 +345,6 @@ actor S3Service {
             nextToken: output.nextContinuationToken,
             isTruncated: output.isTruncated ?? false
         )
-        AppLog.shared.log("listObjectsV2 ok bucket=\(bucket) prefix=\(prefix) count=\(items.count)")
         if continuationToken == nil {
             let now = Date()
             listCache[key] = Cached(page: page, at: now)
@@ -292,28 +369,27 @@ actor S3Service {
             maxKeys: 1000,
             prefix: prefix
         )
-        do {
-            let output = try await throttle.run {
+        let output: ListObjectsV2Output = try await measured(
+            "ListObjectsV2", account: account, bucket: bucket, key: prefix
+        ) {
+            try await throttle.run {
                 try Task.checkCancellation()
                 return try await client.listObjectsV2(input: input)
             }
-            let objects = (output.contents ?? []).compactMap { object -> S3ObjectSummary? in
-                guard let key = object.key else { return nil }
-                return S3ObjectSummary(
-                    key: key,
-                    size: Int64(object.size ?? 0),
-                    lastModified: object.lastModified
-                )
-            }
-            return S3ObjectPage(
-                objects: objects,
-                nextToken: output.nextContinuationToken,
-                isTruncated: output.isTruncated ?? false
-            )
-        } catch {
-            AppLog.shared.error("scanPage failed bucket=\(bucket) prefix=\(prefix): \(String(describing: error))")
-            throw error
         }
+        let objects = (output.contents ?? []).compactMap { object -> S3ObjectSummary? in
+            guard let key = object.key else { return nil }
+            return S3ObjectSummary(
+                key: key,
+                size: Int64(object.size ?? 0),
+                lastModified: object.lastModified
+            )
+        }
+        return S3ObjectPage(
+            objects: objects,
+            nextToken: output.nextContinuationToken,
+            isTruncated: output.isTruncated ?? false
+        )
     }
 
     func invalidateListing(account: UUID, bucket: String, prefix: String) {
@@ -331,9 +407,12 @@ actor S3Service {
 
     func objectDetails(account: Account, secret: String, bucket: String, key: String) async throws -> ObjectDetails {
         let client = try await client(for: account, secret: secret)
-        AppLog.shared.log("headObject bucket=\(bucket) key=\(key)")
-        let head = try await throttle.run {
-            try await client.headObject(input: HeadObjectInput(bucket: bucket, key: key))
+        let head: HeadObjectOutput = try await measured(
+            "HeadObject", account: account, bucket: bucket, key: key
+        ) {
+            try await throttle.run {
+                try await client.headObject(input: HeadObjectInput(bucket: bucket, key: key))
+            }
         }
 
         return ObjectDetails(
@@ -357,9 +436,12 @@ actor S3Service {
 
     func objectTags(account: Account, secret: String, bucket: String, key: String) async throws -> [String: String] {
         let client = try await client(for: account, secret: secret)
-        AppLog.shared.log("getObjectTagging bucket=\(bucket) key=\(key)")
-        let output = try await throttle.run {
-            try await client.getObjectTagging(input: GetObjectTaggingInput(bucket: bucket, key: key))
+        let output: GetObjectTaggingOutput = try await measured(
+            "GetObjectTagging", account: account, bucket: bucket, key: key
+        ) {
+            try await throttle.run {
+                try await client.getObjectTagging(input: GetObjectTaggingInput(bucket: bucket, key: key))
+            }
         }
         var tags: [String: String] = [:]
         for tag in output.tagSet ?? [] {
@@ -370,9 +452,12 @@ actor S3Service {
 
     func objectACL(account: Account, secret: String, bucket: String, key: String) async throws -> [String] {
         let client = try await client(for: account, secret: secret)
-        AppLog.shared.log("getObjectAcl bucket=\(bucket) key=\(key)")
-        let output = try await throttle.run {
-            try await client.getObjectAcl(input: GetObjectAclInput(bucket: bucket, key: key))
+        let output: GetObjectAclOutput = try await measured(
+            "GetObjectAcl", account: account, bucket: bucket, key: key
+        ) {
+            try await throttle.run {
+                try await client.getObjectAcl(input: GetObjectAclInput(bucket: bucket, key: key))
+            }
         }
         return (output.grants ?? []).map { grant in
             let grantee = grant.grantee?.displayName
@@ -386,9 +471,12 @@ actor S3Service {
 
     func versions(account: Account, secret: String, bucket: String, key: String) async throws -> [ObjectVersion] {
         let client = try await client(for: account, secret: secret)
-        AppLog.shared.log("listObjectVersions bucket=\(bucket) key=\(key)")
-        let output = try await throttle.run {
-            try await client.listObjectVersions(input: ListObjectVersionsInput(bucket: bucket, prefix: key))
+        let output: ListObjectVersionsOutput = try await measured(
+            "ListObjectVersions", account: account, bucket: bucket, key: key
+        ) {
+            try await throttle.run {
+                try await client.listObjectVersions(input: ListObjectVersionsInput(bucket: bucket, prefix: key))
+            }
         }
 
         var result: [ObjectVersion] = []
@@ -425,12 +513,16 @@ actor S3Service {
         maxBytes: Int64 = 1_048_576
     ) async throws -> Data {
         let client = try await client(for: account, secret: secret)
-        let output = try await throttle.run {
-            try await client.getObject(input: GetObjectInput(
-                bucket: bucket,
-                key: key,
-                range: "bytes=0-\(maxBytes - 1)"
-            ))
+        let output: GetObjectOutput = try await measured(
+            "GetObject", account: account, bucket: bucket, key: key
+        ) {
+            try await throttle.run {
+                try await client.getObject(input: GetObjectInput(
+                    bucket: bucket,
+                    key: key,
+                    range: "bytes=0-\(maxBytes - 1)"
+                ))
+            }
         }
         guard let body = output.body else { throw S3ServiceError.emptyBody }
         return try await body.readData() ?? Data()
@@ -447,8 +539,12 @@ actor S3Service {
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws {
         let client = try await client(for: account, secret: secret)
-        let output = try await throttle.run {
-            try await client.getObject(input: GetObjectInput(bucket: bucket, key: key))
+        let output: GetObjectOutput = try await measured(
+            "GetObject", account: account, bucket: bucket, key: key
+        ) {
+            try await throttle.run {
+                try await client.getObject(input: GetObjectInput(bucket: bucket, key: key))
+            }
         }
         guard let body = output.body else { throw S3ServiceError.emptyBody }
 
@@ -522,7 +618,9 @@ actor S3Service {
         input.contentLength = Int(size)
         input.contentType = Self.mimeType(for: url)
         let finalInput = input
-        _ = try await throttle.run { try await client.putObject(input: finalInput) }
+        _ = try await measured("PutObject", account: account, bucket: bucket, key: key, bytes: size) {
+            try await throttle.run { try await client.putObject(input: finalInput) }
+        }
         progress(size)
         invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
     }
@@ -538,10 +636,24 @@ actor S3Service {
             return
         }
         if let client = try? await client(for: account, secret: secret) {
-            await abortMultipart(client: client, bucket: bucket, key: key, uploadID: record.uploadID)
+            await abortMultipart(
+                client: client,
+                account: account,
+                bucket: bucket,
+                key: key,
+                uploadID: record.uploadID
+            )
         }
         await store.remove(accountID: account.id, bucket: bucket, key: key)
-        AppLog.shared.log("Aborted multipart upload bucket=\(bucket) key=\(key)")
+        LogStore.shared.audit(
+            event: "multipart.aborted",
+            message: "Multipart upload aborted",
+            accountID: account.id,
+            accountName: account.displayName,
+            bucket: bucket,
+            key: key,
+            operation: "AbortMultipartUpload"
+        )
     }
 
     private func uploadMultipart(
@@ -563,7 +675,13 @@ actor S3Service {
         let existing = await store.record(accountID: account.id, bucket: bucket, key: key)
 
         if let existing, forceRestart || !existing.matches(fileSize: size, fileModified: modified, partSize: partSize) {
-            await abortMultipart(client: client, bucket: bucket, key: key, uploadID: existing.uploadID)
+            await abortMultipart(
+                client: client,
+                account: account,
+                bucket: bucket,
+                key: key,
+                uploadID: existing.uploadID
+            )
             await store.remove(accountID: account.id, bucket: bucket, key: key)
         }
 
@@ -572,13 +690,26 @@ actor S3Service {
            let existing,
            existing.matches(fileSize: size, fileModified: modified, partSize: partSize) {
             record = existing
-            AppLog.shared.log("Resume multipart bucket=\(bucket) key=\(key) parts=\(existing.parts.count)/\(totalParts)")
+            LogStore.shared.audit(
+                event: "multipart.resumed",
+                message: "Multipart upload resumed",
+                accountID: account.id,
+                accountName: account.displayName,
+                bucket: bucket,
+                key: key,
+                operation: "CreateMultipartUpload",
+                metadata: ["completedParts": String(existing.parts.count), "totalParts": String(totalParts)]
+            )
         } else {
             var input = CreateMultipartUploadInput(bucket: bucket, key: key)
             input.contentType = Self.mimeType(for: url)
             let finalInput = input
-            let output = try await throttle.run {
-                try await client.createMultipartUpload(input: finalInput)
+            let output: CreateMultipartUploadOutput = try await measured(
+                "CreateMultipartUpload", account: account, bucket: bucket, key: key
+            ) {
+                try await throttle.run {
+                    try await client.createMultipartUpload(input: finalInput)
+                }
             }
             guard let uploadID = output.uploadId, !uploadID.isEmpty else {
                 throw S3ServiceError.missingUploadID
@@ -597,7 +728,16 @@ actor S3Service {
             )
             await store.save(record)
             try Task.checkCancellation()
-            AppLog.shared.log("Start multipart bucket=\(bucket) key=\(key) parts=\(totalParts) size=\(size)")
+            LogStore.shared.audit(
+                event: "multipart.started",
+                message: "Multipart upload started",
+                accountID: account.id,
+                accountName: account.displayName,
+                bucket: bucket,
+                key: key,
+                operation: "CreateMultipartUpload",
+                metadata: ["totalParts": String(totalParts), "bytes": String(size)]
+            )
         }
 
         var partMap: [Int: MultipartPart] = [:]
@@ -620,6 +760,7 @@ actor S3Service {
                         group.addTask {
                             try await self.uploadPart(
                                 client: client,
+                                account: account,
                                 bucket: bucket,
                                 key: key,
                                 uploadID: uploadID,
@@ -659,8 +800,12 @@ actor S3Service {
                 multipartUpload: S3ClientTypes.CompletedMultipartUpload(parts: completedParts),
                 uploadId: record.uploadID
             )
-            _ = try await throttle.run {
-                try await client.completeMultipartUpload(input: input)
+            _ = try await measured(
+                "CompleteMultipartUpload", account: account, bucket: bucket, key: key
+            ) {
+                try await throttle.run {
+                    try await client.completeMultipartUpload(input: input)
+                }
             }
         } catch {
             if !forceRestart, Self.isRecoverableMultipartStateError(error) {
@@ -685,11 +830,21 @@ actor S3Service {
         await store.remove(accountID: account.id, bucket: bucket, key: key)
         progress(size)
         invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
-        AppLog.shared.log("Completed multipart bucket=\(bucket) key=\(key) parts=\(totalParts)")
+        LogStore.shared.audit(
+            event: "multipart.completed",
+            message: "Multipart upload completed",
+            accountID: account.id,
+            accountName: account.displayName,
+            bucket: bucket,
+            key: key,
+            operation: "CompleteMultipartUpload",
+            metadata: ["totalParts": String(totalParts), "bytes": String(size)]
+        )
     }
 
     private func uploadPart(
         client: S3Client,
+        account: Account,
         bucket: String,
         key: String,
         uploadID: String,
@@ -714,8 +869,16 @@ actor S3Service {
         )
         input.contentLength = data.count
         let finalInput = input
-        let output = try await throttle.run {
-            try await client.uploadPart(input: finalInput)
+        let output: UploadPartOutput = try await measured(
+            "UploadPart",
+            account: account,
+            bucket: bucket,
+            key: key,
+            bytes: Int64(data.count)
+        ) {
+            try await throttle.run {
+                try await client.uploadPart(input: finalInput)
+            }
         }
         guard let eTag = output.eTag, !eTag.isEmpty else {
             throw S3ServiceError.missingETag
@@ -723,17 +886,38 @@ actor S3Service {
         return MultipartPart(number: partNumber, eTag: eTag)
     }
 
-    private func abortMultipart(client: S3Client, bucket: String, key: String, uploadID: String) async {
+    private func abortMultipart(
+        client: S3Client,
+        account: Account,
+        bucket: String,
+        key: String,
+        uploadID: String
+    ) async {
         do {
-            _ = try await throttle.run {
-                try await client.abortMultipartUpload(input: AbortMultipartUploadInput(
-                    bucket: bucket,
-                    key: key,
-                    uploadId: uploadID
-                ))
+            _ = try await measured(
+                "AbortMultipartUpload", account: account, bucket: bucket, key: key
+            ) {
+                try await throttle.run {
+                    try await client.abortMultipartUpload(input: AbortMultipartUploadInput(
+                        bucket: bucket,
+                        key: key,
+                        uploadId: uploadID
+                    ))
+                }
             }
         } catch {
-            AppLog.shared.error("Abort multipart failed bucket=\(bucket) key=\(key): \(String(describing: error))")
+            LogStore.shared.log(
+                .warning,
+                category: .s3Request,
+                event: "multipart.abort.failed",
+                message: "Abort multipart upload failed",
+                accountID: account.id,
+                accountName: account.displayName,
+                bucket: bucket,
+                key: key,
+                operation: "AbortMultipartUpload",
+                outcome: "failure"
+            )
         }
     }
 
@@ -769,8 +953,10 @@ actor S3Service {
 
     func delete(account: Account, secret: String, bucket: String, key: String) async throws {
         let client = try await client(for: account, secret: secret)
-        _ = try await throttle.run {
-            try await client.deleteObject(input: DeleteObjectInput(bucket: bucket, key: key))
+        _ = try await measured("DeleteObject", account: account, bucket: bucket, key: key) {
+            try await throttle.run {
+                try await client.deleteObject(input: DeleteObjectInput(bucket: bucket, key: key))
+            }
         }
         invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
     }
@@ -782,7 +968,9 @@ actor S3Service {
         var input = PutObjectInput(body: .data(Data()), bucket: bucket, key: key)
         input.contentType = "application/x-directory"
         let finalInput = input
-        _ = try await throttle.run { try await client.putObject(input: finalInput) }
+        _ = try await measured("PutObject", account: account, bucket: bucket, key: key) {
+            try await throttle.run { try await client.putObject(input: finalInput) }
+        }
         invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
         invalidateListing(account: account.id, bucket: bucket, prefix: base)
     }
@@ -798,12 +986,16 @@ actor S3Service {
         let client = try await client(for: account, secret: secret)
         let encodedSource = "/\(sourceBucket)/\(sourceKey)"
             .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "/\(sourceBucket)/\(sourceKey)"
-        _ = try await throttle.run {
-            try await client.copyObject(input: CopyObjectInput(
-                bucket: destinationBucket,
-                copySource: encodedSource,
-                key: destinationKey
-            ))
+        _ = try await measured(
+            "CopyObject", account: account, bucket: destinationBucket, key: destinationKey
+        ) {
+            try await throttle.run {
+                try await client.copyObject(input: CopyObjectInput(
+                    bucket: destinationBucket,
+                    copySource: encodedSource,
+                    key: destinationKey
+                ))
+            }
         }
         invalidateListing(account: account.id, bucket: sourceBucket, prefix: S3Key.parentPrefix(of: sourceKey))
         invalidateListing(account: account.id, bucket: destinationBucket, prefix: S3Key.parentPrefix(of: destinationKey))

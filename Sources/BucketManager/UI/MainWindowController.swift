@@ -19,6 +19,7 @@ final class MainWindowController: NSWindowController {
     private var menuBar: AppMenuBarView!
     private var addAccountSheet: AddAccountWindowController?
     private var storageSheet: StorageAccountsWindowController?
+    private var logsWindowController: LogsWindowController?
     private var keyMonitor: Any?
     private var bookmarks: [Bookmark] = []
 
@@ -399,6 +400,15 @@ final class MainWindowController: NSWindowController {
 
     @objc func showEventLogAction() { transfers.selectTab("log") }
 
+    @objc func showLogsAction() {
+        if logsWindowController == nil {
+            logsWindowController = LogsWindowController()
+        }
+        logsWindowController?.showWindow(nil)
+        logsWindowController?.window?.makeKeyAndOrderFront(nil)
+        LogStore.shared.log(.info, category: .ui, event: "ui.logs.opened", message: "Logs window opened")
+    }
+
     @objc func dumpDiagnostics() {
         let account = model.selectedAccount?.displayName ?? "none"
         let bucket = model.selectedBucket ?? "none"
@@ -713,6 +723,7 @@ final class MainWindowController: NSWindowController {
     private func toolsMenu() -> NSMenu {
         let menu = baseMenu()
         _ = item(menu, "Options…", #selector(showOptionsAction), key: ",")
+        _ = item(menu, "Logs & Statistics…", #selector(showLogsAction), key: "l", modifiers: [.command, .option])
         _ = item(menu, "Event Log", #selector(showEventLogAction))
         _ = item(menu, "Test Connection", #selector(testConnectionAction))
         _ = item(menu, "Dump Diagnostics to Log", #selector(dumpDiagnostics), key: "d", modifiers: [.command, .shift])

@@ -140,7 +140,7 @@ final class FolderStatsCache: @unchecked Sendable {
             try data.write(to: fileURL, options: .atomic)
             try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         } catch {
-            AppLog.shared.error("folderStats cache save failed: \(String(describing: error))")
+            AppLog.shared.error("folderStats cache save failed: \(error.localizedDescription)")
         }
     }
 }

@@ -18,7 +18,14 @@ Do not include real access keys, secrets, presigned URLs, or bucket contents.
 - Multipart upload state contains upload IDs and ETags, no credentials, and is stored with `0600` permissions.
 - Secret access keys are stored in the macOS Keychain, never in JSON.
 - Secrets are read once per account per launch and cached in memory.
-- Logs never include secret access keys.
+- Logs never include secret access keys, authorization headers, signatures,
+  presigned query parameters, or Keychain contents.
+- Diagnostic logging is off by default. Audit logging is always on for account,
+  bucket, object, transfer, and settings changes.
+- Log files are JSONL with `0600` permissions inside a `0700` directory. The
+  diagnostic and audit streams have independent retention.
+- Request counters are aggregated per account/bucket/operation in a `0600` file;
+  they contain no credentials or object payloads.
 - The app has no telemetry or remote crash reporting.
 
 ## Transport and endpoint validation

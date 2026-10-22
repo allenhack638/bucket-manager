@@ -90,6 +90,87 @@ enum SnapshotRunner {
         app.terminate(nil)
     }
 
+    static func runLogs(path: String, size: NSSize, tab: String?) {
+        let app = NSApplication.shared
+        app.setActivationPolicy(.accessory)
+        app.appearance = ProcessInfo.processInfo.environment["S3C_APPEARANCE"] == "dark"
+            ? NSAppearance(named: .darkAqua)
+            : NSAppearance(named: .aqua)
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("s3c-logs-snapshot-\(UUID().uuidString)", isDirectory: true)
+        let suite = "BucketManagerLogsSnapshot-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defaults.removePersistentDomain(forName: suite)
+        let store = LogStore(directoryURL: directory, defaults: defaults)
+        var settings = store.currentSettings()
+        settings.diagnosticsEnabled = true
+        settings.minimumLevel = .trace
+        settings.auditEnabled = true
+        settings.includeObjectKeys = true
+        store.updateSettings(settings)
+
+        let accountID = UUID()
+        store.log(.info, category: .app, event: "app.launched", message: "Bucket Manager launched",
+                  accountID: accountID, accountName: "Backblaze Production")
+        store.log(.debug, category: .s3Request, event: "s3.request",
+                  message: "ListObjectsV2 succeeded", accountID: accountID,
+                  accountName: "Backblaze Production", bucket: "client-n-data",
+                  operation: "ListObjectsV2", outcome: "success", durationMs: 12,
+                  metadata: ["prefix": "exports/"])
+        store.log(.warning, category: .transfer, event: "transfer.failed",
+                  message: "Upload part retried", accountID: accountID,
+                  accountName: "Backblaze Production", bucket: "client-n-data",
+                  key: "exports/report.json.gz", operation: "UploadPart",
+                  outcome: "failure", durationMs: 230)
+        store.log(.error, category: .s3Request, event: "s3.request",
+                  message: "HeadObject failed", accountID: accountID,
+                  accountName: "Backblaze Production", bucket: "client-n-data",
+                  key: "missing.csv", operation: "HeadObject", outcome: "failure")
+        store.audit(event: "account.added", message: "Account operation succeeded",
+                    accountID: accountID, accountName: "Backblaze Production",
+                    metadata: ["kind": "compatible", "bucket": "client-n-data"])
+        store.audit(event: "object.uploaded", message: "Upload transfer event",
+                    accountID: accountID, accountName: "Backblaze Production",
+                    bucket: "client-n-data", key: "exports/report.json.gz",
+                    operation: "upload", outcome: "success",
+                    metadata: ["bytes": "81234567"])
+        store.audit(event: "settings.logging.changed", message: "Logging settings updated",
+                    outcome: "success")
+
+        let metricsURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("s3c-logs-snapshot-metrics-\(UUID().uuidString).json")
+        let metrics = RequestMetricsStore(fileURL: metricsURL)
+        let account = Account(
+            displayName: "Backblaze Production", accessKeyID: "EXAMPLE",
+            kind: .compatible, region: "us-east-005",
+            endpoint: "https://s3.us-east-005.backblazeb2.com", bucket: "client-n-data"
+        )
+        for (operation, count, failures) in [
+            ("ListObjectsV2", 184, 0), ("GetObject", 92, 2), ("HeadObject", 48, 1), ("PutObject", 31, 0)
+        ] {
+            for index in 0..<count {
+                metrics.record(
+                    account: account, bucket: "client-n-data", operation: operation,
+                    outcome: index < failures ? "failure" : "success",
+                    durationMs: Double(12 + index % 20), bytes: Int64(1024 * (index % 9))
+                )
+            }
+        }
+        metrics.flush()
+
+        let controller = LogsWindowController(logStore: store, metricsStore: metrics)
+        controller.selectTabForTesting(tab == "stats" ? 1 : tab == "settings" ? 2 : 0)
+        guard let window = controller.window else { return }
+        window.setContentSize(size)
+        window.orderFrontRegardless()
+        render(window: window, to: path, size: size)
+        try? FileManager.default.removeItem(at: directory)
+        try? FileManager.default.removeItem(at: metricsURL)
+        defaults.removePersistentDomain(forName: suite)
+        app.terminate(nil)
+    }
+
     private static func render(window: NSWindow, to path: String, size: NSSize) {
         guard let view = window.contentView else { return }
 

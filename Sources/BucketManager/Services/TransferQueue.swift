@@ -94,8 +94,10 @@ final class TransferQueue {
             workTasks[id]?.cancel()
             workTasks[id] = nil
             log("Stopped \(tasks[index].key)")
+            audit("transfer.paused", task: tasks[index], account: credentials[id]?.0, outcome: "success")
         } else if tasks[index].status == .queued {
             tasks[index].status = .paused
+            audit("transfer.paused", task: tasks[index], account: credentials[id]?.0, outcome: "success")
         }
         change()
     }
@@ -114,6 +116,7 @@ final class TransferQueue {
         workGeneration[id] = (workGeneration[id] ?? 0) + 1
         if task.direction == .download { try? FileManager.default.removeItem(at: task.localURL) }
         self.credentials[id] = nil
+        audit("transfer.canceled", task: task, account: credentials?.0, outcome: "success")
         if task.direction == .upload, let credentials {
             let store = multipartStore
             Task {
@@ -274,6 +277,13 @@ final class TransferQueue {
         tasks[index].speed = 0
         tasks[index].finishedAt = Date()
         log("Completed \(tasks[index].direction.rawValue.lowercased()) \(tasks[index].key)")
+        let account = credentials[id]?.0
+        audit(
+            tasks[index].direction == .upload ? "object.uploaded" : "object.downloaded",
+            task: tasks[index],
+            account: account,
+            outcome: "success"
+        )
         workTasks[id] = nil
         credentials[id] = nil
         lastSample[id] = nil
@@ -300,6 +310,7 @@ final class TransferQueue {
         tasks[index].speed = 0
         tasks[index].finishedAt = Date()
         log("Failed \(tasks[index].key): \(message)")
+        audit("transfer.failed", task: tasks[index], account: credentials[id]?.0, outcome: "failure")
         workTasks[id] = nil
         change()
         pump()
@@ -310,6 +321,23 @@ final class TransferQueue {
     }
 
     private func change() { onChange?() }
+
+    private func audit(_ event: String, task: TransferTask, account: Account?, outcome: String) {
+        LogStore.shared.audit(
+            event: event,
+            message: task.direction == .upload ? "Upload transfer event" : "Download transfer event",
+            accountID: account?.id,
+            accountName: account?.displayName,
+            bucket: task.bucket,
+            key: task.key,
+            operation: task.direction.rawValue,
+            outcome: outcome,
+            metadata: [
+                "bytes": String(task.size),
+                "completedBytes": String(task.bytesDone)
+            ]
+        )
+    }
 
     private func log(_ message: String) {
         onLog?(message)

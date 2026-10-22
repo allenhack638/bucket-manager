@@ -298,6 +298,7 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | `UI/SidebarViewController.swift` | account picker + flat bucket list; bucket selection drives the right pane |
 | `UI/BrowserViewController.swift` | path bar, file table, action bar, status |
 | `UI/TransfersViewController.swift` | queue, tabs, inspector, event log |
+| `UI/LogsWindowController.swift` | Logs, Statistics, and logging settings |
 | `UI/AddAccountSheet.swift` | Add/Edit account + Storage Accounts |
 | `ViewModels/BrowserModel.swift` | state and operations |
 | `Services/S3Service.swift` | clients, list, head, tags, ACL, versions, transfers |
@@ -305,7 +306,10 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | `Services/TransferQueue.swift` | queueing, progress, speed, cancel |
 | `Models/S3Key.swift` | shared object-key parent/safe-filename helpers |
 | `Models/MultipartUploadRecord.swift` | persisted multipart session and part state |
+| `Models/LogRecord.swift` | log levels, categories, records, and settings |
 | `Services/MultipartUploadStore.swift` | owner-only JSON store for resumable parts |
+| `Services/LogStore.swift` | JSONL diagnostics/audit, redaction, rotation, retention |
+| `Services/RequestMetricsStore.swift` | per-account/bucket/operation counters |
 | `Services/RateLimiter.swift` | paced folder-size request starts |
 | `FolderStats/FolderStats.swift` | key/record/snapshot/policy types |
 | `FolderStats/FolderStatsCache.swift` | synchronous 0600 disk cache |
@@ -367,9 +371,11 @@ invisible on the custom light chrome.
 
 ## 10. Error playbook
 
-Read `~/Library/Logs/BucketManager/app.log` first. It records account names, endpoints,
-Keychain results, S3 request context, and raw errors. The Event Log tab shows the
-user-facing version.
+Read the JSONL files under `~/Library/Logs/BucketManager/` first, or open
+**Tools → Logs & Statistics**. Diagnostic logging is opt-in; audit records are always
+written. Records include account names, endpoint hosts (no credentials), operation,
+bucket/key, outcome, duration, and redacted error text. The Event Log tab shows the
+in-memory user-facing history.
 
 | Error | Usual meaning | What to do |
 | --- | --- | --- |

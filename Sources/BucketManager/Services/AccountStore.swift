@@ -43,16 +43,27 @@ final class AccountStore {
     }
 
     func add(_ account: Account, secret: String) throws {
-        try KeychainStore.saveSecret(secret, for: account.id)
+        do {
+            try KeychainStore.saveSecret(secret, for: account.id)
+        } catch {
+            auditAccount("account.add.failed", account: account, outcome: "failure")
+            throw error
+        }
         secretCache[account.id] = secret
         accounts.append(account)
         save()
         invalidateClient(for: account.id)
+        auditAccount("account.added", account: account)
     }
 
     func update(_ account: Account, secret: String?) throws {
         if let secret, !secret.isEmpty {
-            try KeychainStore.saveSecret(secret, for: account.id)
+            do {
+                try KeychainStore.saveSecret(secret, for: account.id)
+            } catch {
+                auditAccount("account.update.failed", account: account, outcome: "failure")
+                throw error
+            }
             secretCache[account.id] = secret
         }
         if let i = accounts.firstIndex(where: { $0.id == account.id }) {
@@ -62,6 +73,7 @@ final class AccountStore {
         }
         save()
         invalidateClient(for: account.id)
+        auditAccount("account.updated", account: account)
     }
 
     func remove(_ account: Account) {
@@ -70,6 +82,7 @@ final class AccountStore {
         accounts.removeAll { $0.id == account.id }
         save()
         invalidateClient(for: account.id)
+        auditAccount("account.removed", account: account)
     }
 
     func account(id: UUID) -> Account? {
@@ -90,13 +103,32 @@ final class AccountStore {
             AppLog.shared.log("Keychain read succeeded for \"\(account.displayName)\"")
             return secret
         } catch {
-            AppLog.shared.error("Keychain read failed for \"\(account.displayName)\": \(String(describing: error))")
+            AppLog.shared.error("Keychain read failed for \"\(account.displayName)\": \(error.localizedDescription)")
             throw error
         }
     }
 
     private func invalidateClient(for accountID: UUID) {
         Task { await S3Service.shared.invalidateClient(accountID) }
+    }
+
+    private func auditAccount(_ event: String, account: Account, outcome: String = "success") {
+        var metadata = [
+            "kind": account.kind.rawValue,
+            "endpointHost": LogRedactor.endpointHost(account.endpoint) ?? "aws",
+            "pathStyle": String(account.usePathStyle)
+        ]
+        if let bucket = account.bucket, !bucket.isEmpty {
+            metadata["bucket"] = bucket
+        }
+        LogStore.shared.audit(
+            event: event,
+            message: outcome == "success" ? "Account operation succeeded" : "Account operation failed",
+            accountID: account.id,
+            accountName: account.displayName,
+            outcome: outcome,
+            metadata: metadata
+        )
     }
 
     private func load() {
