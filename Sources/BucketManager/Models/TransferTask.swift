@@ -22,6 +22,7 @@ struct TransferTask: Identifiable, Sendable {
     var localURL: URL
     var accountID: UUID? = nil
     var sourceModifiedAt: TimeInterval? = nil
+    var downloadETag: String? = nil
     var isRestored = false
     var size: Int64
     var bytesDone: Int64 = 0

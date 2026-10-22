@@ -585,6 +585,83 @@ enum E2E {
             check(uploaded, "upload PUTs the object under the current prefix")
             try? FileManager.default.removeItem(at: uploadURL)
 
+            await resetStats()
+            let resumeDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-resume-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: resumeDirectory, withIntermediateDirectories: true)
+            let resumeDestination = resumeDirectory.appendingPathComponent("resume.bin")
+            let resumeTemporary = S3Service.downloadTemporaryURL(for: resumeDestination)
+            let resumeSize = 2 * 1024 * 1024
+            let resumeHalf = resumeSize / 2
+            let expectedResumeData = Data((0..<resumeSize).map { UInt8($0 % 251) })
+            try? Data("stale".utf8).write(to: resumeDestination)
+            try? expectedResumeData.prefix(resumeHalf).write(to: resumeTemporary)
+            let resumeStoreURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("resume-queue-\(UUID().uuidString).json")
+            let resumeStore = TransferQueueStore(fileURL: resumeStoreURL)
+            resumeStore.save([
+                PersistedTransferTask(
+                    id: UUID(), accountID: account.id, direction: .download,
+                    bucket: "alpha", key: "resume.bin",
+                    localPath: resumeDestination.path, size: Int64(resumeSize),
+                    bytesDone: Int64(resumeHalf), status: .paused, error: nil,
+                    downloadETag: "\"etag-resume\""
+                )
+            ])
+            let resumeQueue = TransferQueue(
+                stateStore: TransferQueueStore(fileURL: resumeStoreURL),
+                credentialProvider: { id in id == account.id ? (account, secret) : nil }
+            )
+            check(resumeQueue.tasks.first?.bytesDone == Int64(resumeHalf),
+                  "partial download progress is restored")
+            resumeQueue.startAll()
+            let resumedDownload = await waitUntil(timeout: 20) {
+                resumeQueue.tasks.first?.status == .completed
+            }
+            check(resumedDownload, "byte-range download resumes")
+            check((await stats())["rangeRequests"] ?? 0 >= 1,
+                  "resumed download sends a Range request")
+            let resumedData = (try? Data(contentsOf: resumeDestination)) ?? Data()
+            check(resumedData == expectedResumeData, "resumed download matches the object bytes")
+            check(!FileManager.default.fileExists(atPath: resumeTemporary.path),
+                  "download resume temporary file is cleaned up")
+            resumeQueue.flushPersistence()
+
+            await resetStats()
+            let changedDestination = resumeDirectory.appendingPathComponent("resume-changed.bin")
+            let changedTemporary = S3Service.downloadTemporaryURL(for: changedDestination)
+            try? expectedResumeData.prefix(resumeHalf).write(to: changedTemporary)
+            let changedStoreURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("resume-changed-\(UUID().uuidString).json")
+            TransferQueueStore(fileURL: changedStoreURL).save([
+                PersistedTransferTask(
+                    id: UUID(), accountID: account.id, direction: .download,
+                    bucket: "alpha", key: "resume.bin",
+                    localPath: changedDestination.path, size: Int64(resumeSize),
+                    bytesDone: Int64(resumeHalf), status: .paused, error: nil,
+                    downloadETag: "\"stale-etag\""
+                )
+            ])
+            let changedQueue = TransferQueue(
+                stateStore: TransferQueueStore(fileURL: changedStoreURL),
+                credentialProvider: { id in id == account.id ? (account, secret) : nil }
+            )
+            changedQueue.startAll()
+            let staleETagCompleted = await waitUntil(timeout: 20) {
+                changedQueue.tasks.first?.status == .completed
+            }
+            check(staleETagCompleted, "stale ETag restarts the download")
+            check((await stats())["precondition"] ?? 0 >= 1,
+                  "resume sends a conditional ETag request")
+            check(((try? Data(contentsOf: changedDestination)) ?? Data()) == expectedResumeData,
+                  "restarted download matches the object bytes")
+            changedQueue.flushPersistence()
+            try? FileManager.default.removeItem(at: changedDestination)
+            try? FileManager.default.removeItem(at: changedTemporary)
+            try? FileManager.default.removeItem(at: changedStoreURL)
+            try? FileManager.default.removeItem(at: resumeDirectory)
+            try? FileManager.default.removeItem(at: resumeStoreURL)
+
             let multipartStore = MultipartUploadStore.shared
             let bigURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("e2e-multipart-\(UUID().uuidString).bin")
@@ -828,6 +905,18 @@ enum E2E {
                 key: "persisted/big.bin",
                 url: persistedURL
             )
+            var firstPartCount = 0
+            for _ in 0..<80 {
+                if let record = await MultipartUploadStore.shared.recordsSnapshot()
+                    .first(where: { $0.key == "persisted/big.bin" }),
+                   record.parts.count > 0 {
+                    firstPartCount = record.parts.count
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            check(firstPartCount > 0 && firstPartCount < 4,
+                  "multipart progress is persisted per completed part")
             try? await Task.sleep(nanoseconds: 500_000_000)
             let autoSavedRecords = persistedQueueStore.load()
             check(autoSavedRecords.count == 1, "active queue auto-persists without an explicit flush")

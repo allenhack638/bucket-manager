@@ -61,7 +61,19 @@ final class TransferQueue {
             task.startedAt = nil
             task.finishedAt = nil
             task.error = record.error
-            task.bytesDone = record.direction == .download ? 0 : min(max(0, record.bytesDone), record.size)
+            if record.direction == .download {
+                task.downloadETag = record.downloadETag
+                let temporary = S3Service.downloadTemporaryURL(for: task.localURL)
+                let attributes = try? FileManager.default.attributesOfItem(atPath: temporary.path)
+                let temporarySize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+                if record.downloadETag != nil, temporarySize > 0 {
+                    task.bytesDone = min(max(0, record.bytesDone), temporarySize)
+                } else {
+                    task.bytesDone = 0
+                }
+            } else {
+                task.bytesDone = min(max(0, record.bytesDone), record.size)
+            }
             switch record.status {
             case .queued, .running:
                 task.status = .paused
@@ -203,6 +215,16 @@ final class TransferQueue {
                     store: store
                 )
             }
+        } else if task.direction == .download {
+            let temporary = S3Service.downloadTemporaryURL(for: task.localURL)
+            if let work {
+                Task {
+                    await work.value
+                    try? FileManager.default.removeItem(at: temporary)
+                }
+            } else {
+                try? FileManager.default.removeItem(at: temporary)
+            }
         }
         log("Canceled \(task.key)")
         if wasRunning { pump() }
@@ -225,7 +247,6 @@ final class TransferQueue {
             switch tasks[index].status {
             case .paused, .failed:
                 tasks[index].status = .queued
-                if tasks[index].direction == .download { tasks[index].bytesDone = 0 }
                 tasks[index].error = nil
                 tasks[index].startedAt = nil
                 tasks[index].finishedAt = nil
@@ -241,7 +262,6 @@ final class TransferQueue {
         guard let index = index(of: id),
               tasks[index].status == .failed || tasks[index].status == .paused else { return }
         tasks[index].status = .queued
-        if tasks[index].direction == .download { tasks[index].bytesDone = 0 }
         tasks[index].error = nil
         tasks[index].startedAt = nil
         tasks[index].finishedAt = nil
@@ -279,10 +299,11 @@ final class TransferQueue {
                 key: task.key,
                 localPath: task.localURL.path,
                 size: task.size,
-                bytesDone: task.direction == .download ? 0 : task.bytesDone,
+                bytesDone: task.bytesDone,
                 status: persistedStatus,
                 error: task.error.map { LogRedactor.message($0) },
-                fileModified: task.sourceModifiedAt
+                fileModified: task.sourceModifiedAt,
+                downloadETag: task.downloadETag
             )
         }
         stateStore.save(records)
@@ -380,14 +401,26 @@ final class TransferQueue {
                         }
                     )
                 case .download:
-                    try await service.download(
+                    let resumeFrom = tasks[index].bytesDone
+                    let resumeETag = tasks[index].downloadETag
+                    let result = try await service.download(
                         account: account, secret: secret, bucket: bucket, key: key, to: url,
+                        resumeFrom: resumeFrom,
+                        expectedETag: resumeETag,
+                        onMetadata: { eTag, totalSize in
+                            Task { @MainActor in
+                                self.updateDownloadMetadata(
+                                    id, generation: generation, eTag: eTag, totalSize: totalSize
+                                )
+                            }
+                        },
                         progress: { bytes in
                             Task { @MainActor in
                                 self.updateProgress(id, bytes: bytes, generation: generation)
                             }
                         }
                     )
+                    self.applyDownloadResult(id, generation: generation, result: result)
                 }
                 finish(id, generation: generation)
             } catch is CancellationError {
@@ -407,7 +440,8 @@ final class TransferQueue {
         guard workGeneration[id] == generation,
               let index = index(of: id),
               tasks[index].status == .running else { return }
-        tasks[index].bytesDone = min(bytes, tasks[index].size)
+        tasks[index].bytesDone = tasks[index].size > 0 ? min(bytes, tasks[index].size) : bytes
+        if tasks[index].direction == .download { schedulePersistence() }
 
         let now = Date()
         if let sample = lastSample[id] {
@@ -423,6 +457,27 @@ final class TransferQueue {
             lastEmit = now
             onChange?()
         }
+    }
+
+    private func updateDownloadMetadata(
+        _ id: UUID, generation: Int, eTag: String?, totalSize: Int64?
+    ) {
+        guard workGeneration[id] == generation,
+              let index = index(of: id),
+              tasks[index].status == .running else { return }
+        if let eTag { tasks[index].downloadETag = eTag }
+        if let totalSize, totalSize > 0 { tasks[index].size = totalSize }
+        schedulePersistence()
+    }
+
+    private func applyDownloadResult(
+        _ id: UUID, generation: Int, result: DownloadResult
+    ) {
+        guard workGeneration[id] == generation, let index = index(of: id) else { return }
+        tasks[index].bytesDone = result.bytesWritten
+        if let totalSize = result.totalSize, totalSize > 0 { tasks[index].size = totalSize }
+        tasks[index].downloadETag = result.eTag ?? tasks[index].downloadETag
+        schedulePersistence()
     }
 
     private func finish(_ id: UUID, generation: Int) {

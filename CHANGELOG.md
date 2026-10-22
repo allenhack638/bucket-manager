@@ -6,7 +6,8 @@
 - Persist multipart part state in an owner-only JSON file and resume after re-adding the same file/key.
 - Persist the transfer queue across relaunch; restore paused/failed tasks, validate source size and modification time, and resolve account credentials only when resuming.
 - Harden queue persistence with atomic 0600 writes, partial-record recovery with a corrupt backup, automatic debounced saves, refreshed credentials on every start, and reentrant-pump/concurrency guards.
-- Download into a temporary 0600 file, verify the received length, and atomically replace the destination only on success; canceled downloads no longer delete queued destinations.
+- Download into a temporary 0600 file, verify the received length, and atomically replace the destination only on success; partial downloads resume with Range/ETag validation and cancellation removes only the temporary file.
+- Report and persist multipart progress per completed part instead of waiting for a whole batch.
 - Harden after independent review: pump no longer strands queued tasks after synchronous start failures, throttle slots are handed off without over-admission, cancellation is recognized after SDK errors, credentials are dropped on stopped/failed transfers, multipart source fingerprints are rechecked before batches and completion, queue-state recovery is audited, and failed log exports are reported instead of audited as success.
 - Move buckets into a flat sidebar list with an account picker.
 - Keep folder and object navigation exclusively in the right pane.

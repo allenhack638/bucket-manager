@@ -12,6 +12,7 @@ struct PersistedTransferTask: Codable, Sendable {
     var status: TransferTask.Status
     var error: String?
     var fileModified: TimeInterval? = nil
+    var downloadETag: String? = nil
 }
 
 final class TransferQueueStore: @unchecked Sendable {

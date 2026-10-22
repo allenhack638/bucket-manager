@@ -176,9 +176,11 @@ consumed.
 ### Downloads
 
 `GetObject` returns a `ByteStream`. For a stream body, the app reads **256 KiB
-chunks** in a loop, writes them to a temporary owner-only file, and calls the
-progress closure with the running total. Cancellation is checked between chunks.
-The final destination is replaced only after the received length succeeds.
+chunks** in a loop, writes them to a deterministic owner-only temporary file, and
+calls the progress closure with the running total. Cancellation is checked
+between chunks. Persisted byte offset and ETag allow a resumed Range request;
+changed objects or servers that ignore Range restart from zero. The final
+destination is replaced atomically only after the received length succeeds.
 
 ### Uploads
 
@@ -190,7 +192,7 @@ The state file is owner-only and contains no credentials. Cancel aborts the
 server-side upload; retry reuses the upload ID; a changed file invalidates and
 aborts the old session. `TransferQueueStore` persists active queue tasks in an
 owner-only JSON file without secrets; running/queued tasks restore paused, failed
-tasks keep their error, downloads restart from the beginning, and missing or
+tasks keep their error, downloads restore their byte offset/temporary file/ETag and resume with a Range request, and missing or
 changed upload sources are marked failed. The account is resolved from
 `AccountStore` when a restored task starts.
 
@@ -210,10 +212,10 @@ Active tasks are persisted to `transfer-queue.json` (0600, no secrets) at most
 once every 400 ms and on quit. Relaunch restores queued/running tasks as paused
 and failed tasks as failed; uploads whose source is missing, resized, or has a
 different modification time are marked failed. Restored tasks resolve their
-account and Keychain secret only when started. Downloads restart from the
-beginning rather than using byte ranges and stream into a 0600 temporary file;
-the destination is replaced only after the received length is verified, so a
-failed/canceled download leaves any existing destination untouched.
+account and Keychain secret only when started. Downloads restore their byte
+offset, temporary file, and ETag and resume with a Range request; a changed ETag
+restarts safely. The destination is replaced only after the received length is
+verified, so a failed/canceled download leaves any existing destination untouched.
 
 ---
 

@@ -12,7 +12,7 @@ METRICS=$(mktemp /tmp/s3c-metrics.XXXXXX)
 TRANSFER_QUEUE=$(mktemp /tmp/s3c-transfer-queue.XXXXXX)
 SETTINGS_SUITE="BucketManagerE2ESettings.$$"
 rm -f "$STATE" "$METRICS" "$TRANSFER_QUEUE"
-FAKE_MULTIPART_DELAY=0.3 python3 scripts/fake_s3.py 0 >"$LOG" 2>&1 &
+FAKE_MULTIPART_DELAY=0.25 FAKE_MULTIPART_STAGGER=1 python3 scripts/fake_s3.py 0 >"$LOG" 2>&1 &
 SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null || true; rm -rf "$STATE" "$LOGDIR" "$METRICS" "$TRANSFER_QUEUE"; defaults delete "$SETTINGS_SUITE" >/dev/null 2>&1 || true' EXIT
 

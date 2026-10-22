@@ -714,6 +714,37 @@ enum UITest {
               "unreadable upload source has an actionable error")
         unreadableQueue.flushPersistence()
 
+        let resumeURL = queueDir.appendingPathComponent("resume-queue.json")
+        let resumePath = queueDir.appendingPathComponent("resume.bin")
+        let resumeTemporary = S3Service.downloadTemporaryURL(for: resumePath)
+        try? Data(repeating: 0x44, count: 100).write(to: resumeTemporary)
+        let partialDownload = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .download,
+            bucket: "alpha", key: "resume.bin",
+            localPath: resumePath.path, size: 200, bytesDone: 100,
+            status: .paused, error: nil, downloadETag: "\"etag-resume\""
+        )
+        TransferQueueStore(fileURL: resumeURL).save([partialDownload])
+        let resumeQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: resumeURL),
+            credentialProvider: nil
+        )
+        check(resumeQueue.tasks.first?.bytesDone == 100,
+              "partial download progress is restored")
+        check(resumeQueue.tasks.first?.downloadETag == "\"etag-resume\"",
+              "download ETag is restored for range validation")
+        check(resumeQueue.tasks.first?.status == .paused,
+              "partial download restores paused")
+        try? Data("keep destination".utf8).write(to: resumePath)
+        if let resumeTask = resumeQueue.tasks.first {
+            resumeQueue.cancel(id: resumeTask.id)
+        }
+        check(!FileManager.default.fileExists(atPath: resumeTemporary.path),
+              "canceling a partial download removes its temporary file")
+        check(FileManager.default.fileExists(atPath: resumePath.path),
+              "canceling a partial download preserves the destination")
+        resumeQueue.flushPersistence()
+
         let cancelPath = queueDir.appendingPathComponent("pre-existing-download.bin")
         try? Data("keep me".utf8).write(to: cancelPath)
         let cancelURL = queueDir.appendingPathComponent("cancel-download-queue.json")

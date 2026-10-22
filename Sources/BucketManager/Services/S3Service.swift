@@ -17,6 +17,12 @@ struct S3ObjectSummary: Sendable {
     var lastModified: Date?
 }
 
+struct DownloadResult: Sendable {
+    var eTag: String?
+    var totalSize: Int64?
+    var bytesWritten: Int64
+}
+
 struct S3ObjectPage: Sendable {
     var objects: [S3ObjectSummary]
     var nextToken: String?
@@ -33,6 +39,7 @@ enum S3ServiceError: Error, LocalizedError {
     case shortRead
     case incompleteDownload(expected: Int64, received: Int64)
     case sourceChangedDuringUpload
+    case rangeRestart
 
     var errorDescription: String? {
         switch self {
@@ -44,6 +51,7 @@ enum S3ServiceError: Error, LocalizedError {
         case .incompleteMultipartUpload: return "The multipart upload is missing one or more parts."
         case .shortRead: return "The local file changed while it was being uploaded."
         case .sourceChangedDuringUpload: return "The local file changed during the upload; retry to restart from the current contents."
+        case .rangeRestart: return "The remote object changed; restarting the download."
         case .incompleteDownload(let expected, let received):
             return "The download ended after \(received) of \(expected) bytes."
         }
@@ -537,82 +545,158 @@ actor S3Service {
 
     // MARK: - Transfers
 
+    nonisolated static func downloadTemporaryURL(for destination: URL) -> URL {
+        destination.deletingLastPathComponent()
+            .appendingPathComponent(".\(destination.lastPathComponent).bmdownload")
+    }
+
+    @discardableResult
     func download(
         account: Account,
         secret: String,
         bucket: String,
         key: String,
         to url: URL,
+        resumeFrom: Int64 = 0,
+        expectedETag: String? = nil,
+        onMetadata: (@Sendable (String?, Int64?) -> Void)? = nil,
         progress: @escaping @Sendable (Int64) -> Void
-    ) async throws {
+    ) async throws -> DownloadResult {
         let started = Date()
-        do {
-            let client = try await client(for: account, secret: secret)
-            let output: GetObjectOutput = try await throttle.run {
-                try await client.getObject(input: GetObjectInput(bucket: bucket, key: key))
-            }
-            guard let body = output.body else { throw S3ServiceError.emptyBody }
+        let fileManager = FileManager.default
+        let temporaryURL = Self.downloadTemporaryURL(for: url)
+        let parentDirectory = url.deletingLastPathComponent()
+        if !fileManager.fileExists(atPath: parentDirectory.path) {
+            try fileManager.createDirectory(
+                at: parentDirectory,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+        }
 
-            let fileManager = FileManager.default
-            let parentDirectory = url.deletingLastPathComponent()
-            if !fileManager.fileExists(atPath: parentDirectory.path) {
-                try fileManager.createDirectory(
-                    at: parentDirectory,
-                    withIntermediateDirectories: true,
-                    attributes: [.posixPermissions: 0o700]
-                )
-            }
-            let temporaryURL = url.deletingLastPathComponent()
-                .appendingPathComponent(".\(url.lastPathComponent).part-\(UUID().uuidString)")
+        var offset = max(0, resumeFrom)
+        var resumeETag = expectedETag
+        if resumeETag == nil { offset = 0 }
+        if !fileManager.fileExists(atPath: temporaryURL.path) {
             guard fileManager.createFile(
                 atPath: temporaryURL.path,
                 contents: nil,
                 attributes: [.posixPermissions: 0o600]
             ) else { throw CocoaError(.fileWriteUnknown) }
-            defer { try? fileManager.removeItem(at: temporaryURL) }
-            let handle = try FileHandle(forWritingTo: temporaryURL)
-            defer { try? handle.close() }
-
-            var written: Int64 = 0
-            switch body {
-            case .data(let data):
-                let payload = data ?? Data()
-                try handle.write(contentsOf: payload)
-                written = Int64(payload.count)
-                progress(written)
-            case .stream(let stream):
-                while let chunk = try await stream.readAsync(upToCount: 256 * 1024), !chunk.isEmpty {
-                    try Task.checkCancellation()
-                    try handle.write(contentsOf: chunk)
-                    written += Int64(chunk.count)
-                    progress(written)
-                }
-            case .noStream:
-                throw S3ServiceError.emptyBody
-            }
-            if let expected = output.contentLength.map(Int64.init), written != expected {
-                throw S3ServiceError.incompleteDownload(expected: expected, received: written)
-            }
-            try handle.close()
-            if fileManager.fileExists(atPath: url.path) {
-                _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
-            } else {
-                try fileManager.moveItem(at: temporaryURL, to: url)
-            }
-            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            recordRequest(
-                "GetObject", account: account, bucket: bucket, key: key,
-                started: started, outcome: "success", bytes: written, error: nil
-            )
-        } catch {
-            let canceled = Task.isCancelled || error is CancellationError
-            recordRequest(
-                "GetObject", account: account, bucket: bucket, key: key,
-                started: started, outcome: canceled ? "canceled" : "failure",
-                bytes: 0, error: error
-            )
-            throw error
+            offset = 0
         }
+        if offset > 0 {
+            let attributes = try? fileManager.attributesOfItem(atPath: temporaryURL.path)
+            let temporarySize = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
+            if temporarySize < offset {
+                offset = 0
+                resumeETag = nil
+                try? Self.truncate(temporaryURL, to: 0)
+            }
+            try? Self.truncate(temporaryURL, to: UInt64(offset))
+        }
+
+        var lastError: Error?
+        for attempt in 0..<2 {
+            do {
+                let client = try await client(for: account, secret: secret)
+                var input = GetObjectInput(bucket: bucket, key: key)
+                if offset > 0 {
+                    input.range = "bytes=\(offset)-"
+                    input.ifMatch = resumeETag
+                }
+                let requestInput = input
+                let output: GetObjectOutput = try await throttle.run {
+                    try await client.getObject(input: requestInput)
+                }
+                if offset > 0 {
+                    guard output.contentRange != nil else { throw S3ServiceError.rangeRestart }
+                    if let resumeETag, let returned = output.eTag, returned != resumeETag {
+                        throw S3ServiceError.rangeRestart
+                    }
+                }
+                guard let body = output.body else { throw S3ServiceError.emptyBody }
+                let totalSize = Self.totalSize(from: output.contentRange)
+                    ?? (offset == 0 ? output.contentLength.map(Int64.init) : nil)
+                onMetadata?(output.eTag, totalSize)
+
+                let handle = try FileHandle(forWritingTo: temporaryURL)
+                defer { try? handle.close() }
+                try handle.seekToEnd()
+                var received: Int64 = 0
+                progress(offset)
+                switch body {
+                case .data(let data):
+                    let payload = data ?? Data()
+                    try handle.write(contentsOf: payload)
+                    received = Int64(payload.count)
+                    progress(offset + received)
+                case .stream(let stream):
+                    while let chunk = try await stream.readAsync(upToCount: 256 * 1024), !chunk.isEmpty {
+                        try Task.checkCancellation()
+                        try handle.write(contentsOf: chunk)
+                        received += Int64(chunk.count)
+                        progress(offset + received)
+                    }
+                case .noStream:
+                    throw S3ServiceError.emptyBody
+                }
+                if let expected = output.contentLength.map(Int64.init), received != expected {
+                    throw S3ServiceError.incompleteDownload(expected: expected, received: received)
+                }
+                try handle.close()
+                if fileManager.fileExists(atPath: url.path) {
+                    _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
+                } else {
+                    try fileManager.moveItem(at: temporaryURL, to: url)
+                }
+                try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                let finalSize = totalSize ?? (offset + received)
+                recordRequest(
+                    "GetObject", account: account, bucket: bucket, key: key,
+                    started: started, outcome: "success", bytes: finalSize, error: nil
+                )
+                return DownloadResult(
+                    eTag: output.eTag,
+                    totalSize: totalSize,
+                    bytesWritten: offset + received
+                )
+            } catch {
+                if offset > 0, attempt == 0, Self.isRangeRestart(error) {
+                    offset = 0
+                    resumeETag = nil
+                    try? Self.truncate(temporaryURL, to: 0)
+                    lastError = error
+                    continue
+                }
+                let canceled = Task.isCancelled || error is CancellationError
+                recordRequest(
+                    "GetObject", account: account, bucket: bucket, key: key,
+                    started: started, outcome: canceled ? "canceled" : "failure",
+                    bytes: 0, error: error
+                )
+                throw error
+            }
+        }
+        throw lastError ?? S3ServiceError.rangeRestart
+    }
+
+    private static func truncate(_ url: URL, to offset: UInt64) throws {
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        try handle.truncate(atOffset: offset)
+    }
+
+    private static func totalSize(from contentRange: String?) -> Int64? {
+        guard let contentRange,
+              let slash = contentRange.lastIndex(of: "/") else { return nil }
+        return Int64(contentRange[contentRange.index(after: slash)...])
+    }
+
+    private static func isRangeRestart(_ error: Error) -> Bool {
+        if case S3ServiceError.rangeRestart = error { return true }
+        let text = String(describing: error).lowercased()
+        return text.contains("preconditionfailed") || text.contains("precondition failed") || text.contains("status code: 412")
     }
 
     private static let multipartThreshold: Int64 = 16 * 1024 * 1024
@@ -786,13 +870,16 @@ actor S3Service {
         let missing = (1...totalParts).filter { partMap[$0] == nil }
         do {
             let uploadID = record.uploadID
-            for start in stride(from: 0, to: missing.count, by: Self.multipartConcurrency) {
-                try Task.checkCancellation()
-                try Self.verifySourceUnchanged(url: url, size: size, modified: modified)
-                let end = min(start + Self.multipartConcurrency, missing.count)
-                let batch = Array(missing[start..<end])
-                let uploaded = try await withThrowingTaskGroup(of: MultipartPart.self) { group in
-                    for number in batch {
+            try await withThrowingTaskGroup(of: MultipartPart.self) { group in
+                var nextIndex = 0
+                var inFlight = 0
+                while nextIndex < missing.count || inFlight > 0 {
+                    try Task.checkCancellation()
+                    try Self.verifySourceUnchanged(url: url, size: size, modified: modified)
+                    while inFlight < Self.multipartConcurrency, nextIndex < missing.count {
+                        let number = missing[nextIndex]
+                        nextIndex += 1
+                        inFlight += 1
                         group.addTask {
                             try await self.uploadPart(
                                 client: client,
@@ -807,20 +894,14 @@ actor S3Service {
                             )
                         }
                     }
-                    var results: [MultipartPart] = []
-                    for try await part in group {
-                        results.append(part)
-                    }
-                    return results
-                }
-                try Task.checkCancellation()
-                for part in uploaded {
+                    guard inFlight > 0, let part = try await group.next() else { break }
+                    inFlight -= 1
                     partMap[part.number] = part
+                    record.parts = partMap.values.sorted { $0.number < $1.number }
+                    record.updatedAt = Date()
+                    await store.save(record)
+                    progress(record.bytesCompleted(totalSize: size))
                 }
-                record.parts = partMap.values.sorted { $0.number < $1.number }
-                record.updatedAt = Date()
-                await store.save(record)
-                progress(record.bytesCompleted(totalSize: size))
             }
 
             try Task.checkCancellation()

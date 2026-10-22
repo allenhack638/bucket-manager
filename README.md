@@ -269,7 +269,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-logs settings.png --size 1080x680 --tab settings
 ```
 
-The current suite is 143 dialog/model checks plus 142 end-to-end checks. The
+The current suite is 148 dialog/model checks plus 151 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
@@ -300,7 +300,7 @@ headers, never the secret).
   progress, and local file path. Uploads whose source disappeared or changed are
   marked failed instead of being silently resumed. Incomplete server-side
   uploads should be covered by a bucket lifecycle rule.
-- Downloads do not support byte-range resume. They stream to an owner-only temporary file, verify the received length when the server provides one, and replace the destination only on success; a completed response is never reported for a short body.
+- Downloads resume from the persisted byte offset with a Range request and ETag validation. If the ETag changes or the server ignores Range, they restart safely. They stream to an owner-only temporary file, verify the received length when available, and replace the destination only on success; cancellation removes the temporary file without touching the existing destination.
 - Cross-account copy/move is intentionally rejected; copy within one account works.
 - Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.

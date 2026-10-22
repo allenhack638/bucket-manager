@@ -29,10 +29,13 @@ OBJECTS = {}
 FAILED_PARTS = set()
 NEXT_UPLOAD = 0
 MULTIPART_DELAY = float(os.environ.get("FAKE_MULTIPART_DELAY", "0"))
+MULTIPART_STAGGER = os.environ.get("FAKE_MULTIPART_STAGGER", "0") == "1"
 LOCK = threading.Lock()
 XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 DATE = "2026-01-02T03:04:05.000Z"
 HTTP_DATE = formatdate(time.time(), usegmt=True)
+RESUME_DATA = bytes(i % 251 for i in range(2 * 1024 * 1024))
+RESUME_ETAG = '"etag-resume"'
 
 
 def bump(name):
@@ -180,6 +183,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         bump("getObject")
+        if key == "resume.bin":
+            if_match = self.headers.get("If-Match")
+            if if_match and if_match != RESUME_ETAG:
+                bump("precondition")
+                return error_response(self, "PreconditionFailed", "ETag changed", status=412)
+            range_header = self.headers.get("Range", "")
+            if range_header.startswith("bytes="):
+                start = int(range_header.split("=", 1)[1].split("-", 1)[0])
+                start = max(0, min(start, len(RESUME_DATA)))
+                body = RESUME_DATA[start:]
+                bump("rangeRequests")
+                self.send_response(206)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Content-Range", f"bytes {start}-{len(RESUME_DATA) - 1}/{len(RESUME_DATA)}")
+                self.send_header("ETag", RESUME_ETAG)
+                self.send_header("Last-Modified", HTTP_DATE)
+                self.end_headers()
+                self.wfile.write(body)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(RESUME_DATA)))
+            self.send_header("ETag", RESUME_ETAG)
+            self.send_header("Last-Modified", HTTP_DATE)
+            self.end_headers()
+            self.wfile.write(RESUME_DATA)
+            return
         content_type = "text/plain"
         if key == "readme.txt":
             body = b"hello from fake s3"
@@ -235,7 +266,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         part_number = query.get("partNumber", [None])[0]
         if upload_id and part_number:
             if MULTIPART_DELAY:
-                time.sleep(MULTIPART_DELAY)
+                delay = MULTIPART_DELAY
+                if MULTIPART_STAGGER:
+                    delay *= 1 + 0.4 * (int(part_number) - 1)
+                time.sleep(delay)
             with LOCK:
                 upload = MULTIPART.get(upload_id)
                 should_fail = (
