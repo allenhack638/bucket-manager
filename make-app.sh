@@ -12,7 +12,7 @@ BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 
 echo "Building ($CONFIG)…"
-swift build -c "$CONFIG"
+swift build -c "$CONFIG" -Xswiftc -Xfrontend -Xswiftc -disable-round-trip-debug-types
 
 BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
 APP_DIR="build/$APP_BUNDLE_NAME.app"

@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build
+# Swift 6.2 compiler workaround for debug type round-trip crash in UI tests.
+swift build -Xswiftc -Xfrontend -Xswiftc -disable-round-trip-debug-types
 TRANSFER_QUEUE=$(mktemp /tmp/bm-ui-transfer-queue.XXXXXX)
 TEMP_REGISTRY=$(mktemp /tmp/bm-ui-temp-registry.XXXXXX)
 rm -f "$TRANSFER_QUEUE" "$TEMP_REGISTRY"
