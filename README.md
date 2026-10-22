@@ -128,6 +128,11 @@ The browser is deliberately conservative with an S3 endpoint:
   5 minutes are reused silently; older entries stay visible while one background
   refresh runs. Writes invalidate the affected prefix and its ancestors, and the
   cache is flushed on quit.
+- Object listings and bucket lists are cached for **60 seconds**. HeadObject
+  details and tags are cached in memory for **60 seconds per object**, with a
+  40-object cap; failed tag loads are not cached. ACLs, versions, and previews are
+  intentionally fetched again when revisited because they are security- or
+  size-sensitive. Manual refresh bypasses all caches and invalidates folder stats.
 - Transfers cap at four concurrent requests. Credentials are removed from queue
   memory when a task completes, fails or is cancelled.
 

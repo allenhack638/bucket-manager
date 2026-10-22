@@ -447,7 +447,15 @@ final class TransfersViewController: NSViewController {
     }
 
     func selectTab(_ id: String) {
-        if id == "log", !AdminAuthSession.shared.isUnlocked {
+        selectTab(id, requireAuth: true)
+    }
+
+    func selectTabForSnapshot(_ id: String) {
+        selectTab(id, requireAuth: false)
+    }
+
+    private func selectTab(_ id: String, requireAuth: Bool) {
+        if requireAuth, id == "log", !AdminAuthSession.shared.isUnlocked {
             let previous = selectedTab
             guard AdminAuthPrompt.authorize(reason: "Unlock the event log") else {
                 tabStrip.selectedID = previous

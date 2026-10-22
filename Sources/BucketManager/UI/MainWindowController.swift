@@ -62,7 +62,7 @@ final class MainWindowController: NSWindowController {
     required init?(coder: NSCoder) { fatalError() }
 
     func selectTabForSnapshot(_ id: String) {
-        transfers.selectTab(id)
+        transfers.selectTabForSnapshot(id)
     }
 
     func showFilterForSnapshot(_ text: String) {

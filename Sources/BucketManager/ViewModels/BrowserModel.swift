@@ -1537,7 +1537,6 @@ final class BrowserModel {
             guard isCurrent(item, account: account, bucket: bucket) else { return }
             tags = [:]
             tagsKey = item.key
-            cacheTags([:], for: cacheKey)
             onDetailsChange?()
             setError(error)
         }
