@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Crash-orphan cleanup**: startup removes stale download temp files and queue-state temp files, and aborts multipart state that has no matching transfer task.
+
 - Add multipart uploads above 16 MiB with 8 MiB parts, four concurrent parts, pause/resume, retry from completed parts, abort-on-cancel, and changed-file invalidation.
 - Persist multipart part state in an owner-only JSON file and resume after re-adding the same file/key.
 - Persist the transfer queue across relaunch; restore paused/failed tasks, validate source size and modification time, and resolve account credentials only when resuming.

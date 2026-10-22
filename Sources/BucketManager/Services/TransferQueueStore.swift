@@ -29,6 +29,7 @@ final class TransferQueueStore: @unchecked Sendable {
         encoder.outputFormatting = [.sortedKeys]
         self.encoder = encoder
         self.decoder = JSONDecoder()
+        cleanupStaleTemporaryFiles()
     }
 
     func load() -> [PersistedTransferTask] {
@@ -93,6 +94,21 @@ final class TransferQueueStore: @unchecked Sendable {
         } catch {
             try? FileManager.default.removeItem(at: temporary)
             auditRecovery("Could not save the transfer queue: \(LogRedactor.message(error.localizedDescription))")
+        }
+    }
+
+    private func cleanupStaleTemporaryFiles() {
+        let directory = fileURL.deletingLastPathComponent()
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: directory.path) else {
+            return
+        }
+        let cutoff = Date().addingTimeInterval(-3600)
+        for name in names where name.hasPrefix(".transfer-queue-") && name.hasSuffix(".tmp") {
+            let url = directory.appendingPathComponent(name)
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+                  let modified = attributes[.modificationDate] as? Date,
+                  modified < cutoff else { continue }
+            try? FileManager.default.removeItem(at: url)
         }
     }
 

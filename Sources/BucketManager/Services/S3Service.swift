@@ -744,24 +744,28 @@ actor S3Service {
         invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
     }
 
+    @discardableResult
     func abortMultipart(
         account: Account,
         secret: String,
         bucket: String,
         key: String,
         store: MultipartUploadStore = .shared
-    ) async {
+    ) async -> Bool {
         guard let record = await store.record(accountID: account.id, bucket: bucket, key: key) else {
-            return
+            return true
         }
-        if let client = try? await client(for: account, secret: secret) {
-            await abortMultipart(
-                client: client,
-                account: account,
-                bucket: bucket,
-                key: key,
-                uploadID: record.uploadID
-            )
+        guard let client = try? await client(for: account, secret: secret) else {
+            return false
+        }
+        guard await abortMultipart(
+            client: client,
+            account: account,
+            bucket: bucket,
+            key: key,
+            uploadID: record.uploadID
+        ) else {
+            return false
         }
         await store.remove(accountID: account.id, bucket: bucket, key: key)
         LogStore.shared.audit(
@@ -773,6 +777,7 @@ actor S3Service {
             key: key,
             operation: "AbortMultipartUpload"
         )
+        return true
     }
 
     private func uploadMultipart(
@@ -794,7 +799,7 @@ actor S3Service {
         let existing = await store.record(accountID: account.id, bucket: bucket, key: key)
 
         if let existing, forceRestart || !existing.matches(fileSize: size, fileModified: modified, partSize: partSize) {
-            await abortMultipart(
+            _ = await abortMultipart(
                 client: client,
                 account: account,
                 bucket: bucket,
@@ -1010,7 +1015,7 @@ actor S3Service {
         bucket: String,
         key: String,
         uploadID: String
-    ) async {
+    ) async -> Bool {
         do {
             _ = try await measured(
                 "AbortMultipartUpload", account: account, bucket: bucket, key: key
@@ -1023,6 +1028,7 @@ actor S3Service {
                     ))
                 }
             }
+            return true
         } catch {
             LogStore.shared.log(
                 .warning,
@@ -1036,6 +1042,7 @@ actor S3Service {
                 operation: "AbortMultipartUpload",
                 outcome: "failure"
             )
+            return Self.isRecoverableMultipartStateError(error)
         }
     }
 

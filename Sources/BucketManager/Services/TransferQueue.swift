@@ -11,6 +11,7 @@ final class TransferQueue {
     private let service = S3Service.shared
     private let multipartStore: MultipartUploadStore
     private let stateStore: TransferQueueStore
+    private let temporaryRegistry: DownloadTempRegistry
     private let credentialProvider: ((UUID) -> (Account, String)?)?
     private let maxConcurrent = 4
     private var credentials: [UUID: (Account, String)] = [:]
@@ -26,12 +27,27 @@ final class TransferQueue {
     init(
         multipartStore: MultipartUploadStore = .shared,
         stateStore: TransferQueueStore = .shared,
+        temporaryRegistry: DownloadTempRegistry = .shared,
         credentialProvider: ((UUID) -> (Account, String)?)? = nil
     ) {
         self.multipartStore = multipartStore
         self.stateStore = stateStore
+        self.temporaryRegistry = temporaryRegistry
         self.credentialProvider = credentialProvider
         restorePersistedTasks()
+        cleanOrphanDownloadTemps()
+    }
+
+    private func cleanOrphanDownloadTemps() {
+        let active = Set(tasks.compactMap { task -> String? in
+            guard task.direction == .download,
+                  [.queued, .running, .paused, .failed].contains(task.status) else { return nil }
+            return S3Service.downloadTemporaryURL(for: task.localURL).path
+        })
+        for path in active where FileManager.default.fileExists(atPath: path) {
+            temporaryRegistry.register(URL(fileURLWithPath: path))
+        }
+        temporaryRegistry.cleanup(active: active)
     }
 
     var runningCount: Int { tasks.filter { $0.status == .running }.count }
@@ -221,9 +237,11 @@ final class TransferQueue {
                 Task {
                     await work.value
                     try? FileManager.default.removeItem(at: temporary)
+                    self.temporaryRegistry.unregister(temporary)
                 }
             } else {
                 try? FileManager.default.removeItem(at: temporary)
+                temporaryRegistry.unregister(temporary)
             }
         }
         log("Canceled \(task.key)")
@@ -401,6 +419,8 @@ final class TransferQueue {
                         }
                     )
                 case .download:
+                    let temporary = S3Service.downloadTemporaryURL(for: url)
+                    temporaryRegistry.register(temporary)
                     let resumeFrom = tasks[index].bytesDone
                     let resumeETag = tasks[index].downloadETag
                     let result = try await service.download(
@@ -494,6 +514,9 @@ final class TransferQueue {
             account: account,
             outcome: "success"
         )
+        if tasks[index].direction == .download {
+            temporaryRegistry.unregister(S3Service.downloadTemporaryURL(for: tasks[index].localURL))
+        }
         workTasks[id] = nil
         workGeneration[id] = nil
         credentials[id] = nil

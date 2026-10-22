@@ -38,7 +38,9 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
   a 0600 persisted queue that restores active tasks after relaunch, a concurrency
   cap of 4, running/queued/stopped/failed filters, start/stop/cancel, and open in
   Finder. Restored uploads validate source size and modification time; account
-  secrets are read from Keychain only when you start the task.
+  secrets are read from Keychain only when you start the task. Startup cleanup
+  removes crashed download temp files and queue-state temp files, and aborts
+  orphaned multipart state.
 - **Drag and drop** — drop files or folders from Finder onto the object table to
   upload them to the current prefix.
 - **Inspector tabs** — Tasks, Permissions (ACL), Headers, Tags, Properties, Preview,
@@ -269,7 +271,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-logs settings.png --size 1080x680 --tab settings
 ```
 
-The current suite is 148 dialog/model checks plus 151 end-to-end checks. The
+The current suite is 156 dialog/model checks plus 153 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,

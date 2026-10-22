@@ -112,6 +112,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with LOCK:
                 body = json.dumps(STATS)
             return xml_response(self, body, content_type="application/json")
+        if bucket == "__seed_multipart":
+            upload_id = query.get("id", ["orphan-upload"])[0]
+            with LOCK:
+                MULTIPART[upload_id] = {
+                    "bucket": query.get("bucket", ["alpha"])[0],
+                    "key": query.get("key", ["orphan.bin"])[0],
+                    "content_type": "application/octet-stream",
+                    "parts": {},
+                }
+            return xml_response(self, '{"seeded": true}', content_type="application/json")
         if bucket == "__objects":
             with LOCK:
                 body = json.dumps({k: len(v["body"]) for k, v in OBJECTS.items()})

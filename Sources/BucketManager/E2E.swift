@@ -885,6 +885,55 @@ enum E2E {
             try? FileManager.default.removeItem(at: stateURL)
 
             await resetStats()
+            var seedComponents = URLComponents(
+                url: base.appendingPathComponent("__seed_multipart"),
+                resolvingAgainstBaseURL: false
+            )!
+            seedComponents.queryItems = [
+                URLQueryItem(name: "id", value: "orphan-upload"),
+                URLQueryItem(name: "bucket", value: "alpha"),
+                URLQueryItem(name: "key", value: "orphan.bin")
+            ]
+            if let seedURL = seedComponents.url {
+                _ = try? await URLSession.shared.data(from: seedURL)
+            }
+            let orphanStateURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-orphan-\(UUID().uuidString).json")
+            let orphanStore = MultipartUploadStore(fileURL: orphanStateURL)
+            let stale = Date().addingTimeInterval(-600)
+            await orphanStore.save(MultipartUploadRecord(
+                accountID: account.id,
+                bucket: "alpha",
+                key: "orphan.bin",
+                uploadID: "orphan-upload",
+                fileSize: 10,
+                fileModified: nil,
+                partSize: 5,
+                parts: [],
+                createdAt: stale,
+                updatedAt: stale
+            ))
+            let cleanupAccounts = AccountStore(
+                inMemoryAccounts: [account],
+                secrets: [account.id: secret]
+            )
+            let emptyQueueStore = TransferQueueStore(fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-cleanup-queue-\(UUID().uuidString).json"))
+            let emptyQueue = TransferQueue(stateStore: emptyQueueStore)
+            await TransferMaintenance.cleanOrphans(
+                queue: emptyQueue,
+                accounts: cleanupAccounts,
+                multipartStore: orphanStore,
+                now: Date(),
+                grace: 60
+            )
+            check(await orphanStore.recordsSnapshot().isEmpty,
+                  "orphan multipart state is removed")
+            check(((await stats())["abortMultipart"] ?? 0) >= 1,
+                  "orphan multipart upload is aborted on launch cleanup")
+            try? FileManager.default.removeItem(at: orphanStateURL)
+
+            await resetStats()
             let persistedURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("e2e-persisted-\(UUID().uuidString).bin")
             try? Data(repeating: 0x6A, count: bigSize).write(to: persistedURL)

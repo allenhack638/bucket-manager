@@ -790,6 +790,80 @@ enum UITest {
         check(emptyQueue.tasks.isEmpty, "missing queue state starts empty")
         try? FileManager.default.removeItem(at: queueDir)
 
+        let maintenanceDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BucketManager-maintenance-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: maintenanceDir, withIntermediateDirectories: true)
+        let orphanTemp = maintenanceDir.appendingPathComponent("orphan.bmdownload")
+        let activeTemp = maintenanceDir.appendingPathComponent("active.bmdownload")
+        let unrelatedFile = maintenanceDir.appendingPathComponent("keep.txt")
+        try? Data("orphan".utf8).write(to: orphanTemp)
+        try? Data("active".utf8).write(to: activeTemp)
+        try? Data("keep".utf8).write(to: unrelatedFile)
+        let registryURL = maintenanceDir.appendingPathComponent("download-temps.json")
+        let registry = DownloadTempRegistry(fileURL: registryURL)
+        registry.register(orphanTemp)
+        registry.register(activeTemp)
+        registry.register(unrelatedFile)
+        registry.cleanup(active: [activeTemp.path])
+        check(!FileManager.default.fileExists(atPath: orphanTemp.path),
+              "orphan download temp file is removed")
+        check(FileManager.default.fileExists(atPath: activeTemp.path),
+              "active download temp file is preserved")
+        check(FileManager.default.fileExists(atPath: unrelatedFile.path),
+              "cleanup never removes a non-download file")
+        check(DownloadTempRegistry(fileURL: registryURL).registered().map(\.path) == [activeTemp.path],
+              "active download temp remains registered")
+        let registryAttributes = try? FileManager.default.attributesOfItem(atPath: registryURL.path)
+        let registryMode = (registryAttributes?[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        check(registryMode == 0o600, "download temp registry is owner-only")
+
+        let staleStateDir = maintenanceDir.appendingPathComponent("state", isDirectory: true)
+        try? FileManager.default.createDirectory(at: staleStateDir, withIntermediateDirectories: true)
+        let staleTemp = staleStateDir.appendingPathComponent(".transfer-queue-old.tmp")
+        try? Data("stale".utf8).write(to: staleTemp)
+        try? FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-7200)],
+            ofItemAtPath: staleTemp.path
+        )
+        _ = TransferQueueStore(fileURL: staleStateDir.appendingPathComponent("transfer-queue.json"))
+        check(!FileManager.default.fileExists(atPath: staleTemp.path),
+              "stale queue atomic-write temporary file is removed")
+
+        let now = Date()
+        let activeUploadAccount = UUID()
+        let activeUploadTask = {
+            var task = TransferTask(
+                direction: .upload, bucket: "alpha", key: "active.bin",
+                localURL: maintenanceDir.appendingPathComponent("active.bin"), size: 100
+            )
+            task.accountID = activeUploadAccount
+            task.status = .paused
+            return task
+        }()
+        let activeRecord = MultipartUploadRecord(
+            accountID: activeUploadAccount, bucket: "alpha", key: "active.bin",
+            uploadID: "active-upload", fileSize: 100, fileModified: nil,
+            partSize: 8, parts: [], createdAt: now.addingTimeInterval(-600),
+            updatedAt: now
+        )
+        let orphanRecord = MultipartUploadRecord(
+            accountID: UUID(), bucket: "alpha", key: "orphan.bin",
+            uploadID: "orphan-upload", fileSize: 100, fileModified: nil,
+            partSize: 8, parts: [], createdAt: now.addingTimeInterval(-600),
+            updatedAt: now.addingTimeInterval(-600)
+        )
+        let planned = MultipartOrphanPlanner.orphans(
+            records: [activeRecord, orphanRecord],
+            activeUploads: [activeUploadTask],
+            now: now,
+            grace: 60
+        )
+        check(planned.count == 1 && planned.first?.uploadID == "orphan-upload",
+              "multipart orphan planner keeps active uploads")
+        check(planned.first?.key == "orphan.bin",
+              "multipart orphan planner finds stale upload state")
+        try? FileManager.default.removeItem(at: maintenanceDir)
+
         print("UITEST SUMMARY passed=\(passed) failed=\(failed)")
         exit(failed == 0 ? 0 : 1)
     }

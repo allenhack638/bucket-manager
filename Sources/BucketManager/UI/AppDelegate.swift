@@ -25,6 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow = MainWindowController(accounts: accounts, model: model)
         buildMainMenu()
         mainWindow.show()
+        Task {
+            await TransferMaintenance.cleanOrphans(queue: model.transfers, accounts: accounts)
+        }
 
         #if DEBUG
         if CommandLine.arguments.contains("--demo") {
