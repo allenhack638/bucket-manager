@@ -205,6 +205,25 @@ enum Acceptance {
             )
             check(copied.contentLength == item.size, "CopyObject preserves content")
 
+            let copyItem = S3Item.listed(
+                key: copyKey, size: copied.contentLength, lastModified: copied.lastModified,
+                storageClass: copied.storageClass, eTag: copied.eTag
+            )
+            let renamedKey = prefix + "renamed.txt"
+            await model.rename(copyItem, to: "renamed.txt")
+            let renamed = try await service.objectDetails(
+                account: account, secret: secret, bucket: bucket, key: renamedKey
+            )
+            check(renamed.contentLength == item.size, "rename preserves content")
+            do {
+                _ = try await service.objectDetails(
+                    account: account, secret: secret, bucket: bucket, key: copyKey
+                )
+                check(false, "rename removes the old object")
+            } catch {
+                check(true, "rename removes the old object")
+            }
+
             await model.createFolder(named: "nested")
             let createdFolder = model.items.contains { $0.key == prefix + "nested/" }
             if createdFolder {
@@ -265,6 +284,9 @@ enum Acceptance {
             )
             try await service.delete(
                 account: account, secret: secret, bucket: bucket, key: copyKey
+            )
+            try await service.delete(
+                account: account, secret: secret, bucket: bucket, key: renamedKey
             )
             let leftovers = try await service.listAllObjects(
                 account: account, secret: secret, bucket: bucket, prefix: prefix

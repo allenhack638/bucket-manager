@@ -21,3 +21,5 @@
 - Remove the obsolete account-tree model, unused theme tokens, and unused UI helpers.
 - Add a real S3-protocol acceptance harness with automatic test data cleanup.
 - Send small uploads with an explicit Content-Length for stricter S3-compatible servers.
+- Fix custom endpoint and path-style controls staying hidden when editing S3-compatible accounts.
+- Add regression coverage for account edit, endpoint changes, type switching, update, and removal.

@@ -368,6 +368,7 @@ final class AddAccountWindowController: NSWindowController {
         if let index = Account.Kind.allCases.firstIndex(of: account.kind) {
             typePopup.selectItem(at: index)
         }
+        updateVisibility()
     }
 
     @objc private func typeChanged() {
@@ -470,6 +471,7 @@ final class AddAccountWindowController: NSWindowController {
         dismiss()
     }
 
+    #if DEBUG
     func testFill(
         name: String,
         access: String,
@@ -492,6 +494,12 @@ final class AddAccountWindowController: NSWindowController {
     func testSave() { save() }
     func testCancel() { cancel() }
     var testErrorText: String { errorLabel.stringValue }
+    var testEndpointControlsVisible: Bool {
+        endpointRow?.isHidden == false
+            && endpointHelpRow?.isHidden == false
+            && pathStyleRow?.isHidden == false
+    }
+    #endif
 
     private func dismiss() {
         if let keyMonitor {
@@ -707,7 +715,9 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
         updateActions()
     }
 
+    #if DEBUG
     func testRowCount() -> Int { table.numberOfRows }
+    #endif
 
     private func updateActions() {
         let hasSelection = table.selectedRow >= 0

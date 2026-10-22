@@ -57,6 +57,60 @@ enum UITest {
         compatible.testSave()
         check(saved?.0.endpoint == "https://s3.example.com", "compatible endpoint is saved")
 
+        let existing = Account(
+            displayName: "Existing",
+            accessKeyID: "KEY",
+            kind: .compatible,
+            region: "us-east-1",
+            endpoint: "https://old.example.com"
+        )
+        var edited: (Account, String?)?
+        let accountStore = AccountStore(
+            inMemoryAccounts: [existing],
+            secrets: [existing.id: UUID().uuidString]
+        )
+        var renamed = existing
+        renamed.displayName = "Renamed Account"
+        try? accountStore.update(renamed, secret: nil)
+        check(accountStore.account(id: existing.id)?.displayName == "Renamed Account",
+              "account metadata update is persisted")
+        accountStore.remove(renamed)
+        check(accountStore.accounts.isEmpty, "account removal deletes the account")
+
+        let editSheet = AddAccountWindowController(
+            account: existing,
+            secret: UUID().uuidString,
+            onSave: { account, secret in edited = (account, secret) },
+            onCancel: {}
+        )
+        check(editSheet.testEndpointControlsVisible,
+              "editing a compatible account exposes endpoint controls")
+        editSheet.testFill(
+            name: "Existing", access: "KEY", secret: "", region: "us-east-1",
+            endpoint: "https://new.example.com", kind: .compatible
+        )
+        editSheet.testSave()
+        check(edited?.0.endpoint == "https://new.example.com",
+              "editing an account saves the changed endpoint")
+        check(edited?.1 == nil, "blank secret keeps the existing Keychain secret")
+
+        let typeSheet = AddAccountWindowController(
+            account: existing, secret: UUID().uuidString,
+            onSave: { _, _ in }, onCancel: {}
+        )
+        typeSheet.testFill(
+            name: "Existing", access: "KEY", secret: "", region: "us-east-1",
+            endpoint: "", kind: .amazonS3
+        )
+        check(!typeSheet.testEndpointControlsVisible,
+              "Amazon S3 mode hides custom endpoint controls")
+        typeSheet.testFill(
+            name: "Existing", access: "KEY", secret: "", region: "us-east-1",
+            endpoint: "https://new.example.com", kind: .compatible
+        )
+        check(typeSheet.testEndpointControlsVisible,
+              "switching back to compatible restores endpoint controls")
+
         let cancelSheet = AddAccountWindowController(
             account: nil,
             secret: nil,

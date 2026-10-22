@@ -231,10 +231,11 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot out.png --size 900x480 --error "Access denied."
 .build/debug/BucketManager --snapshot filtered.png --size 900x480 --filter Border
 .build/debug/BucketManager --snapshot-sheet add --out add.png --size 640x500
+.build/debug/BucketManager --snapshot-sheet edit --out edit.png --size 640x500
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 72 dialog/model checks plus 79 end-to-end checks. The
+The current suite is 79 dialog/model checks plus 79 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,

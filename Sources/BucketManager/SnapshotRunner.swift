@@ -70,6 +70,13 @@ enum SnapshotRunner {
             sheet.reload()
             retained.append(sheet)
             window = sheet.window
+        } else if kind == "edit", let account = accounts.accounts.first(where: { $0.kind == .compatible }) {
+            let sheet = AddAccountWindowController(
+                account: account, secret: UUID().uuidString,
+                onSave: { _, _ in }, onCancel: {}
+            )
+            retained.append(sheet)
+            window = sheet.window
         } else {
             let sheet = AddAccountWindowController(account: nil, secret: nil, onSave: { _, _ in }, onCancel: {})
             retained.append(sheet)
