@@ -14,18 +14,6 @@ extension NSView {
     }
 }
 
-extension NSColor {
-    func blended(with other: NSColor, fraction: CGFloat) -> NSColor {
-        guard let a = usingColorSpace(.sRGB), let b = other.usingColorSpace(.sRGB) else { return self }
-        return NSColor(
-            srgbRed: a.redComponent + (b.redComponent - a.redComponent) * fraction,
-            green: a.greenComponent + (b.greenComponent - a.greenComponent) * fraction,
-            blue: a.blueComponent + (b.blueComponent - a.blueComponent) * fraction,
-            alpha: a.alphaComponent + (b.alphaComponent - a.alphaComponent) * fraction
-        )
-    }
-}
-
 extension NSImage {
     func tinted(_ color: NSColor) -> NSImage {
         guard isTemplate else { return self }
@@ -67,19 +55,6 @@ final class FlippedView: NSView {
 }
 
 // MARK: - Background views
-
-final class ColorView: NSView {
-    var color: NSColor { didSet { layer?.backgroundColor = color.cgColor } }
-
-    init(color: NSColor) {
-        self.color = color
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.backgroundColor = color.cgColor
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
-}
 
 final class SeparatorView: NSView {
     enum Axis { case horizontal, vertical }
@@ -959,32 +934,6 @@ final class EmptyStateView: NSView {
         actionButton?.isHidden = !visible
         if let title, let actionButton { actionButton.title = title }
     }
-}
-
-// MARK: - Toast
-
-final class ToastView: NSView {
-    private let label = Labels.label("", font: Theme.Font.body, color: Theme.Colors.text)
-
-    init(message: String) {
-        super.init(frame: .zero)
-        wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.toastBackground.resolved(for: self).cgColor
-        layer?.borderColor = Theme.Colors.borderStrong.resolved(for: self).cgColor
-        needsDisplay = true
-        layer?.borderWidth = 1
-        layer?.cornerRadius = 3
-        label.stringValue = message
-        label.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
-    }
-
-    required init?(coder: NSCoder) { fatalError() }
 }
 
 extension FlatButton.Style {

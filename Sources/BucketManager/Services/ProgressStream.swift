@@ -2,8 +2,7 @@ import Foundation
 import Smithy
 import SmithyStreams
 
-/// Wraps a readable file stream and reports how many bytes the AWS SDK has
-/// consumed. This is what makes the upload progress bar real instead of fake.
+/// Wraps a readable file stream and reports consumed bytes for upload progress.
 final class ProgressStream: Smithy.Stream, @unchecked Sendable {
     private let inner: FileStream
     private let onProgress: @Sendable (Int64) -> Void

@@ -5,7 +5,6 @@ final class AccountStore {
     typealias SecretLoader = (UUID) throws -> String
 
     private(set) var accounts: [Account] = []
-    var onChange: (() -> Void)?
 
     private let fileURL: URL
     private let secretLoader: SecretLoader
@@ -49,7 +48,6 @@ final class AccountStore {
         accounts.append(account)
         save()
         invalidateClient(for: account.id)
-        onChange?()
     }
 
     func update(_ account: Account, secret: String?) throws {
@@ -64,7 +62,6 @@ final class AccountStore {
         }
         save()
         invalidateClient(for: account.id)
-        onChange?()
     }
 
     func remove(_ account: Account) {
@@ -73,7 +70,6 @@ final class AccountStore {
         accounts.removeAll { $0.id == account.id }
         save()
         invalidateClient(for: account.id)
-        onChange?()
     }
 
     func account(id: UUID) -> Account? {

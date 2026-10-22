@@ -153,7 +153,7 @@ Logs are written to:
 
 ```
 Sources/BucketManager/
-  main.swift                 entry point + hidden diagnostic modes
+  main.swift                 entry point; debug-only diagnostic modes
   UI/
     MainWindowController     window, custom chrome, menus, sheets, shortcuts
     SidebarViewController    account picker + flat bucket list
@@ -163,7 +163,7 @@ Sources/BucketManager/
     Components.swift         FlatButton, checkbox, progress, InfoTextView, …
     Chrome.swift             custom title bar + in-app menu bar
     Theme.swift              theme colors, fonts, metrics
-  Models/                    Account, S3Item, TransferTask, BrowserNode
+  Models/                    Account, S3Item, S3Key, BucketNode, EndpointValidator
   Services/
     S3Service                clients, listing, metadata, transfers, cache
     TransferQueue            queue, concurrency, progress, speed
@@ -171,10 +171,12 @@ Sources/BucketManager/
     KeychainStore            secrets
     AccountStore             account JSON + secret lookup
     StripXIDInterceptor     S3-compatible signing fix
-    AppLog                  stderr + rotating-friendly file log
+    AppLog                   stderr + size-rotated file log
   ViewModels/BrowserModel    state, operations, inspector loaders
-  SnapshotRunner.swift      offscreen PNG rendering for UI review
-  UITest.swift              headless dialog interaction tests
+  Debug harness (excluded from release builds):
+  SnapshotRunner.swift       offscreen PNG rendering for UI review
+  UITest.swift               headless dialog interaction tests
+  E2E.swift                  fake-S3 end-to-end checks
 ```
 
 ## S3-compatible signing fix
@@ -224,7 +226,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 66 dialog/model checks plus 79 end-to-end checks. The E2E
+The current suite is 72 dialog/model checks plus 79 end-to-end checks. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
 folder markers returned in `Contents`, AccessDenied, deliberately delayed
 responses, folder creation (`PUT .../name/`), metadata request counts, the 60s

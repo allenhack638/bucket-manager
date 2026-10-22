@@ -10,7 +10,6 @@ enum Theme {
         static let trafficLightInset: CGFloat = 82
 
         static let sidebarWidth: CGFloat = 321
-        static let dividerWidth: CGFloat = 2
 
         static let treeRowHeight: CGFloat = 16
         static let treeIndent: CGFloat = 14
@@ -43,7 +42,6 @@ enum Theme {
         static let sidebar = adaptive(0xFDFDFD, 0x1C1C1E)
         static let content = adaptive(0xFFFFFF, 0x18181A)
         static let header = adaptive(0xFAFAFA, 0x222224)
-        static let divider = adaptive(0x8C8C8C, 0x5A5A5E)
         static let border = adaptive(0xE5E5E5, 0x3A3A3C)
         static let borderStrong = adaptive(0xC0C0C0, 0x4A4A4E)
 
@@ -65,8 +63,6 @@ enum Theme {
         static let warning = adaptive(0xA4262C, 0xFF453A)
         static let success = adaptive(0x0F7B0F, 0x30D158)
         static let link = adaptive(0x0067C0, 0x64D2FF)
-        static let errorBackground = adaptive(0xFDE7E9, 0x3A1B1E)
-        static let toastBackground = adaptive(0xFFFFB6, 0x3B3B1F)
     }
 
     enum Icon {
@@ -79,7 +75,6 @@ enum Theme {
         static let toolbar = Style(size: 16, weight: .regular, scale: .medium)
         static let action = Style(size: 14, weight: .regular, scale: .medium)
         static let tab = Style(size: 12, weight: .regular, scale: .medium)
-        static let link = Style(size: 12, weight: .regular, scale: .medium)
         static let sortIndicator = Style(size: 8, weight: .semibold, scale: .small)
         static let emptyState = Style(size: 32, weight: .light, scale: .medium)
         static let row = Style(size: 16, weight: .regular, scale: .medium)
@@ -102,17 +97,12 @@ enum Theme {
         nonisolated(unsafe) static let menu = NSFont.systemFont(ofSize: 12, weight: .regular)
         nonisolated(unsafe) static let body = NSFont.systemFont(ofSize: 12, weight: .regular)
         nonisolated(unsafe) static let bodyMedium = NSFont.systemFont(ofSize: 12, weight: .medium)
-        nonisolated(unsafe) static let bodyBold = NSFont.systemFont(ofSize: 12, weight: .semibold)
         nonisolated(unsafe) static let small = NSFont.systemFont(ofSize: 11, weight: .regular)
-        nonisolated(unsafe) static let smallBold = NSFont.systemFont(ofSize: 11, weight: .semibold)
         nonisolated(unsafe) static let tiny = NSFont.systemFont(ofSize: 10, weight: .regular)
-        nonisolated(unsafe) static let tab = NSFont.systemFont(ofSize: 12, weight: .regular)
         nonisolated(unsafe) static let section = NSFont.systemFont(ofSize: 13, weight: .semibold)
         nonisolated(unsafe) static let mono = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         nonisolated(unsafe) static let field = NSFont.systemFont(ofSize: 13, weight: .regular)
     }
-
-    static let cornerRadius: CGFloat = 4
 }
 
 extension NSColor {
@@ -132,13 +122,6 @@ extension NSColor {
             blue: CGFloat(hex & 0xFF) / 255,
             alpha: alpha
         )
-    }
-}
-
-extension String {
-    func leftTruncated(_ maxLength: Int) -> String {
-        guard count > maxLength else { return self }
-        return "…" + suffix(maxLength - 1)
     }
 }
 

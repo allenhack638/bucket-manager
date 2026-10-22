@@ -92,7 +92,6 @@ final class TransfersViewController: NSViewController {
     private let infoView = InfoTextView()
     private let previewImageView = NSImageView()
 
-    private let taskHeading = Labels.label("Task", font: Theme.Font.small, color: Theme.Colors.secondaryText)
     private let sizeWidth: CGFloat = 78
     private let percentWidth: CGFloat = 56
     private let progressWidth: CGFloat = 90

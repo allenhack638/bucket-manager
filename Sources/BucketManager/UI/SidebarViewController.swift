@@ -28,18 +28,12 @@ final class TreeCellView: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(node: BrowserNode, selected: Bool) {
-        label.stringValue = node.title
-        label.font = node.kind == .account ? Theme.Font.bodyBold : Theme.Font.body
+    func configure(node: BucketNode, selected: Bool) {
+        label.stringValue = node.name
+        label.font = Theme.Font.body
         icon.image = node.icon
-        let tint: NSColor
-        switch node.kind {
-        case .account: tint = Theme.Colors.accent
-        case .bucket: tint = NSColor(hex: 0xD18B00)
-        case .folder: tint = NSColor(hex: 0xE0A800)
-        }
         label.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.text
-        icon.contentTintColor = selected ? Theme.Colors.selectionText : tint
+        icon.contentTintColor = selected ? Theme.Colors.selectionText : NSColor(hex: 0xD18B00)
     }
 }
 
@@ -48,14 +42,13 @@ final class SidebarViewController: NSViewController {
     private let model: BrowserModel
     var onAddAccount: (() -> Void)?
     var onManageAccounts: (() -> Void)?
-    var onError: ((String, String) -> Void)?
 
     private let outline = NSOutlineView()
     private let scroll = NSScrollView()
     private let toolbar = ThemedView()
     private let emptyView: EmptyStateView
     private let accountPopup = NSPopUpButton()
-    private var bucketNodes: [BrowserNode] = []
+    private var bucketNodes: [BucketNode] = []
     private var isReloading = false
 
     init(model: BrowserModel) {
@@ -223,12 +216,7 @@ final class SidebarViewController: NSViewController {
 
     func reload() {
         bucketNodes = model.buckets.map {
-            BrowserNode(
-                kind: .bucket,
-                title: $0.name,
-                accountID: model.selectedAccount?.id,
-                bucket: $0.name
-            )
+            BucketNode(name: $0.name, accountID: model.selectedAccount?.id)
         }
         updateAccountPopup()
 
@@ -236,7 +224,7 @@ final class SidebarViewController: NSViewController {
         outline.reloadData()
 
         if let selectedBucket = model.selectedBucket,
-           let index = bucketNodes.firstIndex(where: { $0.bucket == selectedBucket }) {
+           let index = bucketNodes.firstIndex(where: { $0.name == selectedBucket }) {
             outline.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         } else {
             outline.deselectAll(nil)
@@ -358,7 +346,7 @@ final class SidebarViewController: NSViewController {
 
     @objc private func openSelected() {
         guard outline.selectedRow >= 0, outline.selectedRow < bucketNodes.count else { return }
-        model.selectBucket(bucketNodes[outline.selectedRow].bucket ?? "")
+        model.selectBucket(bucketNodes[outline.selectedRow].name)
     }
 }
 
@@ -376,7 +364,7 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        guard let node = item as? BrowserNode else { return nil }
+        guard let node = item as? BucketNode else { return nil }
         let identifier = NSUserInterfaceItemIdentifier("treecell")
         let cell = (outlineView.makeView(withIdentifier: identifier, owner: self) as? TreeCellView) ?? {
             let view = TreeCellView()
@@ -395,16 +383,16 @@ extension SidebarViewController: NSOutlineViewDataSource, NSOutlineViewDelegate 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard !isReloading else { return }
         guard outline.selectedRow >= 0,
-              outline.selectedRow < bucketNodes.count,
-              let bucket = bucketNodes[outline.selectedRow].bucket,
-              bucket != model.selectedBucket else { return }
+              outline.selectedRow < bucketNodes.count else { return }
+        let bucket = bucketNodes[outline.selectedRow].name
+        guard bucket != model.selectedBucket else { return }
         model.selectBucket(bucket)
         refreshRowColors()
     }
 
     private func refreshRowColors() {
         for row in 0..<outline.numberOfRows {
-            guard let node = outline.item(atRow: row) as? BrowserNode,
+            guard let node = outline.item(atRow: row) as? BucketNode,
                   let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? TreeCellView else { continue }
             cell.configure(node: node, selected: outline.selectedRowIndexes.contains(row))
         }

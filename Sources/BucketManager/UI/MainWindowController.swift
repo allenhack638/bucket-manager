@@ -166,7 +166,6 @@ final class MainWindowController: NSWindowController {
     private func wire() {
         sidebar.onAddAccount = { [weak self] in self?.presentAddAccount() }
         sidebar.onManageAccounts = { [weak self] in self?.presentStorageAccounts() }
-        sidebar.onError = { [weak self] title, message in self?.presentError(title, message) }
 
         browser.onShowInspector = { [weak self] tab in self?.transfers.selectTab(tab) }
         browser.onBookmark = { [weak self] in self?.addBookmarkAction() }

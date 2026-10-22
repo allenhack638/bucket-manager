@@ -240,10 +240,8 @@ final class BrowserModel {
         return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
     }
 
-    // MARK: - Accounts / tree
+    // MARK: - Accounts / buckets
 
-    /// Populates the UI with deterministic sample data for offscreen snapshots
-    /// and layout self-tests. Never called by the normal launch path.
     func loadDemoData() {
         isDemoData = true
         let demo = Account(
@@ -353,19 +351,16 @@ final class BrowserModel {
         onLogChange?()
     }
 
-    /// Snapshot-only helper: clears the event log so its empty state can be rendered.
     func clearLogsForSnapshot() {
         logs.removeAll()
         onLogChange?()
     }
 
-    /// Snapshot-only helper: shows a deep path without issuing a request.
     func setPrefixForSnapshot(_ value: String) {
         prefix = value
         onChromeChange?()
     }
 
-    /// Snapshot-only helper: shows the error placeholder without a request.
     func setErrorForSnapshot(_ message: String) {
         errorMessage = message
         items = []
@@ -836,17 +831,6 @@ final class BrowserModel {
         if checked.contains(key) { checked.remove(key) } else { checked.insert(key) }
         onFilesChange?()
         onChromeChange?()
-    }
-
-    func setChecked(_ keys: Set<String>, checked value: Bool) {
-        if value { checked.formUnion(keys) } else { checked.subtract(keys) }
-        onFilesChange?()
-        onChromeChange?()
-    }
-
-    var keysForAction: Set<String> {
-        if !checked.isEmpty { return checked }
-        return selection
     }
 
     // MARK: - Operations
@@ -1530,11 +1514,6 @@ final class BrowserModel {
         AppLog.shared.log(message)
         logs.append("\(Self.logTimeFormatter.string(from: Date()))  \(message)")
         if logs.count > 1000 { logs.removeFirst(logs.count - 1000) }
-        onLogChange?()
-    }
-
-    func clearLog() {
-        logs.removeAll()
         onLogChange?()
     }
 

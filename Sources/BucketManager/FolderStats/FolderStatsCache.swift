@@ -42,11 +42,6 @@ final class FolderStatsCache: @unchecked Sendable {
         return result
     }
 
-    func allRecords() -> [FolderStatsRecord] {
-        lock.lock(); defer { lock.unlock() }
-        return Array(records.values)
-    }
-
     func upsert(_ newRecords: [FolderStatsRecord], persist: Bool = true) {
         guard !newRecords.isEmpty else { return }
         lock.lock()
@@ -84,13 +79,6 @@ final class FolderStatsCache: @unchecked Sendable {
         for key in removed { records[key] = nil }
         lock.unlock()
         if !removed.isEmpty { scheduleSave() }
-    }
-
-    func clear() {
-        lock.lock()
-        records.removeAll()
-        lock.unlock()
-        scheduleSave()
     }
 
     func flush() {

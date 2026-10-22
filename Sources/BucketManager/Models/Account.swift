@@ -25,12 +25,6 @@ struct Account: Identifiable, Codable, Hashable, Sendable {
     var useSSL: Bool = true
     var createdAt: Date = Date()
 
-    var isAWS: Bool { kind != .compatible }
-    var endpointHost: String? {
-        guard kind == .compatible, let endpoint, !endpoint.isEmpty else { return nil }
-        return endpoint
-    }
-
     init(
         id: UUID = UUID(),
         displayName: String,

@@ -16,3 +16,6 @@
 - Accept files and folders dropped from Finder as uploads.
 - Render image previews instead of showing an image placeholder.
 - Download and delete selected folders recursively, preserving nested paths and invalidating caches.
+- Validate S3-compatible endpoints; require HTTPS for remote hosts.
+- Enable Hardened Runtime for all packaged builds and strip diagnostics from release binaries.
+- Remove the obsolete account-tree model, unused theme tokens, and unused UI helpers.

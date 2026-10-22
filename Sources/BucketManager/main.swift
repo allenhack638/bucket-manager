@@ -75,8 +75,6 @@ if CommandLine.arguments.contains("--selftest") {
 }
 #endif
 
-// AppKit entry point (SwiftPM executable). Keeps the app running as a regular,
-// focusable GUI application.
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
