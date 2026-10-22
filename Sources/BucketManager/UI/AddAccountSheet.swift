@@ -467,9 +467,21 @@ final class AddAccountWindowController: NSWindowController {
 
         Task {
             do {
-                let buckets = try await S3Service.shared.listBuckets(account: account, secret: testSecret, useCache: false)
-                spinner.stopAnimation(nil)
-                testLabel.stringValue = "Connected — \(buckets.count) bucket\(buckets.count == 1 ? "" : "s") visible."
+                if let bucket = account.bucket?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !bucket.isEmpty {
+                    let page = try await S3Service.shared.list(
+                        account: account, secret: testSecret, bucket: bucket,
+                        prefix: "", useCache: false
+                    )
+                    spinner.stopAnimation(nil)
+                    testLabel.stringValue = "Connected — bucket \(bucket) visible (\(page.items.count) items)."
+                } else {
+                    let buckets = try await S3Service.shared.listBuckets(
+                        account: account, secret: testSecret, useCache: false
+                    )
+                    spinner.stopAnimation(nil)
+                    testLabel.stringValue = "Connected — \(buckets.count) bucket\(buckets.count == 1 ? "" : "s") visible."
+                }
                 testLabel.textColor = Theme.Colors.success
             } catch {
                 spinner.stopAnimation(nil)
