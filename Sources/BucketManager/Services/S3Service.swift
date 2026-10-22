@@ -487,11 +487,23 @@ actor S3Service {
         let client = try await client(for: account, secret: secret)
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
-        let handle = try FileHandle(forReadingFrom: url)
-        let stream = ProgressStream(fileHandle: handle, onProgress: progress)
-        defer { stream.close() }
+        // Some S3-compatible servers reject chunked PUTs without Content-Length.
+        let inlineLimit: Int64 = 16 * 1024 * 1024
+        var stream: ProgressStream?
 
-        var input = PutObjectInput(body: .stream(stream), bucket: bucket, key: key)
+        var input: PutObjectInput
+        if size <= inlineLimit {
+            let data = try Data(contentsOf: url, options: .mappedIfSafe)
+            input = PutObjectInput(body: .data(data), bucket: bucket, key: key)
+            progress(size)
+        } else {
+            let handle = try FileHandle(forReadingFrom: url)
+            let body = ProgressStream(fileHandle: handle, length: Int(size), onProgress: progress)
+            stream = body
+            input = PutObjectInput(body: .stream(body), bucket: bucket, key: key)
+        }
+        defer { stream?.close() }
+
         input.contentLength = Int(size)
         input.contentType = Self.mimeType(for: url)
         let finalInput = input

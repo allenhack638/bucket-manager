@@ -66,6 +66,10 @@ if let port = argumentValue("--e2e") {
     E2E.run(port: port)
 }
 
+if CommandLine.arguments.contains("--acceptance") {
+    Acceptance.run()
+}
+
 // Hidden diagnostic: `BucketManager --selftest [endpoint] [region]` exercises the
 // S3 endpoint resolver with dummy credentials and prints the resulting error
 // class, without launching the GUI.

@@ -19,3 +19,5 @@
 - Validate S3-compatible endpoints; require HTTPS for remote hosts.
 - Enable Hardened Runtime for all packaged builds and strip diagnostics from release binaries.
 - Remove the obsolete account-tree model, unused theme tokens, and unused UI helpers.
+- Add a real S3-protocol acceptance harness with automatic test data cleanup.
+- Send small uploads with an explicit Content-Length for stricter S3-compatible servers.

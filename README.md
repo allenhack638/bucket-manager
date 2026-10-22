@@ -177,6 +177,7 @@ Sources/BucketManager/
   SnapshotRunner.swift       offscreen PNG rendering for UI review
   UITest.swift               headless dialog interaction tests
   E2E.swift                  fake-S3 end-to-end checks
+  Acceptance.swift           real S3-protocol acceptance checks
 ```
 
 ## S3-compatible signing fix
@@ -210,9 +211,16 @@ S3C_ENDPOINT=... S3C_REGION=... S3C_ACCESS_KEY=... S3C_SECRET=... \
 # Full end-to-end suite: real AWS SDK + model + transfers against a local fake S3
 ./scripts/run-e2e.sh
 
-# Real-account startup check (the first run of a rebuilt bundle may prompt
-# once for Keychain access; the log then shows one read plus cache hits)
-"build/Bucket Manager.app/Contents/MacOS/BucketManager" --verify-startup
+# Real S3-protocol acceptance: local rclone SigV4 server by default
+./scripts/run-acceptance.sh
+
+# Point the same harness at a disposable external bucket/prefix
+BM_ACCEPT_ENDPOINT=https://... BM_ACCEPT_REGION=... \
+BM_ACCEPT_ACCESS_KEY=... BM_ACCEPT_SECRET=... \
+BM_ACCEPT_BUCKET=disposable-bucket ./scripts/run-acceptance.sh
+
+# Real-account startup check (debug builds only)
+.build/debug/BucketManager --verify-startup
 
 # Offscreen UI snapshot, optional tab / empty state / window size
 .build/debug/BucketManager --snapshot out.png --size 900x480
@@ -226,7 +234,9 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 72 dialog/model checks plus 79 end-to-end checks. The E2E
+The current suite is 72 dialog/model checks plus 79 end-to-end checks. The
+optional acceptance harness adds a real S3-protocol pass and cleans up its test
+bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
 folder markers returned in `Contents`, AccessDenied, deliberately delayed
 responses, folder creation (`PUT .../name/`), metadata request counts, the 60s
@@ -247,7 +257,10 @@ headers, never the secret).
   values persist across
   app restarts; external changes become visible after the cache is refreshed or
   invalidated by this app's own writes.
-- Large uploads use a single streaming PUT; multipart upload/resume is not implemented.
+- Uploads up to 16 MB are sent with an explicit `Content-Length` for stricter
+  S3-compatible servers. Larger uploads use a streaming PUT; multipart
+  upload/resume is not implemented, and servers that reject chunked uploads may
+  reject them.
 - Cross-account copy/move is intentionally rejected; copy within one account works.
 - Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.

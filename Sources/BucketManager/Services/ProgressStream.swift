@@ -5,16 +5,18 @@ import SmithyStreams
 /// Wraps a readable file stream and reports consumed bytes for upload progress.
 final class ProgressStream: Smithy.Stream, @unchecked Sendable {
     private let inner: FileStream
+    private let expectedLength: Int
     private let onProgress: @Sendable (Int64) -> Void
 
-    init(fileHandle: FileHandle, onProgress: @escaping @Sendable (Int64) -> Void) {
+    init(fileHandle: FileHandle, length: Int, onProgress: @escaping @Sendable (Int64) -> Void) {
         self.inner = FileStream(fileHandle: fileHandle)
+        self.expectedLength = length
         self.onProgress = onProgress
     }
 
     var position: Data.Index { inner.position }
-    var length: Int? { inner.length }
-    var isEmpty: Bool { inner.isEmpty }
+    var length: Int? { expectedLength }
+    var isEmpty: Bool { expectedLength == 0 }
     var isSeekable: Bool { inner.isSeekable }
 
     func read(upToCount count: Int) throws -> Data? {
