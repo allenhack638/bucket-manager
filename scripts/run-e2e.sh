@@ -40,15 +40,26 @@ export NO_PROXY=127.0.0.1,localhost
 export no_proxy=127.0.0.1,localhost
 export NSUnbufferedIO=YES
 
-set +e
-.build/debug/BucketManager --e2e "$PORT" 2>&1 | tee "$APP_LOG"
-STATUS=${PIPESTATUS[0]}
-set -e
-echo "E2E exit status: $STATUS"
-if [ "$STATUS" -ne 0 ]; then
-    echo "--- E2E app log ---"
-    cat "$APP_LOG"
-    echo "--- fake S3 log ---"
-    cat "$LOG"
-fi
+echo "E2E starting"
+python3 - "$PORT" "$APP_LOG" <<'PY'
+import os, subprocess, sys, time
+port, log_path = sys.argv[1], sys.argv[2]
+cmd = [".build/debug/BucketManager", "--e2e", port]
+start = time.time()
+try:
+    p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=240)
+    output = p.stdout or ""
+    status = p.returncode
+except subprocess.TimeoutExpired as e:
+    output = (e.stdout or "") if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf-8", "replace")
+    output += "\nE2E TIMEOUT after 240s\n"
+    status = 1
+open(log_path, "w").write(output)
+sys.stdout.write(output)
+sys.stdout.write(f"E2E exit status: {status} after {time.time()-start:.1f}s\n")
+raise SystemExit(0 if status == 0 else 1)
+PY
+STATUS=$?
+echo "--- fake S3 log ---"
+cat "$LOG"
 exit "$STATUS"
