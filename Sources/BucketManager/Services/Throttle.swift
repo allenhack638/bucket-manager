@@ -9,9 +9,10 @@ actor Throttle {
 
     init(limit: Int) { self.limit = max(1, limit) }
 
-    func run<T: Sendable>(_ work: @Sendable () async throws -> T) async rethrows -> T {
+    func run<T: Sendable>(_ work: @Sendable () async throws -> T) async throws -> T {
         await acquire()
         defer { release() }
+        try Task.checkCancellation()
         return try await work()
     }
 
@@ -20,15 +21,16 @@ actor Throttle {
             active += 1
             return
         }
+        // The releasing side hands its existing slot to this waiter, so do not
+        // increment here or the limiter can exceed its limit under contention.
         await withCheckedContinuation { waiters.append($0) }
-        active += 1
     }
 
     private func release() {
-        active -= 1
         if !waiters.isEmpty {
-            let w = waiters.removeFirst()
-            w.resume()
+            waiters.removeFirst().resume()
+        } else {
+            active -= 1
         }
     }
 }

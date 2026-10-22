@@ -516,17 +516,24 @@ enum E2E {
                 let directory = FileManager.default.temporaryDirectory
                     .appendingPathComponent("s3c-e2e-\(UUID().uuidString)", isDirectory: true)
                 try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                await model.download(items: [readme], to: directory)
                 let target = directory.appendingPathComponent("readme.txt")
+                try? Data("stale destination".utf8).write(to: target)
+                await model.download(items: [readme], to: directory)
                 var downloaded = false
                 for _ in 0..<80 {
-                    if FileManager.default.fileExists(atPath: target.path) { downloaded = true; break }
+                    if let text = try? String(contentsOf: target, encoding: .utf8),
+                       text.contains("fake s3") {
+                        downloaded = true
+                        break
+                    }
                     try? await Task.sleep(nanoseconds: 50_000_000)
                 }
                 check(downloaded, "download writes the object to disk")
                 if downloaded {
                     check((try? String(contentsOf: target, encoding: .utf8))?.contains("fake s3") == true,
                           "downloaded bytes match the server")
+                    check((try? String(contentsOf: target, encoding: .utf8))?.contains("stale destination") == false,
+                          "download atomically replaces an existing destination")
                 }
                 try? FileManager.default.removeItem(at: directory)
             }

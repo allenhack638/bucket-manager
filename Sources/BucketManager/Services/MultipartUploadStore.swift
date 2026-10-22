@@ -56,7 +56,11 @@ actor MultipartUploadStore {
             decoded.removeAll { $0.updatedAt < cutoff }
             records = decoded
         } catch {
-            AppLog.shared.error("Could not load multipart upload state: \(error.localizedDescription)")
+            LogStore.shared.audit(
+                event: "multipart.state.recovery",
+                message: "Could not load multipart upload state: \(LogRedactor.message(error.localizedDescription))",
+                outcome: "failure"
+            )
             records = []
         }
     }
@@ -71,6 +75,7 @@ actor MultipartUploadStore {
                     withIntermediateDirectories: true,
                     attributes: [.posixPermissions: 0o700]
                 )
+                try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
             }
             let data = try JSONEncoder().encode(records)
             try data.write(to: fileURL, options: .atomic)
@@ -79,7 +84,11 @@ actor MultipartUploadStore {
                 ofItemAtPath: fileURL.path
             )
         } catch {
-            AppLog.shared.error("Could not save multipart upload state: \(error.localizedDescription)")
+            LogStore.shared.audit(
+                event: "multipart.state.recovery",
+                message: "Could not save multipart upload state: \(LogRedactor.message(error.localizedDescription))",
+                outcome: "failure"
+            )
         }
     }
 

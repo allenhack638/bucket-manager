@@ -21,6 +21,7 @@ final class TransferQueue {
     private var persistenceTask: Task<Void, Never>?
     private var isDemoMode = false
     private var isPumping = false
+    private var needsPump = false
 
     init(
         multipartStore: MultipartUploadStore = .shared,
@@ -78,7 +79,7 @@ final class TransferQueue {
                     task.error = "Source file is no longer available; re-add it to upload."
                 } else if actualSize != record.size
                             || (record.fileModified.flatMap { expected in
-                                actualModified.map { abs($0 - expected) > 0.5 }
+                                actualModified.map { abs($0 - expected) > 0.01 }
                             } ?? false) {
                     task.status = .failed
                     task.bytesDone = 0
@@ -166,9 +167,11 @@ final class TransferQueue {
             workTasks[id]?.cancel()
             log("Stopped \(tasks[index].key)")
             audit("transfer.paused", task: tasks[index], account: credentials[id]?.0, outcome: "success")
+            if credentialProvider != nil { credentials[id] = nil }
         } else if tasks[index].status == .queued {
             tasks[index].status = .paused
             audit("transfer.paused", task: tasks[index], account: credentials[id]?.0, outcome: "success")
+            if credentialProvider != nil { credentials[id] = nil }
         }
         change()
     }
@@ -297,9 +300,18 @@ final class TransferQueue {
     // MARK: - Pumping
 
     private func pump() {
-        guard !isPumping else { return }
+        guard !isPumping else {
+            needsPump = true
+            return
+        }
         isPumping = true
-        defer { isPumping = false }
+        defer {
+            isPumping = false
+            if needsPump {
+                needsPump = false
+                pump()
+            }
+        }
         var running = tasks.filter { $0.status == .running }.count
         for index in tasks.indices where tasks[index].status == .queued {
             guard running < maxConcurrent else { break }
@@ -335,7 +347,7 @@ final class TransferQueue {
             let actualSize = (attributes?[.size] as? NSNumber)?.int64Value
             let actualModified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970
             let modifiedChanged = tasks[index].sourceModifiedAt.flatMap { expected in
-                actualModified.map { abs($0 - expected) > 0.5 }
+                actualModified.map { abs($0 - expected) > 0.01 }
             } ?? false
             if attributes == nil || actualSize != tasks[index].size || modifiedChanged {
                 markFailed(
@@ -381,7 +393,12 @@ final class TransferQueue {
             } catch is CancellationError {
                 handleCancellation(id, generation: generation)
             } catch {
-                markFailed(id, message: S3ErrorPresenter.message(for: error), generation: generation)
+                let taskIndex = self.index(of: id)
+                if Task.isCancelled || taskIndex.map({ tasks[$0].status == .paused }) == true {
+                    handleCancellation(id, generation: generation)
+                } else {
+                    markFailed(id, message: S3ErrorPresenter.message(for: error), generation: generation)
+                }
             }
         }
     }
@@ -404,7 +421,7 @@ final class TransferQueue {
 
         if now.timeIntervalSince(lastEmit) > 0.1 {
             lastEmit = now
-            change()
+            onChange?()
         }
     }
 
@@ -437,6 +454,7 @@ final class TransferQueue {
             tasks[index].status = .paused
             tasks[index].speed = 0
         }
+        if credentialProvider != nil { credentials[id] = nil }
         workTasks[id] = nil
         change()
         pump()
@@ -450,6 +468,7 @@ final class TransferQueue {
         tasks[index].finishedAt = Date()
         log("Failed \(tasks[index].key): \(message)")
         audit("transfer.failed", task: tasks[index], account: credentials[id]?.0, outcome: "failure")
+        if credentialProvider != nil { credentials[id] = nil }
         workTasks[id] = nil
         workGeneration[id] = nil
         lastSample[id] = nil

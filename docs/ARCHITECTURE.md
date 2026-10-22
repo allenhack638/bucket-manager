@@ -176,9 +176,9 @@ consumed.
 ### Downloads
 
 `GetObject` returns a `ByteStream`. For a stream body, the app reads **256 KiB
-chunks** in a loop, writes them to a file, and calls the progress closure with the
-running total. Cancellation is checked between chunks. Partial downloads are
-deleted when the task is canceled.
+chunks** in a loop, writes them to a temporary owner-only file, and calls the
+progress closure with the running total. Cancellation is checked between chunks.
+The final destination is replaced only after the received length succeeds.
 
 ### Uploads
 

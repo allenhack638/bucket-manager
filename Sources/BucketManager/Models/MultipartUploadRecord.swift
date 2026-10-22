@@ -20,7 +20,7 @@ struct MultipartUploadRecord: Codable, Sendable {
     func matches(fileSize: Int64, fileModified: TimeInterval?, partSize: Int) -> Bool {
         self.fileSize == fileSize
             && self.partSize == partSize
-            && abs((self.fileModified ?? 0) - (fileModified ?? 0)) < 0.5
+            && abs((self.fileModified ?? 0) - (fileModified ?? 0)) < 0.01
     }
 
     func bytesCompleted(totalSize: Int64) -> Int64 {

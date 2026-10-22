@@ -29,11 +29,11 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
     private let diagnosticRetentionPopup = NSPopUpButton()
     private let auditRetentionPopup = NSPopUpButton()
     private let includeKeysSwitch = NSButton(checkboxWithTitle: "Include object keys in logs", target: nil, action: nil)
-    private let includePathsSwitch = NSButton(checkboxWithTitle: "Include full local paths", target: nil, action: nil)
     private let settingsStatusLabel = NSTextField(labelWithString: "")
     private var categorySwitches: [(LogCategory, NSButton)] = []
 
     private var loadedLogs: [LogRecord] = []
+    private var isLoadingLogs = false
     private var visibleLogs: [LogRecord] = []
     private var allMetricRows: [RequestMetric] = []
     private var metricRows: [RequestMetric] = []
@@ -271,9 +271,16 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
     }
 
     private func reloadLogs() {
-        loadedLogs = logs.recent(limit: 20_000)
-        rebuildAccountPopup()
-        applyLogFilters()
+        guard !isLoadingLogs else { return }
+        isLoadingLogs = true
+        let store = logs
+        Task {
+            let records = await Task.detached { store.recent(limit: 5_000) }.value
+            self.loadedLogs = records
+            self.isLoadingLogs = false
+            self.rebuildAccountPopup()
+            self.applyLogFilters()
+        }
     }
 
     private func rebuildAccountPopup() {
@@ -339,7 +346,6 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
             logs.clearDiagnostics()
-            logs.audit(event: "logs.cleared", message: "Diagnostic logs cleared from the UI")
             reloadLogs()
         }
     }
@@ -358,13 +364,26 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
                     result.append(line)
                     result.append(0x0A)
                 }
-            try? data.write(to: url, options: .atomic)
-            self.logs.audit(
-                event: "logs.exported",
-                message: "Log records exported",
-                outcome: "success",
-                metadata: ["records": String(self.visibleLogs.count)]
-            )
+            do {
+                try data.write(to: url, options: .atomic)
+                self.logs.audit(
+                    event: "logs.exported",
+                    message: "Log records exported",
+                    outcome: "success",
+                    metadata: ["records": String(self.visibleLogs.count)]
+                )
+            } catch {
+                self.logs.audit(
+                    event: "logs.exported",
+                    message: "Log export failed",
+                    outcome: "failure",
+                    metadata: ["error": LogRedactor.message(error.localizedDescription)]
+                )
+                let failure = NSAlert()
+                failure.messageText = "Could not export logs"
+                failure.informativeText = error.localizedDescription
+                failure.runModal()
+            }
         }
     }
 
@@ -486,9 +505,12 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
         }
         metricRows = filtered
         statsTable.reloadData()
-        let total = filtered.reduce(0) { $0 + ($1.sessionCount > 0 ? $1.sessionCount : $1.count) }
+        func requestCount(_ metric: RequestMetric) -> Int64 {
+            sessionOnly ? metric.sessionCount : metric.count
+        }
+        let total = filtered.reduce(0) { $0 + requestCount($1) }
         let list = filtered.filter { $0.operation == "ListObjectsV2" }
-            .reduce(0) { $0 + ($1.sessionCount > 0 ? $1.sessionCount : $1.count) }
+            .reduce(0) { $0 + requestCount($1) }
         let errors = filtered.reduce(0) { $0 + $1.failures }
         let bytes = filtered.reduce(0) { $0 + $1.bytes }
         statsSummaryLabel.stringValue =
@@ -504,7 +526,7 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
             metrics.clear()
-            LogStore.shared.audit(event: "metrics.cleared", message: "Request statistics cleared")
+            logs.audit(event: "metrics.cleared", message: "Request statistics cleared")
             reloadStats()
         }
     }
@@ -562,9 +584,6 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
         includeKeysSwitch.target = self
         includeKeysSwitch.action = #selector(settingsEdited)
         stack.addArrangedSubview(includeKeysSwitch)
-        includePathsSwitch.target = self
-        includePathsSwitch.action = #selector(settingsEdited)
-        stack.addArrangedSubview(includePathsSwitch)
 
         let note = NSTextField(wrappingLabelWithString: "Audit logging is always on. Credentials, authorization headers, and signatures are never logged. Diagnostic logging is off by default.")
         note.font = Theme.Font.small
@@ -635,7 +654,6 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
             auditRetentionPopup.selectItem(at: index)
         }
         includeKeysSwitch.state = settings.includeObjectKeys ? .on : .off
-        includePathsSwitch.state = settings.includeLocalPaths ? .on : .off
     }
 
     private func saveSettings() {
@@ -657,7 +675,6 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
         }
         settings.auditEnabled = true
         settings.includeObjectKeys = includeKeysSwitch.state == .on
-        settings.includeLocalPaths = includePathsSwitch.state == .on
         logs.updateSettings(settings)
         settingsStatusLabel.stringValue = "Saved. Audit logging remains enabled."
     }
@@ -692,6 +709,10 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
 
     private func refreshTick() {
         guard window?.isVisible == true else { return }
+        guard AdminAuthSession.shared.isUnlocked else {
+            window?.close()
+            return
+        }
         if !logsView.isHidden, liveSwitch.state == .on { reloadLogs() }
         if !statsView.isHidden { reloadStats() }
     }
@@ -793,7 +814,9 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
     // MARK: - Test hooks
 
     func reloadForTesting() {
-        reloadLogs()
+        loadedLogs = logs.recent(limit: 5_000)
+        rebuildAccountPopup()
+        applyLogFilters()
         reloadStats()
     }
 

@@ -80,8 +80,7 @@ final class LogStore: @unchecked Sendable {
                         "minimumLevel": newSettings.minimumLevel.title,
                         "diagnosticRetentionDays": String(newSettings.diagnosticRetentionDays),
                         "auditRetentionDays": String(newSettings.auditRetentionDays),
-                        "includeObjectKeys": String(newSettings.includeObjectKeys),
-                        "includeLocalPaths": String(newSettings.includeLocalPaths)
+                        "includeObjectKeys": String(newSettings.includeObjectKeys)
                     ]
                 ))
             }

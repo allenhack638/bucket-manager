@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         appearanceMode = .saved
         NSApp.appearance = appearanceMode.appearance
-        AppLog.shared.log("Launched Bucket Manager; \(accounts.accounts.count) saved account(s); log=\(AppLog.path)")
+        AppLog.shared.log("Launched Bucket Manager; \(accounts.accounts.count) saved account(s); logDir=\(AppLog.path)")
         LogStore.shared.audit(
             event: "app.launched",
             message: "Bucket Manager launched",
@@ -43,6 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         model.flushTransfers()
         model.flushFolderStats()
+        LogStore.shared.flush()
+        RequestMetricsStore.shared.flush()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }

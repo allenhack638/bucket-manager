@@ -379,7 +379,7 @@ enum UITest {
             check(tabStrip.accessibilityRole() == .tabGroup,
                   "inspector tab strip exposes the tab-group role")
 
-            let passcode = PasscodeHasher.make(password: UUID().uuidString, iterations: 10)
+            let passcode = PasscodeHasher.make(password: UUID().uuidString)
             check(passcode.salt.count == 16 && passcode.hash.count == 32,
                   "admin passcode uses a salted 256-bit verifier")
             check(PasscodeHasher.verify(UUID().uuidString, against: passcode),
@@ -677,6 +677,28 @@ enum UITest {
         check(noProviderQueue.tasks.first?.bytesDone == 20,
               "retry preserves resumable upload progress")
         noProviderQueue.flushPersistence()
+
+        let pumpStoreURL = queueDir.appendingPathComponent("pump-queue.json")
+        let pumpStore = TransferQueueStore(fileURL: pumpStoreURL)
+        pumpStore.save((0..<6).map { index in
+            PersistedTransferTask(
+                id: UUID(), accountID: queueAccount.id, direction: .upload,
+                bucket: "alpha", key: "pump-\(index).bin", localPath: queueSource.path,
+                size: 100, bytesDone: 0, status: .paused, error: nil,
+                fileModified: sourceModified
+            )
+        })
+        let pumpQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: pumpStoreURL),
+            credentialProvider: nil
+        )
+        pumpQueue.startAll()
+        check(pumpQueue.tasks.allSatisfy { $0.status == .failed },
+              "pump keeps draining queued tasks after synchronous start failures")
+        check(pumpQueue.tasks.allSatisfy {
+            $0.error?.lowercased().contains("credential") == true
+        }, "every stranded task reports its start failure")
+        pumpQueue.flushPersistence()
 
         let unreadableURL = queueDir.appendingPathComponent("does-not-exist.bin")
         let unreadableQueue = TransferQueue(

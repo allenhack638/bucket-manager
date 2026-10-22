@@ -28,7 +28,7 @@ enum PasscodeHasher {
         let candidate = derive(
             password: password,
             salt: credential.salt,
-            iterations: credential.iterations
+            iterations: max(defaultIterations, credential.iterations)
         )
         return constantTimeEqual(candidate, credential.hash)
     }
@@ -288,7 +288,13 @@ enum AdminAuthPrompt {
         }
     }
 
+    private static var failedUnlockAttempts = 0
+
     private static func unlock(reason: String) -> Bool {
+        if failedUnlockAttempts >= 3 {
+            let delay = min(2.0, Double(failedUnlockAttempts - 2) * 0.5)
+            Thread.sleep(forTimeInterval: delay)
+        }
         let field = NSSecureTextField()
         field.placeholderString = "Admin passcode"
         configure(field: field)
@@ -308,6 +314,7 @@ enum AdminAuthPrompt {
 
         guard alert.runModal() == .alertFirstButtonReturn else { return false }
         if AdminPasscodeStore.shared.verify(field.stringValue) {
+            failedUnlockAttempts = 0
             AdminAuthSession.shared.unlock()
             LogStore.shared.audit(
                 event: "security.unlock.succeeded",
@@ -316,6 +323,7 @@ enum AdminAuthPrompt {
             )
             return true
         }
+        failedUnlockAttempts += 1
         LogStore.shared.audit(
             event: "security.unlock.failed",
             message: "Admin authorization failed",

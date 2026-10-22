@@ -7,6 +7,7 @@
 - Persist the transfer queue across relaunch; restore paused/failed tasks, validate source size and modification time, and resolve account credentials only when resuming.
 - Harden queue persistence with atomic 0600 writes, partial-record recovery with a corrupt backup, automatic debounced saves, refreshed credentials on every start, and reentrant-pump/concurrency guards.
 - Download into a temporary 0600 file, verify the received length, and atomically replace the destination only on success; canceled downloads no longer delete queued destinations.
+- Harden after independent review: pump no longer strands queued tasks after synchronous start failures, throttle slots are handed off without over-admission, cancellation is recognized after SDK errors, credentials are dropped on stopped/failed transfers, multipart source fingerprints are rechecked before batches and completion, queue-state recovery is audited, and failed log exports are reported instead of audited as success.
 - Move buckets into a flat sidebar list with an account picker.
 - Keep folder and object navigation exclusively in the right pane.
 - Add draggable column dividers.
@@ -22,7 +23,7 @@
 - Render image previews instead of showing an image placeholder.
 - Download and delete selected folders recursively, preserving nested paths and invalidating caches.
 - Validate S3-compatible endpoints; require HTTPS for remote hosts.
-- Enable Hardened Runtime for all packaged builds and strip diagnostics from release binaries.
+- Enable Hardened Runtime for all packaged builds and exclude debug harnesses/diagnostic env overrides from release builds via conditional compilation.
 - Remove the obsolete account-tree model, unused theme tokens, and unused UI helpers.
 - Add a real S3-protocol acceptance harness with automatic test data cleanup.
 - Send small uploads with an explicit Content-Length for stricter S3-compatible servers.

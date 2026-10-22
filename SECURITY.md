@@ -42,8 +42,11 @@ Do not include real access keys, secrets, presigned URLs, or bucket contents.
   logs remain readable at the filesystem level.
 - The gate is an in-app authorization control, not log encryption. Logs remain
   owner-only (`0600`) on disk.
-- Authorization lasts five minutes; closing the Logs window locks it. Destructive
-  actions and settings changes always prompt again.
+- Authorization lasts five minutes for entry. The Logs window closes when that
+  session expires and locks on close; selecting the Event Log requires unlock.
+  An Event Log tab already visible when the session expires stays visible until
+  you switch away. Destructive actions and settings changes always prompt again.
+- Repeated failed unlocks are delayed after three attempts.
 - Passcode creation, successful unlock, failed unlock, and passcode changes are
   audited without recording the passcode.
 

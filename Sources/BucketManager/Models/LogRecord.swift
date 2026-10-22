@@ -78,5 +78,4 @@ struct LoggingSettings: Codable, Sendable {
     var auditRetentionDays = 90
     var maxFileBytes: Int64 = 20 * 1024 * 1024
     var includeObjectKeys = true
-    var includeLocalPaths = false
 }

@@ -37,21 +37,24 @@ final class TransferQueueStore: @unchecked Sendable {
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
         guard let array = (try? JSONSerialization.jsonObject(with: data)) as? [Any] else {
             backupCorruptFile()
+            auditRecovery("Persisted transfer queue was unreadable; a corrupt backup was retained.")
             return []
         }
         var records: [PersistedTransferTask] = []
         var skipped = 0
         for element in array {
             guard let elementData = try? JSONSerialization.data(withJSONObject: element),
-                  let record = try? decoder.decode(PersistedTransferTask.self, from: elementData) else {
+                  let record = try? decoder.decode(PersistedTransferTask.self, from: elementData),
+                  record.localPath.hasPrefix("/"),
+                  !record.localPath.split(separator: "/").contains("..") else {
                 skipped += 1
                 continue
             }
             records.append(record)
         }
         if skipped > 0 {
-            AppLog.shared.error("Skipped \(skipped) invalid persisted transfer record(s).")
             backupCorruptFile()
+            auditRecovery("Skipped \(skipped) invalid persisted transfer record(s).")
         }
         return records
     }
@@ -70,6 +73,7 @@ final class TransferQueueStore: @unchecked Sendable {
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
         }
         guard let data = try? encoder.encode(tasks) else { return }
         let temporary = directory.appendingPathComponent(".transfer-queue-\(UUID().uuidString).tmp")
@@ -78,12 +82,25 @@ final class TransferQueueStore: @unchecked Sendable {
             contents: data,
             attributes: [.posixPermissions: 0o600]
         ) else { return }
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            _ = try? FileManager.default.replaceItemAt(fileURL, withItemAt: temporary)
-        } else {
-            try? FileManager.default.moveItem(at: temporary, to: fileURL)
+        do {
+            if FileManager.default.fileExists(atPath: fileURL.path) {
+                _ = try FileManager.default.replaceItemAt(fileURL, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: fileURL)
+            }
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        } catch {
+            try? FileManager.default.removeItem(at: temporary)
+            auditRecovery("Could not save the transfer queue: \(LogRedactor.message(error.localizedDescription))")
         }
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+    }
+
+    private func auditRecovery(_ message: String) {
+        LogStore.shared.audit(
+            event: "queue.state.recovery",
+            message: message,
+            outcome: "failure"
+        )
     }
 
     private func backupCorruptFile() {

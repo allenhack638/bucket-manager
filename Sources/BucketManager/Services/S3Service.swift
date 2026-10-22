@@ -32,6 +32,7 @@ enum S3ServiceError: Error, LocalizedError {
     case incompleteMultipartUpload
     case shortRead
     case incompleteDownload(expected: Int64, received: Int64)
+    case sourceChangedDuringUpload
 
     var errorDescription: String? {
         switch self {
@@ -42,6 +43,7 @@ enum S3ServiceError: Error, LocalizedError {
         case .missingETag: return "The server did not return an ETag for an uploaded part."
         case .incompleteMultipartUpload: return "The multipart upload is missing one or more parts."
         case .shortRead: return "The local file changed while it was being uploaded."
+        case .sourceChangedDuringUpload: return "The local file changed during the upload; retry to restart from the current contents."
         case .incompleteDownload(let expected, let received):
             return "The download ended after \(received) of \(expected) bytes."
         }
@@ -146,6 +148,46 @@ actor S3Service {
         listCache = listCache.filter { $0.key.account != accountID }
     }
 
+    private func recordRequest(
+        _ operation: String,
+        account: Account,
+        bucket: String?,
+        key: String?,
+        started: Date,
+        outcome: String,
+        bytes: Int64,
+        error: Error?
+    ) {
+        let duration = Date().timeIntervalSince(started) * 1_000
+        RequestMetricsStore.shared.record(
+            account: account,
+            bucket: bucket,
+            operation: operation,
+            outcome: outcome,
+            durationMs: duration,
+            bytes: bytes
+        )
+        let canceled = outcome == "canceled"
+        var metadata: [String: String] = [:]
+        if let error, !canceled { metadata["error"] = S3ErrorPresenter.message(for: error) }
+        LogStore.shared.log(
+            canceled ? .debug : (outcome == "success" ? .debug : .warning),
+            category: .s3Request,
+            event: "s3.request",
+            message: "\(operation) \(outcome)",
+            accountID: account.id,
+            accountName: account.displayName,
+            bucket: bucket,
+            key: key,
+            operation: operation,
+            outcome: outcome,
+            durationMs: duration,
+            bytes: bytes,
+            requestID: error.flatMap { LogRedactor.requestID(from: $0) },
+            metadata: metadata
+        )
+    }
+
     private func measured<T>(
         _ operation: String,
         account: Account,
@@ -157,55 +199,17 @@ actor S3Service {
         let started = Date()
         do {
             let result = try await request()
-            let duration = Date().timeIntervalSince(started) * 1_000
-            RequestMetricsStore.shared.record(
-                account: account,
-                bucket: bucket,
-                operation: operation,
-                outcome: "success",
-                durationMs: duration,
-                bytes: bytes
-            )
-            LogStore.shared.log(
-                .debug,
-                category: .s3Request,
-                event: "s3.request",
-                message: "\(operation) succeeded",
-                accountID: account.id,
-                accountName: account.displayName,
-                bucket: bucket,
-                key: key,
-                operation: operation,
-                outcome: "success",
-                durationMs: duration,
-                bytes: bytes
+            recordRequest(
+                operation, account: account, bucket: bucket, key: key,
+                started: started, outcome: "success", bytes: bytes, error: nil
             )
             return result
         } catch {
-            let duration = Date().timeIntervalSince(started) * 1_000
             let canceled = error is CancellationError
-            let outcome = canceled ? "canceled" : "failure"
-            RequestMetricsStore.shared.record(
-                account: account,
-                bucket: bucket,
-                operation: operation,
-                outcome: outcome,
-                durationMs: duration
-            )
-            LogStore.shared.log(
-                canceled ? .debug : .warning,
-                category: .s3Request,
-                event: "s3.request",
-                message: "\(operation) \(canceled ? "canceled" : "failed")",
-                accountID: account.id,
-                accountName: account.displayName,
-                bucket: bucket,
-                key: key,
-                operation: operation,
-                outcome: outcome,
-                durationMs: duration,
-                requestID: LogRedactor.requestID(from: error),
-                metadata: canceled ? [:] : ["error": S3ErrorPresenter.message(for: error)]
+            recordRequest(
+                operation, account: account, bucket: bucket, key: key,
+                started: started, outcome: canceled ? "canceled" : "failure",
+                bytes: 0, error: error
             )
             throw error
         }
@@ -541,56 +545,74 @@ actor S3Service {
         to url: URL,
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws {
-        let client = try await client(for: account, secret: secret)
-        let output: GetObjectOutput = try await measured(
-            "GetObject", account: account, bucket: bucket, key: key
-        ) {
-            try await throttle.run {
+        let started = Date()
+        do {
+            let client = try await client(for: account, secret: secret)
+            let output: GetObjectOutput = try await throttle.run {
                 try await client.getObject(input: GetObjectInput(bucket: bucket, key: key))
             }
-        }
-        guard let body = output.body else { throw S3ServiceError.emptyBody }
+            guard let body = output.body else { throw S3ServiceError.emptyBody }
 
-        let fileManager = FileManager.default
-        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let temporaryURL = url.deletingLastPathComponent()
-            .appendingPathComponent(".\(url.lastPathComponent).part-\(UUID().uuidString)")
-        guard fileManager.createFile(
-            atPath: temporaryURL.path,
-            contents: nil,
-            attributes: [.posixPermissions: 0o600]
-        ) else { throw CocoaError(.fileWriteUnknown) }
-        defer { try? fileManager.removeItem(at: temporaryURL) }
-        let handle = try FileHandle(forWritingTo: temporaryURL)
-        defer { try? handle.close() }
-
-        var written: Int64 = 0
-        switch body {
-        case .data(let data):
-            let payload = data ?? Data()
-            try handle.write(contentsOf: payload)
-            written = Int64(payload.count)
-            progress(written)
-        case .stream(let stream):
-            while let chunk = try await stream.readAsync(upToCount: 256 * 1024), !chunk.isEmpty {
-                try Task.checkCancellation()
-                try handle.write(contentsOf: chunk)
-                written += Int64(chunk.count)
-                progress(written)
+            let fileManager = FileManager.default
+            let parentDirectory = url.deletingLastPathComponent()
+            if !fileManager.fileExists(atPath: parentDirectory.path) {
+                try fileManager.createDirectory(
+                    at: parentDirectory,
+                    withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700]
+                )
             }
-        case .noStream:
-            throw S3ServiceError.emptyBody
+            let temporaryURL = url.deletingLastPathComponent()
+                .appendingPathComponent(".\(url.lastPathComponent).part-\(UUID().uuidString)")
+            guard fileManager.createFile(
+                atPath: temporaryURL.path,
+                contents: nil,
+                attributes: [.posixPermissions: 0o600]
+            ) else { throw CocoaError(.fileWriteUnknown) }
+            defer { try? fileManager.removeItem(at: temporaryURL) }
+            let handle = try FileHandle(forWritingTo: temporaryURL)
+            defer { try? handle.close() }
+
+            var written: Int64 = 0
+            switch body {
+            case .data(let data):
+                let payload = data ?? Data()
+                try handle.write(contentsOf: payload)
+                written = Int64(payload.count)
+                progress(written)
+            case .stream(let stream):
+                while let chunk = try await stream.readAsync(upToCount: 256 * 1024), !chunk.isEmpty {
+                    try Task.checkCancellation()
+                    try handle.write(contentsOf: chunk)
+                    written += Int64(chunk.count)
+                    progress(written)
+                }
+            case .noStream:
+                throw S3ServiceError.emptyBody
+            }
+            if let expected = output.contentLength.map(Int64.init), written != expected {
+                throw S3ServiceError.incompleteDownload(expected: expected, received: written)
+            }
+            try handle.close()
+            if fileManager.fileExists(atPath: url.path) {
+                _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
+            } else {
+                try fileManager.moveItem(at: temporaryURL, to: url)
+            }
+            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            recordRequest(
+                "GetObject", account: account, bucket: bucket, key: key,
+                started: started, outcome: "success", bytes: written, error: nil
+            )
+        } catch {
+            let canceled = Task.isCancelled || error is CancellationError
+            recordRequest(
+                "GetObject", account: account, bucket: bucket, key: key,
+                started: started, outcome: canceled ? "canceled" : "failure",
+                bytes: 0, error: error
+            )
+            throw error
         }
-        if let expected = output.contentLength.map(Int64.init), written != expected {
-            throw S3ServiceError.incompleteDownload(expected: expected, received: written)
-        }
-        try handle.close()
-        if fileManager.fileExists(atPath: url.path) {
-            _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
-        } else {
-            try fileManager.moveItem(at: temporaryURL, to: url)
-        }
-        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private static let multipartThreshold: Int64 = 16 * 1024 * 1024
@@ -766,6 +788,7 @@ actor S3Service {
             let uploadID = record.uploadID
             for start in stride(from: 0, to: missing.count, by: Self.multipartConcurrency) {
                 try Task.checkCancellation()
+                try Self.verifySourceUnchanged(url: url, size: size, modified: modified)
                 let end = min(start + Self.multipartConcurrency, missing.count)
                 let batch = Array(missing[start..<end])
                 let uploaded = try await withThrowingTaskGroup(of: MultipartPart.self) { group in
@@ -801,6 +824,7 @@ actor S3Service {
             }
 
             try Task.checkCancellation()
+            try Self.verifySourceUnchanged(url: url, size: size, modified: modified)
             guard partMap.count == totalParts else {
                 throw S3ServiceError.incompleteMultipartUpload
             }
@@ -947,6 +971,21 @@ actor S3Service {
         partSize = max(partSize, required)
         let mebibyte = 1024 * 1024
         return max(5 * mebibyte, ((partSize + mebibyte - 1) / mebibyte) * mebibyte)
+    }
+
+    private nonisolated static func verifySourceUnchanged(
+        url: URL, size: Int64, modified: TimeInterval?
+    ) throws {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let currentSize = (attributes?[.size] as? NSNumber)?.int64Value
+        guard currentSize == size else {
+            throw S3ServiceError.sourceChangedDuringUpload
+        }
+        if let modified,
+           let currentModified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970,
+           abs(currentModified - modified) > 0.01 {
+            throw S3ServiceError.sourceChangedDuringUpload
+        }
     }
 
     private nonisolated static func readPart(url: URL, offset: Int64, length: Int) throws -> Data {

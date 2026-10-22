@@ -54,10 +54,6 @@ enum LogRedactor {
         return host
     }
 
-    static func localPath(_ url: URL, includeFullPath: Bool) -> String {
-        includeFullPath ? url.path : url.lastPathComponent
-    }
-
     static func requestID(from error: Error) -> String? {
         let text = String(describing: error)
         guard let range = text.range(of: "requestID: Optional(\"") else { return nil }
