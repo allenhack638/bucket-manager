@@ -29,13 +29,14 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
 - **Folder sizes and dates** — recursive prefix totals shown for every folder row
   in the current listing, with cached/refreshing/partial/unavailable states and
   sorting by the computed values.
-- **Operations** — upload files, upload a folder tree, download objects or whole
-  folders recursively, delete objects or whole folders recursively, open, rename
-  (copy + delete), copy/move to another bucket/prefix, cut/copy/paste, create
-  folder, new/delete bucket.
-- **Transfer queue** — real byte progress for uploads and downloads, speed,
+- **Operations** — upload files, upload a folder tree, multipart upload for files
+  over 16 MiB, download objects or whole folders recursively, delete objects or
+  whole folders recursively, open, rename (copy + delete), copy/move to another
+  bucket/prefix, cut/copy/paste, create folder, new/delete bucket.
+- **Transfer queue** — real byte progress for uploads and downloads, multipart
+  pause/resume, retry from completed parts, cancel with server-side abort, speed,
   concurrency cap of 4, running/queued/stopped/failed filters, start/stop/cancel,
-  retry, open in Finder.
+  open in Finder.
 - **Drag and drop** — drop files or folders from Finder onto the object table to
   upload them to the current prefix.
 - **Inspector tabs** — Tasks, Permissions (ACL), Headers, Tags, Properties, Preview,
@@ -165,11 +166,12 @@ Sources/BucketManager/
     Components.swift         FlatButton, checkbox, progress, InfoTextView, …
     Chrome.swift             custom title bar + in-app menu bar
     Theme.swift              theme colors, fonts, metrics
-  Models/                    Account, S3Item, S3Key, BucketNode, EndpointValidator
+  Models/                    Account, S3Item, S3Key, BucketNode, EndpointValidator,
+                             MultipartUploadRecord
   Services/
-    S3Service                clients, listing, metadata, transfers, cache
-    TransferQueue            queue, concurrency, progress, speed
-    ProgressStream           SDK stream wrapper that reports upload bytes
+    S3Service                clients, listing, metadata, transfers, cache, multipart
+    TransferQueue            queue, concurrency, progress, speed, resume/cancel
+    MultipartUploadStore     resumable part state (0600 JSON)
     KeychainStore            secrets
     AccountStore             account JSON + secret lookup
     StripXIDInterceptor     S3-compatible signing fix
@@ -233,11 +235,11 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot out.png --size 900x480 --error "Access denied."
 .build/debug/BucketManager --snapshot filtered.png --size 900x480 --filter Border
 .build/debug/BucketManager --snapshot-sheet add --out add.png --size 640x500
-.build/debug/BucketManager --snapshot-sheet edit --out edit.png --size 640x500
+.build/debug/BucketManager --snapshot-sheet edit --out edit.png --size 640x600
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 84 dialog/model checks plus 79 end-to-end checks. The
+The current suite is 84 dialog/model checks plus 117 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
@@ -247,7 +249,8 @@ listing cache, parent-coalesced folder scans, nested descendant caching,
 persistent cache reload (including a fresh model instance with zero requests),
 paginated/cancelled/partial scans, folder-size sorting, 2-scan and 8 req/s
 pacing, the global 4-request cap, cross-bucket folder paths, downloads and
-uploads.
+uploads, multipart thresholding, pause/resume, part persistence, cancellation,
+changed-file invalidation, injected part failure/retry, and abort-on-cancel.
 
 `S3C_A11Y=1` adds an accessibility audit (missing labels on interactive controls).
 `S3C_LOG=1` turns on AWS SDK request logging (debug builds only; signatures and
@@ -260,10 +263,11 @@ headers, never the secret).
   values persist across
   app restarts; external changes become visible after the cache is refreshed or
   invalidated by this app's own writes.
-- Uploads up to 16 MB are sent with an explicit `Content-Length` for stricter
-  S3-compatible servers. Larger uploads use a streaming PUT; multipart
-  upload/resume is not implemented, and servers that reject chunked uploads may
-  reject them.
+- Uploads up to 16 MiB use a single explicit-length PUT. Larger uploads use
+  multipart with 8 MiB parts, four concurrent parts, persisted part state,
+  pause/resume, retry, and abort-on-cancel. Paused state survives app restarts,
+  but the transfer queue itself does not: re-add the same file/key to resume.
+  Incomplete server-side uploads should be covered by a bucket lifecycle rule.
 - Cross-account copy/move is intentionally rejected; copy within one account works.
 - Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.

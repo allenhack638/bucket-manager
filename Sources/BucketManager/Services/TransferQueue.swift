@@ -9,11 +9,17 @@ final class TransferQueue {
     var onFinished: (() -> Void)?
 
     private let service = S3Service.shared
+    private let multipartStore: MultipartUploadStore
     private let maxConcurrent = 4
     private var credentials: [UUID: (Account, String)] = [:]
     private var workTasks: [UUID: Task<Void, Never>] = [:]
+    private var workGeneration: [UUID: Int] = [:]
     private var lastSample: [UUID: (at: Date, bytes: Int64)] = [:]
     private var lastEmit: Date = .distantPast
+
+    init(multipartStore: MultipartUploadStore = .shared) {
+        self.multipartStore = multipartStore
+    }
 
     var runningCount: Int { tasks.filter { $0.status == .running }.count }
     var queuedCount: Int { tasks.filter { $0.status == .queued }.count }
@@ -97,14 +103,31 @@ final class TransferQueue {
     func cancel(id: UUID) {
         guard let index = index(of: id) else { return }
         let wasRunning = tasks[index].status == .running
+        let task = tasks[index]
+        let credentials = credentials[id]
         tasks[index].status = .canceled
         tasks[index].speed = 0
         tasks[index].finishedAt = Date()
-        workTasks[id]?.cancel()
+        let work = workTasks[id]
+        work?.cancel()
         workTasks[id] = nil
-        if tasks[index].direction == .download { try? FileManager.default.removeItem(at: tasks[index].localURL) }
-        credentials[id] = nil
-        log("Canceled \(tasks[index].key)")
+        workGeneration[id] = (workGeneration[id] ?? 0) + 1
+        if task.direction == .download { try? FileManager.default.removeItem(at: task.localURL) }
+        self.credentials[id] = nil
+        if task.direction == .upload, let credentials {
+            let store = multipartStore
+            Task {
+                await work?.value
+                await self.service.abortMultipart(
+                    account: credentials.0,
+                    secret: credentials.1,
+                    bucket: task.bucket,
+                    key: task.key,
+                    store: store
+                )
+            }
+        }
+        log("Canceled \(task.key)")
         if wasRunning { pump() }
         change()
     }
@@ -123,7 +146,7 @@ final class TransferQueue {
     func startAll() {
         for index in tasks.indices {
             switch tasks[index].status {
-            case .paused, .failed, .canceled:
+            case .paused, .failed:
                 tasks[index].status = .queued
                 tasks[index].bytesDone = 0
                 tasks[index].error = nil
@@ -138,7 +161,8 @@ final class TransferQueue {
     }
 
     func retry(id: UUID) {
-        guard let index = index(of: id) else { return }
+        guard let index = index(of: id),
+              tasks[index].status == .failed || tasks[index].status == .paused else { return }
         tasks[index].status = .queued
         tasks[index].bytesDone = 0
         tasks[index].error = nil
@@ -172,8 +196,14 @@ final class TransferQueue {
         let bucket = tasks[index].bucket
         let key = tasks[index].key
         let url = tasks[index].localURL
+        let generation = (workGeneration[id] ?? 0) + 1
+        workGeneration[id] = generation
         guard let (account, secret) = credentials[id] else {
-            markFailed(id, message: S3ServiceError.missingCredentials.localizedDescription)
+            markFailed(
+                id,
+                message: S3ServiceError.missingCredentials.localizedDescription,
+                generation: generation
+            )
             return
         }
 
@@ -189,29 +219,36 @@ final class TransferQueue {
                 case .upload:
                     try await service.upload(
                         account: account, secret: secret, bucket: bucket, key: key, from: url,
+                        multipartStore: multipartStore,
                         progress: { bytes in
-                            Task { @MainActor in self.updateProgress(id, bytes: bytes) }
+                            Task { @MainActor in
+                                self.updateProgress(id, bytes: bytes, generation: generation)
+                            }
                         }
                     )
                 case .download:
                     try await service.download(
                         account: account, secret: secret, bucket: bucket, key: key, to: url,
                         progress: { bytes in
-                            Task { @MainActor in self.updateProgress(id, bytes: bytes) }
+                            Task { @MainActor in
+                                self.updateProgress(id, bytes: bytes, generation: generation)
+                            }
                         }
                     )
                 }
-                finish(id)
+                finish(id, generation: generation)
             } catch is CancellationError {
-                handleCancellation(id)
+                handleCancellation(id, generation: generation)
             } catch {
-                markFailed(id, message: S3ErrorPresenter.message(for: error))
+                markFailed(id, message: S3ErrorPresenter.message(for: error), generation: generation)
             }
         }
     }
 
-    private func updateProgress(_ id: UUID, bytes: Int64) {
-        guard let index = index(of: id), tasks[index].status == .running else { return }
+    private func updateProgress(_ id: UUID, bytes: Int64, generation: Int) {
+        guard workGeneration[id] == generation,
+              let index = index(of: id),
+              tasks[index].status == .running else { return }
         tasks[index].bytesDone = min(bytes, tasks[index].size)
 
         let now = Date()
@@ -230,8 +267,8 @@ final class TransferQueue {
         }
     }
 
-    private func finish(_ id: UUID) {
-        guard let index = index(of: id) else { return }
+    private func finish(_ id: UUID, generation: Int) {
+        guard workGeneration[id] == generation, let index = index(of: id) else { return }
         tasks[index].status = .completed
         tasks[index].bytesDone = tasks[index].size
         tasks[index].speed = 0
@@ -245,8 +282,8 @@ final class TransferQueue {
         pump()
     }
 
-    private func handleCancellation(_ id: UUID) {
-        guard let index = index(of: id) else { return }
+    private func handleCancellation(_ id: UUID, generation: Int) {
+        guard workGeneration[id] == generation, let index = index(of: id) else { return }
         if tasks[index].status == .running {
             tasks[index].status = .paused
             tasks[index].speed = 0
@@ -256,15 +293,14 @@ final class TransferQueue {
         pump()
     }
 
-    private func markFailed(_ id: UUID, message: String) {
-        guard let index = index(of: id) else { return }
+    private func markFailed(_ id: UUID, message: String, generation: Int) {
+        guard workGeneration[id] == generation, let index = index(of: id) else { return }
         tasks[index].status = .failed
         tasks[index].error = message
         tasks[index].speed = 0
         tasks[index].finishedAt = Date()
         log("Failed \(tasks[index].key): \(message)")
         workTasks[id] = nil
-        credentials[id] = nil
         change()
         pump()
     }

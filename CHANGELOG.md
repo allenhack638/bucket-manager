@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add multipart uploads above 16 MiB with 8 MiB parts, four concurrent parts, pause/resume, retry from completed parts, abort-on-cancel, and changed-file invalidation.
+- Persist multipart part state in an owner-only JSON file and resume after re-adding the same file/key.
 - Move buckets into a flat sidebar list with an account picker.
 - Keep folder and object navigation exclusively in the right pane.
 - Add draggable column dividers.

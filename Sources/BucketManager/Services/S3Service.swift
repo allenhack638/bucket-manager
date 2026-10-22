@@ -27,12 +27,20 @@ enum S3ServiceError: Error, LocalizedError {
     case emptyBody
     case invalidEndpoint
     case missingCredentials
+    case missingUploadID
+    case missingETag
+    case incompleteMultipartUpload
+    case shortRead
 
     var errorDescription: String? {
         switch self {
         case .emptyBody: return "The server returned an empty response body."
         case .invalidEndpoint: return "The custom endpoint is not valid."
         case .missingCredentials: return "No saved credentials were found for this account."
+        case .missingUploadID: return "The server did not return a multipart upload ID."
+        case .missingETag: return "The server did not return an ETag for an uploaded part."
+        case .incompleteMultipartUpload: return "The multipart upload is missing one or more parts."
+        case .shortRead: return "The local file changed while it was being uploaded."
         }
     }
 }
@@ -476,39 +484,287 @@ actor S3Service {
         }
     }
 
+    private static let multipartThreshold: Int64 = 16 * 1024 * 1024
+    private static let multipartConcurrency = 4
+    private static let maximumPartCount = 9_999
+
     func upload(
         account: Account,
         secret: String,
         bucket: String,
         key: String,
         from url: URL,
+        multipartStore: MultipartUploadStore = .shared,
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws {
-        let client = try await client(for: account, secret: secret)
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
-        // Some S3-compatible servers reject chunked PUTs without Content-Length.
-        let inlineLimit: Int64 = 16 * 1024 * 1024
-        var stream: ProgressStream?
-
-        var input: PutObjectInput
-        if size <= inlineLimit {
-            let data = try Data(contentsOf: url, options: .mappedIfSafe)
-            input = PutObjectInput(body: .data(data), bucket: bucket, key: key)
-            progress(size)
-        } else {
-            let handle = try FileHandle(forReadingFrom: url)
-            let body = ProgressStream(fileHandle: handle, length: Int(size), onProgress: progress)
-            stream = body
-            input = PutObjectInput(body: .stream(body), bucket: bucket, key: key)
+        if size > Self.multipartThreshold {
+            try await uploadMultipart(
+                account: account,
+                secret: secret,
+                bucket: bucket,
+                key: key,
+                from: url,
+                size: size,
+                modified: (attributes[.modificationDate] as? Date)?.timeIntervalSince1970,
+                store: multipartStore,
+                progress: progress,
+                forceRestart: false
+            )
+            return
         }
-        defer { stream?.close() }
 
+        let client = try await client(for: account, secret: secret)
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        // Some S3-compatible servers reject chunked PUTs without Content-Length.
+        var input = PutObjectInput(body: .data(data), bucket: bucket, key: key)
         input.contentLength = Int(size)
         input.contentType = Self.mimeType(for: url)
         let finalInput = input
         _ = try await throttle.run { try await client.putObject(input: finalInput) }
+        progress(size)
         invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
+    }
+
+    func abortMultipart(
+        account: Account,
+        secret: String,
+        bucket: String,
+        key: String,
+        store: MultipartUploadStore = .shared
+    ) async {
+        guard let record = await store.record(accountID: account.id, bucket: bucket, key: key) else {
+            return
+        }
+        if let client = try? await client(for: account, secret: secret) {
+            await abortMultipart(client: client, bucket: bucket, key: key, uploadID: record.uploadID)
+        }
+        await store.remove(accountID: account.id, bucket: bucket, key: key)
+        AppLog.shared.log("Aborted multipart upload bucket=\(bucket) key=\(key)")
+    }
+
+    private func uploadMultipart(
+        account: Account,
+        secret: String,
+        bucket: String,
+        key: String,
+        from url: URL,
+        size: Int64,
+        modified: TimeInterval?,
+        store: MultipartUploadStore,
+        progress: @escaping @Sendable (Int64) -> Void,
+        forceRestart: Bool
+    ) async throws {
+        try Task.checkCancellation()
+        let partSize = Self.multipartPartSize(for: size)
+        let totalParts = Int((size + Int64(partSize) - 1) / Int64(partSize))
+        let client = try await client(for: account, secret: secret)
+        let existing = await store.record(accountID: account.id, bucket: bucket, key: key)
+
+        if let existing, forceRestart || !existing.matches(fileSize: size, fileModified: modified, partSize: partSize) {
+            await abortMultipart(client: client, bucket: bucket, key: key, uploadID: existing.uploadID)
+            await store.remove(accountID: account.id, bucket: bucket, key: key)
+        }
+
+        var record: MultipartUploadRecord
+        if !forceRestart,
+           let existing,
+           existing.matches(fileSize: size, fileModified: modified, partSize: partSize) {
+            record = existing
+            AppLog.shared.log("Resume multipart bucket=\(bucket) key=\(key) parts=\(existing.parts.count)/\(totalParts)")
+        } else {
+            var input = CreateMultipartUploadInput(bucket: bucket, key: key)
+            input.contentType = Self.mimeType(for: url)
+            let finalInput = input
+            let output = try await throttle.run {
+                try await client.createMultipartUpload(input: finalInput)
+            }
+            guard let uploadID = output.uploadId, !uploadID.isEmpty else {
+                throw S3ServiceError.missingUploadID
+            }
+            record = MultipartUploadRecord(
+                accountID: account.id,
+                bucket: bucket,
+                key: key,
+                uploadID: uploadID,
+                fileSize: size,
+                fileModified: modified,
+                partSize: partSize,
+                parts: [],
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+            await store.save(record)
+            try Task.checkCancellation()
+            AppLog.shared.log("Start multipart bucket=\(bucket) key=\(key) parts=\(totalParts) size=\(size)")
+        }
+
+        var partMap: [Int: MultipartPart] = [:]
+        for part in record.parts where part.number >= 1 && part.number <= totalParts {
+            partMap[part.number] = part
+        }
+        record.parts = partMap.values.sorted { $0.number < $1.number }
+        await store.save(record)
+        progress(record.bytesCompleted(totalSize: size))
+
+        let missing = (1...totalParts).filter { partMap[$0] == nil }
+        do {
+            let uploadID = record.uploadID
+            for start in stride(from: 0, to: missing.count, by: Self.multipartConcurrency) {
+                try Task.checkCancellation()
+                let end = min(start + Self.multipartConcurrency, missing.count)
+                let batch = Array(missing[start..<end])
+                let uploaded = try await withThrowingTaskGroup(of: MultipartPart.self) { group in
+                    for number in batch {
+                        group.addTask {
+                            try await self.uploadPart(
+                                client: client,
+                                bucket: bucket,
+                                key: key,
+                                uploadID: uploadID,
+                                url: url,
+                                partNumber: number,
+                                partSize: partSize,
+                                totalSize: size
+                            )
+                        }
+                    }
+                    var results: [MultipartPart] = []
+                    for try await part in group {
+                        results.append(part)
+                    }
+                    return results
+                }
+                try Task.checkCancellation()
+                for part in uploaded {
+                    partMap[part.number] = part
+                }
+                record.parts = partMap.values.sorted { $0.number < $1.number }
+                record.updatedAt = Date()
+                await store.save(record)
+                progress(record.bytesCompleted(totalSize: size))
+            }
+
+            try Task.checkCancellation()
+            guard partMap.count == totalParts else {
+                throw S3ServiceError.incompleteMultipartUpload
+            }
+            let completedParts = partMap.values
+                .sorted { $0.number < $1.number }
+                .map { S3ClientTypes.CompletedPart(eTag: $0.eTag, partNumber: $0.number) }
+            let input = CompleteMultipartUploadInput(
+                bucket: bucket,
+                key: key,
+                multipartUpload: S3ClientTypes.CompletedMultipartUpload(parts: completedParts),
+                uploadId: record.uploadID
+            )
+            _ = try await throttle.run {
+                try await client.completeMultipartUpload(input: input)
+            }
+        } catch {
+            if !forceRestart, Self.isRecoverableMultipartStateError(error) {
+                await store.remove(accountID: account.id, bucket: bucket, key: key)
+                try await uploadMultipart(
+                    account: account,
+                    secret: secret,
+                    bucket: bucket,
+                    key: key,
+                    from: url,
+                    size: size,
+                    modified: modified,
+                    store: store,
+                    progress: progress,
+                    forceRestart: true
+                )
+                return
+            }
+            throw error
+        }
+
+        await store.remove(accountID: account.id, bucket: bucket, key: key)
+        progress(size)
+        invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
+        AppLog.shared.log("Completed multipart bucket=\(bucket) key=\(key) parts=\(totalParts)")
+    }
+
+    private func uploadPart(
+        client: S3Client,
+        bucket: String,
+        key: String,
+        uploadID: String,
+        url: URL,
+        partNumber: Int,
+        partSize: Int,
+        totalSize: Int64
+    ) async throws -> MultipartPart {
+        try Task.checkCancellation()
+        let offset = Int64(partNumber - 1) * Int64(partSize)
+        let length = Int(min(Int64(partSize), totalSize - offset))
+        let data = try Self.readPart(url: url, offset: offset, length: length)
+        try Task.checkCancellation()
+
+        var input = UploadPartInput(
+            body: .data(data),
+            bucket: bucket,
+            contentLength: data.count,
+            key: key,
+            partNumber: partNumber,
+            uploadId: uploadID
+        )
+        input.contentLength = data.count
+        let finalInput = input
+        let output = try await throttle.run {
+            try await client.uploadPart(input: finalInput)
+        }
+        guard let eTag = output.eTag, !eTag.isEmpty else {
+            throw S3ServiceError.missingETag
+        }
+        return MultipartPart(number: partNumber, eTag: eTag)
+    }
+
+    private func abortMultipart(client: S3Client, bucket: String, key: String, uploadID: String) async {
+        do {
+            _ = try await throttle.run {
+                try await client.abortMultipartUpload(input: AbortMultipartUploadInput(
+                    bucket: bucket,
+                    key: key,
+                    uploadId: uploadID
+                ))
+            }
+        } catch {
+            AppLog.shared.error("Abort multipart failed bucket=\(bucket) key=\(key): \(String(describing: error))")
+        }
+    }
+
+    private static func multipartPartSize(for size: Int64) -> Int {
+        var partSize = 8 * 1024 * 1024
+        #if DEBUG
+        if let raw = ProcessInfo.processInfo.environment["S3C_MULTIPART_PART_SIZE"],
+           let override = Int(raw),
+           override >= 5 * 1024 * 1024 {
+            partSize = override
+        }
+        #endif
+        let required = Int((size + Int64(Self.maximumPartCount) - 1) / Int64(Self.maximumPartCount))
+        partSize = max(partSize, required)
+        let mebibyte = 1024 * 1024
+        return max(5 * mebibyte, ((partSize + mebibyte - 1) / mebibyte) * mebibyte)
+    }
+
+    private nonisolated static func readPart(url: URL, offset: Int64, length: Int) throws -> Data {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        try handle.seek(toOffset: UInt64(offset))
+        guard let data = try handle.read(upToCount: length), data.count == length else {
+            throw S3ServiceError.shortRead
+        }
+        return data
+    }
+
+    private nonisolated static func isRecoverableMultipartStateError(_ error: Error) -> Bool {
+        let text = String(describing: error).lowercased()
+        return text.contains("nosuchupload") || text.contains("invalidpart")
     }
 
     func delete(account: Account, secret: String, bucket: String, key: String) async throws {

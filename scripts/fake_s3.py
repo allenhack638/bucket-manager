@@ -10,10 +10,12 @@ Endpoints: /__stats, /__reset, /__last_put, /__health
 import base64
 import http.server
 import json
+import os
 import sys
 import threading
 import time
 import urllib.parse
+import xml.etree.ElementTree as ET
 from email.utils import formatdate
 
 STATS = {}
@@ -22,6 +24,11 @@ LAST_DELETE = {"key": ""}
 LIST_TIMES = []
 ACTIVE_LIST = 0
 MAX_ACTIVE_LIST = 0
+MULTIPART = {}
+OBJECTS = {}
+FAILED_PARTS = set()
+NEXT_UPLOAD = 0
+MULTIPART_DELAY = float(os.environ.get("FAKE_MULTIPART_DELAY", "0"))
 LOCK = threading.Lock()
 XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 DATE = "2026-01-02T03:04:05.000Z"
@@ -102,6 +109,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with LOCK:
                 body = json.dumps(STATS)
             return xml_response(self, body, content_type="application/json")
+        if bucket == "__objects":
+            with LOCK:
+                body = json.dumps({k: len(v["body"]) for k, v in OBJECTS.items()})
+            return xml_response(self, body, content_type="application/json")
         if bucket == "__reset":
             with LOCK:
                 STATS.clear()
@@ -109,6 +120,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 LAST_DELETE.update(key="")
                 LIST_TIMES.clear()
                 MAX_ACTIVE_LIST = 0
+                MULTIPART.clear()
+                OBJECTS.clear()
+                FAILED_PARTS.clear()
             return xml_response(self, "{}", content_type="application/json")
         if bucket == "__last_put":
             with LOCK:
@@ -152,6 +166,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if bucket == "denied":
             bump("denied")
             return error_response(self, "AccessDenied", "Access Denied")
+        with LOCK:
+            stored = OBJECTS.get(key)
+        if stored:
+            bump("getObject")
+            body = stored["body"]
+            self.send_response(200)
+            self.send_header("Content-Type", stored["content_type"])
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("ETag", '"etag-multipart"')
+            self.send_header("Last-Modified", HTTP_DATE)
+            self.end_headers()
+            self.wfile.write(body)
+            return
         bump("getObject")
         content_type = "text/plain"
         if key == "readme.txt":
@@ -172,7 +199,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_HEAD(self):
-        bucket, key, _ = self.split()
+        bucket, key, query = self.split()
+        with LOCK:
+            stored = OBJECTS.get(key)
+        if stored:
+            bump("head")
+            self.send_response(200)
+            self.send_header("Content-Type", stored["content_type"])
+            self.send_header("Content-Length", str(len(stored["body"])))
+            self.send_header("ETag", '"etag-multipart"')
+            self.send_header("Last-Modified", HTTP_DATE)
+            self.end_headers()
+            return
         if bucket != "alpha" or key != "readme.txt":
             self.send_response(404)
             self.send_header("Content-Length", "0")
@@ -190,9 +228,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_PUT(self):
-        bucket, key, _ = self.split()
+        bucket, key, query = self.split()
         length = int(self.headers.get("Content-Length", "0") or 0)
         body = self.rfile.read(length) if length else b""
+        upload_id = query.get("uploadId", [None])[0]
+        part_number = query.get("partNumber", [None])[0]
+        if upload_id and part_number:
+            if MULTIPART_DELAY:
+                time.sleep(MULTIPART_DELAY)
+            with LOCK:
+                upload = MULTIPART.get(upload_id)
+                should_fail = (
+                    key.startswith("fail/")
+                    and int(part_number) == 2
+                    and upload_id not in FAILED_PARTS
+                )
+                if should_fail:
+                    FAILED_PARTS.add(upload_id)
+                elif upload is not None:
+                    upload["parts"][int(part_number)] = body
+            if should_fail:
+                bump("failPart")
+                return error_response(self, "BadDigest", "Injected part failure", 400)
+            if upload is None:
+                return error_response(self, "NoSuchUpload", "The upload does not exist", 404)
+            bump("uploadPart")
+            self.send_response(200)
+            self.send_header("ETag", f'"part-{part_number}"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         with LOCK:
             LAST_PUT.update(key=key, size=len(body))
         bump("put")
@@ -201,10 +266,78 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def do_POST(self):
+        global NEXT_UPLOAD
+        bucket, key, query = self.split()
+        if "uploads" in query:
+            with LOCK:
+                NEXT_UPLOAD += 1
+                upload_id = f"upload-{NEXT_UPLOAD}"
+                MULTIPART[upload_id] = {
+                    "bucket": bucket,
+                    "key": key,
+                    "parts": {},
+                    "content_type": self.headers.get("Content-Type", "application/octet-stream"),
+                }
+            bump("createMultipart")
+            return xml_response(
+                self,
+                f'<?xml version="1.0" encoding="UTF-8"?><InitiateMultipartUploadResult xmlns="{XMLNS}">'
+                f"<Bucket>{bucket}</Bucket><Key>{key}</Key><UploadId>{upload_id}</UploadId>"
+                "</InitiateMultipartUploadResult>",
+            )
+        upload_id = query.get("uploadId", [None])[0]
+        if upload_id:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+            body = self.rfile.read(length) if length else b""
+            with LOCK:
+                upload = MULTIPART.get(upload_id)
+            if upload is None:
+                return error_response(self, "NoSuchUpload", "The upload does not exist", 404)
+            try:
+                root = ET.fromstring(body)
+                ns = {"s3": XMLNS}
+                requested = []
+                for part in root.findall(".//s3:Part", ns):
+                    number = int(part.findtext("s3:PartNumber", namespaces=ns))
+                    requested.append(number)
+                if not requested:
+                    requested = sorted(upload["parts"])
+                payload = b"".join(upload["parts"][number] for number in requested)
+            except (ET.ParseError, KeyError, TypeError, ValueError):
+                return error_response(self, "InvalidPart", "Missing or invalid parts", 400)
+            with LOCK:
+                OBJECTS[upload["key"]] = {
+                    "body": payload,
+                    "content_type": upload["content_type"],
+                }
+                MULTIPART.pop(upload_id, None)
+            bump("completeMultipart")
+            return xml_response(
+                self,
+                f'<?xml version="1.0" encoding="UTF-8"?><CompleteMultipartUploadResult xmlns="{XMLNS}">'
+                f"<Location>http://127.0.0.1/{upload['bucket']}/{upload['key']}</Location>"
+                f"<Bucket>{upload['bucket']}</Bucket><Key>{upload['key']}</Key>"
+                '<ETag>&quot;etag-multipart&quot;</ETag></CompleteMultipartUploadResult>',
+            )
+        return error_response(self, "InvalidRequest", "Unsupported POST", 400)
+
     def do_DELETE(self):
-        bucket, key, _ = self.split()
+        bucket, key, query = self.split()
+        upload_id = query.get("uploadId", [None])[0]
+        if upload_id:
+            with LOCK:
+                upload = MULTIPART.pop(upload_id, None)
+            if upload is None:
+                return error_response(self, "NoSuchUpload", "The upload does not exist", 404)
+            bump("abortMultipart")
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         with LOCK:
             LAST_DELETE.update(key=key)
+            OBJECTS.pop(key, None)
         bump("delete")
         self.send_response(204)
         self.send_header("Content-Length", "0")
@@ -258,6 +391,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             rows, prefixes = self.alpha_direct(prefix)
         else:
             rows, prefixes = [], []
+
+        if bucket == "alpha":
+            with LOCK:
+                dynamic = [
+                    (stored_key, len(value["body"]))
+                    for stored_key, value in OBJECTS.items()
+                    if stored_key.startswith(prefix)
+                    and (recursive or "/" not in stored_key[len(prefix):])
+                ]
+            rows = rows + dynamic
 
         next_token = None
         if bucket == "alpha" and recursive and prefix == "paged/":

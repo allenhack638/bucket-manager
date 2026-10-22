@@ -182,14 +182,14 @@ deleted when the task is canceled.
 
 ### Uploads
 
-`PutObject` accepts a `ByteStream`. The app wraps a `FileStream` in
-`ProgressStream`, which forwards every `read(upToCount:)` and reports the file
-offset. The SDK pulls bytes through that wrapper, so the reported number is the
-number of bytes actually read from disk and sent. `contentLength` and a MIME type
-are set from the file.
-
-This is the smallest honest implementation. A production client would switch to
-multipart upload for large files so it can retry individual parts and resume.
+Files up to 16 MiB use one explicit-length `PutObject`. Larger files use
+multipart upload with 8 MiB parts and four concurrent part requests. Completed
+part ETags are written to `MultipartUploadStore` after each batch, so a paused,
+failed, or restarted upload can continue without re-sending completed parts.
+The state file is owner-only and contains no credentials. Cancel aborts the
+server-side upload; retry reuses the upload ID; a changed file invalidates and
+aborts the old session. The transfer queue itself is not persisted across app
+relaunches, so re-adding the same file/key resumes from the stored parts.
 
 ### The queue
 
@@ -304,7 +304,8 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | `Services/S3ErrorPresenter.swift` | one user-facing mapping for S3 and credential errors |
 | `Services/TransferQueue.swift` | queueing, progress, speed, cancel |
 | `Models/S3Key.swift` | shared object-key parent/safe-filename helpers |
-| `Services/ProgressStream.swift` | upload byte accounting |
+| `Models/MultipartUploadRecord.swift` | persisted multipart session and part state |
+| `Services/MultipartUploadStore.swift` | owner-only JSON store for resumable parts |
 | `Services/RateLimiter.swift` | paced folder-size request starts |
 | `FolderStats/FolderStats.swift` | key/record/snapshot/policy types |
 | `FolderStats/FolderStatsCache.swift` | synchronous 0600 disk cache |
@@ -420,16 +421,12 @@ human taking screenshots.
 
 ## 12. Exercises
 
-1. Add a **multipart upload** path for files over 8 MiB and show part-level retry.
-2. Implement the **bucket policy / CORS / lifecycle** editors as JSON text editors.
-3. Add a **search** field that uses `ListObjectsV2` with a prefix or `StartAfter`.
-4. Add **dark mode** by making `Theme.Colors` dynamic and removing the forced aqua
-   appearance; then re-run the snapshot matrix.
-5. Implement **version deletion** and **restore** in the Versions tab.
-6. Add **drag-and-drop** from Finder onto the file table, reusing `TransferQueue`.
-7. Replace the ad-hoc signature with a Developer ID or stable self-signed identity
+1. Implement the **bucket policy / CORS / lifecycle** editors as JSON text editors.
+2. Persist the transfer queue itself so paused multipart uploads resume without re-adding the file.
+3. Implement **version deletion** and **restore** in the Versions tab.
+4. Replace the ad-hoc signature with a Developer ID or stable self-signed identity
    and verify the Keychain stops re-prompting across rebuilds.
-8. Add a UI test that focuses the Add Account name field, types, presses Return, and
+5. Add a UI test that focuses the Add Account name field, types, presses Return, and
    asserts the sheet closed — using the accessibility API.
 
 The code is deliberately small and direct: the goal is that each file can be read

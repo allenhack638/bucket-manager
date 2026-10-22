@@ -194,6 +194,34 @@ enum Acceptance {
             )
             check(details.contentLength == Int64(uploadBody.utf8.count), "HeadObject reports the uploaded size")
 
+            let largeURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("acceptance-large-\(UUID().uuidString).bin")
+            localURLs.append(largeURL)
+            let largeSize = 20 * 1024 * 1024
+            try Data(repeating: 0x5A, count: largeSize).write(to: largeURL)
+            model.upload(urls: [largeURL])
+            let largeKey = prefix + largeURL.lastPathComponent
+            let largeUploaded = await waitUntil(timeout: 120) {
+                model.transfers.tasks.contains { $0.key == largeKey && $0.status == .completed }
+            }
+            check(largeUploaded, "multipart upload completes")
+            let largeDetails = try await service.objectDetails(
+                account: account, secret: secret, bucket: bucket, key: largeKey
+            )
+            check(largeDetails.contentLength == Int64(largeSize), "multipart object has the full size")
+
+            let largeDownloadURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("acceptance-large-download-\(UUID().uuidString).bin")
+            localURLs.append(largeDownloadURL)
+            try await service.download(
+                account: account, secret: secret, bucket: bucket, key: largeKey,
+                to: largeDownloadURL, progress: { _ in }
+            )
+            let downloadedSize = (try? FileManager.default
+                .attributesOfItem(atPath: largeDownloadURL.path)[.size] as? NSNumber)?
+                .int64Value ?? 0
+            check(downloadedSize == Int64(largeSize), "multipart object downloads completely")
+
             let copyKey = prefix + "copy.txt"
             try await service.copyObject(
                 account: account, secret: secret,
@@ -281,6 +309,9 @@ enum Acceptance {
 
             try await service.delete(
                 account: account, secret: secret, bucket: bucket, key: item.key
+            )
+            try await service.delete(
+                account: account, secret: secret, bucket: bucket, key: largeKey
             )
             try await service.delete(
                 account: account, secret: secret, bucket: bucket, key: copyKey

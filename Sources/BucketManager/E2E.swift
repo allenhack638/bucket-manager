@@ -49,6 +49,11 @@ enum E2E {
                 return raw["key"] as? String ?? ""
             }
 
+            func objects() async -> [String: Int] {
+                let raw = await json("__objects")
+                return raw.compactMapValues { $0 as? Int }
+            }
+
             func listTiming() async -> (times: [Double], maxActive: Int) {
                 let raw = await json("__times")
                 let times = (raw["times"] as? [NSNumber])?.map(\.doubleValue) ?? []
@@ -540,6 +545,263 @@ enum E2E {
             }
             check(uploaded, "upload PUTs the object under the current prefix")
             try? FileManager.default.removeItem(at: uploadURL)
+
+            let multipartStore = MultipartUploadStore.shared
+            let bigURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-multipart-\(UUID().uuidString).bin")
+            let bigSize = 30 * 1024 * 1024
+            try? Data(repeating: 0x5A, count: bigSize).write(to: bigURL)
+            let bigName = bigURL.lastPathComponent
+
+            model.openLocation(accountID: account.id, bucket: "alpha", prefix: "")
+            _ = await waitUntil { !model.isBusy }
+            await resetStats()
+            model.upload(urls: [bigURL])
+            guard let bigTaskID = model.transfers.tasks.first(where: { $0.key == bigName })?.id else {
+                check(false, "multipart task is created")
+                print("E2E SUMMARY passed=\(passed) failed=\(failed)")
+                exit(1)
+            }
+            var paused = false
+            for _ in 0..<300 {
+                let current = model.transfers.tasks.first { $0.id == bigTaskID }
+                if current?.status == .completed { break }
+                let counts = await stats()
+                if (counts["uploadPart"] ?? 0) >= 4 {
+                    let record = await multipartStore.record(
+                        accountID: account.id, bucket: "alpha", key: bigName
+                    )
+                    if (record?.parts.count ?? 0) >= 4 {
+                        model.transfers.stop(id: bigTaskID)
+                        paused = true
+                        break
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+            check(paused, "multipart upload pauses after completed parts")
+            check(await waitUntil { model.transfers.tasks.first { $0.id == bigTaskID }?.status == .paused },
+                  "paused multipart task reaches stopped state")
+            let pausedRecord = await multipartStore.record(
+                accountID: account.id, bucket: "alpha", key: bigName
+            )
+            check((pausedRecord?.parts.count ?? 0) >= 4,
+                  "completed multipart parts are persisted")
+            check((pausedRecord?.bytesCompleted(totalSize: Int64(bigSize)) ?? 0) > 0,
+                  "multipart progress survives pause")
+
+            model.transfers.startAll()
+            let resumed = await waitUntil(timeout: 30) {
+                model.transfers.tasks.first { $0.id == bigTaskID }?.status == .completed
+            }
+            check(resumed, "paused multipart upload resumes")
+            let resumedCounts = await stats()
+            check((resumedCounts["createMultipart"] ?? 0) == 1,
+                  "resume reuses the existing multipart upload")
+            check((resumedCounts["completeMultipart"] ?? 0) == 1,
+                  "resumed multipart upload completes")
+            check((await objects())[bigName] == bigSize, "multipart object has the full size")
+            check(await multipartStore.record(accountID: account.id, bucket: "alpha", key: bigName) == nil,
+                  "completed multipart state is removed")
+
+            await resetStats()
+            await model.navigate(toPrefix: "changed/")
+            let changedURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-multipart-changed-\(UUID().uuidString).bin")
+            try? Data(repeating: 0x33, count: bigSize).write(to: changedURL)
+            let changedKey = "changed/" + changedURL.lastPathComponent
+            model.upload(urls: [changedURL])
+            guard let changedTaskID = model.transfers.tasks.first(where: { $0.key == changedKey })?.id else {
+                check(false, "changed-file multipart task is created")
+                print("E2E SUMMARY passed=\(passed) failed=\(failed)")
+                exit(1)
+            }
+            var changedPaused = false
+            for _ in 0..<300 {
+                let counts = await stats()
+                if (counts["uploadPart"] ?? 0) >= 4 {
+                    let record = await multipartStore.record(
+                        accountID: account.id, bucket: "alpha", key: changedKey
+                    )
+                    if (record?.parts.count ?? 0) >= 4 {
+                        model.transfers.stop(id: changedTaskID)
+                        changedPaused = true
+                        break
+                    }
+                }
+                if model.transfers.tasks.first(where: { $0.id == changedTaskID })?.status == .completed {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+            check(changedPaused, "changed-file upload pauses before mutation")
+            if let handle = try? FileHandle(forWritingTo: changedURL) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: Data(repeating: 0x44, count: 1024 * 1024))
+                try? handle.close()
+            }
+            model.transfers.startAll()
+            let changedCompleted = await waitUntil(timeout: 30) {
+                model.transfers.tasks.first { $0.id == changedTaskID }?.status == .completed
+            }
+            check(changedCompleted, "changed-file upload restarts and completes")
+            let changedCounts = await stats()
+            check((changedCounts["createMultipart"] ?? 0) == 2,
+                  "changed file starts a new multipart upload")
+            check((changedCounts["abortMultipart"] ?? 0) >= 1,
+                  "changed file aborts the stale multipart upload")
+            check((await objects())[changedKey] == bigSize + 1024 * 1024,
+                  "changed file uploads the new size")
+            try? FileManager.default.removeItem(at: changedURL)
+
+            await resetStats()
+            await model.navigate(toPrefix: "cancel/")
+            model.upload(urls: [bigURL])
+            let cancelKey = "cancel/" + bigName
+            guard let cancelTaskID = model.transfers.tasks.first(where: { $0.key == cancelKey })?.id else {
+                check(false, "cancellable multipart task is created")
+                print("E2E SUMMARY passed=\(passed) failed=\(failed)")
+                exit(1)
+            }
+            var cancelReady = false
+            for _ in 0..<300 {
+                let current = model.transfers.tasks.first { $0.id == cancelTaskID }
+                if current?.status == .completed || current?.status == .failed { break }
+                let counts = await stats()
+                if (counts["uploadPart"] ?? 0) >= 4 {
+                    let record = await multipartStore.record(
+                        accountID: account.id, bucket: "alpha", key: cancelKey
+                    )
+                    if (record?.parts.count ?? 0) >= 4 {
+                        cancelReady = true
+                        break
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+            check(cancelReady, "multipart upload reaches a cancellable state")
+            if cancelReady {
+                model.transfers.cancel(id: cancelTaskID)
+                var canceled = false
+                for _ in 0..<200 {
+                    if ((await stats())["abortMultipart"] ?? 0) >= 1 {
+                        canceled = true
+                        break
+                    }
+                    try? await Task.sleep(nanoseconds: 25_000_000)
+                }
+                check(canceled, "cancel aborts the multipart upload")
+                check(((await stats())["completeMultipart"] ?? 0) == 0,
+                      "cancelled multipart upload does not complete")
+                check((await multipartStore.record(
+                    accountID: account.id, bucket: "alpha", key: cancelKey
+                )) == nil, "cancelled multipart state is removed")
+            }
+
+            await resetStats()
+            await model.navigate(toPrefix: "fail/")
+            model.upload(urls: [bigURL])
+            let failKey = "fail/" + bigName
+            guard let failTaskID = model.transfers.tasks.first(where: { $0.key == failKey })?.id else {
+                check(false, "retryable multipart task is created")
+                print("E2E SUMMARY passed=\(passed) failed=\(failed)")
+                exit(1)
+            }
+            let failureSeen = await waitUntil(timeout: 20) {
+                model.transfers.tasks.first { $0.id == failTaskID }?.status == .failed
+            }
+            check(failureSeen, "multipart failure reaches failed state")
+            check(((await stats())["failPart"] ?? 0) == 1, "server injected one part failure")
+            check((await multipartStore.record(
+                accountID: account.id, bucket: "alpha", key: failKey
+            )) != nil, "failed multipart upload keeps resumable state")
+            model.transfers.retry(id: failTaskID)
+            let retried = await waitUntil(timeout: 30) {
+                model.transfers.tasks.first { $0.id == failTaskID }?.status == .completed
+            }
+            check(retried, "failed multipart upload retries and completes")
+            let retryCounts = await stats()
+            check((retryCounts["createMultipart"] ?? 0) == 1,
+                  "retry reuses the failed upload ID")
+            check((retryCounts["completeMultipart"] ?? 0) == 1,
+                  "retried multipart upload completes")
+            check((await objects())[failKey] == bigSize, "retried object has the full size")
+            try? FileManager.default.removeItem(at: bigURL)
+
+            let stateURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-multipart-state-\(UUID().uuidString).json")
+            let stateStore = MultipartUploadStore(fileURL: stateURL)
+            let stateRecord = MultipartUploadRecord(
+                accountID: account.id,
+                bucket: "alpha",
+                key: "state-test.bin",
+                uploadID: "upload-state",
+                fileSize: 20,
+                fileModified: 123,
+                partSize: 5,
+                parts: [
+                    MultipartPart(number: 1, eTag: "\"one\""),
+                    MultipartPart(number: 2, eTag: "\"two\"")
+                ],
+                createdAt: Date(),
+                updatedAt: Date()
+            )
+            await stateStore.save(stateRecord)
+            let reopenedStore = MultipartUploadStore(fileURL: stateURL)
+            let loadedRecord = await reopenedStore.record(
+                accountID: account.id, bucket: "alpha", key: "state-test.bin"
+            )
+            check(loadedRecord?.parts.count == 2, "multipart state survives store restart")
+            check(loadedRecord?.bytesCompleted(totalSize: 20) == 10,
+                  "multipart state restores completed bytes")
+            check(loadedRecord?.matches(fileSize: 20, fileModified: 123, partSize: 5) == true,
+                  "multipart state validates its file fingerprint")
+            check(loadedRecord?.matches(fileSize: 21, fileModified: 123, partSize: 5) == false,
+                  "multipart state rejects a changed file")
+            let statePermissions = (try? FileManager.default
+                .attributesOfItem(atPath: stateURL.path)[.posixPermissions] as? NSNumber)?
+                .intValue ?? 0
+            check(statePermissions == 0o600, "multipart state file is owner-only")
+            await reopenedStore.remove(accountID: account.id, bucket: "alpha", key: "state-test.bin")
+            check(await reopenedStore.record(
+                accountID: account.id, bucket: "alpha", key: "state-test.bin"
+            ) == nil, "multipart state can be removed")
+            try? FileManager.default.removeItem(at: stateURL)
+
+            model.openLocation(accountID: account.id, bucket: "alpha", prefix: "")
+            _ = await waitUntil { !model.isBusy }
+            let boundaryURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-boundary-\(UUID().uuidString).bin")
+            let boundaryName = boundaryURL.lastPathComponent
+            let threshold = 16 * 1024 * 1024
+            try? Data(repeating: 0x22, count: threshold).write(to: boundaryURL)
+            await resetStats()
+            model.upload(urls: [boundaryURL])
+            let thresholdCompleted = await waitUntil(timeout: 30) {
+                model.transfers.tasks.last { $0.key == boundaryName }?.status == .completed
+            }
+            let thresholdCounts = await stats()
+            check(thresholdCompleted, "16 MiB upload completes")
+            check((thresholdCounts["createMultipart"] ?? 0) == 0,
+                  "16 MiB upload stays on the single-PUT path")
+            check((thresholdCounts["put"] ?? 0) == 1,
+                  "16 MiB upload sends one PUT")
+
+            try? Data(repeating: 0x22, count: threshold + 1).write(to: boundaryURL)
+            await resetStats()
+            model.upload(urls: [boundaryURL])
+            let overThresholdCompleted = await waitUntil(timeout: 30) {
+                model.transfers.tasks.last { $0.key == boundaryName }?.status == .completed
+            }
+            let overThresholdCounts = await stats()
+            check(overThresholdCompleted, "16 MiB + 1 upload completes")
+            check((overThresholdCounts["createMultipart"] ?? 0) == 1,
+                  "16 MiB + 1 upload uses multipart")
+            check((overThresholdCounts["completeMultipart"] ?? 0) == 1,
+                  "16 MiB + 1 multipart upload completes")
+            check((await objects())[boundaryName] == threshold + 1,
+                  "boundary multipart object has the full size")
+            try? FileManager.default.removeItem(at: boundaryURL)
 
             print("E2E SUMMARY passed=\(passed) failed=\(failed)")
             exit(failed == 0 ? 0 : 1)
