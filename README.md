@@ -255,6 +255,11 @@ headers, never the secret).
 - The window uses native macOS traffic lights at top-left; offscreen snapshot
   images do not include the native titlebar controls.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, and review guidance.
+Security reports should follow [SECURITY.md](SECURITY.md).
+
 ## License
 
 Bucket Manager is released under the MIT License. See [LICENSE](LICENSE).
