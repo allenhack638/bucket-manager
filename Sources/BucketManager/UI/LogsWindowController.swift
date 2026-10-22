@@ -202,9 +202,15 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
         clear.onClick = { [weak self] in self?.clearLogs() }
         let export = FlatButton("Export", icon: "square.and.arrow.up", style: .action)
         export.onClick = { [weak self] in self?.exportLogs() }
+        let lock = FlatButton("Lock", icon: "lock", style: .action)
+        lock.onClick = { [weak self] in
+            AdminAuthSession.shared.lock()
+            self?.window?.close()
+        }
         footer.addArrangedSubview(reveal)
         footer.addArrangedSubview(clear)
         footer.addArrangedSubview(export)
+        footer.addArrangedSubview(lock)
         logsView.addSubview(footer)
 
         NSLayoutConstraint.activate([
@@ -325,6 +331,7 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
     }
 
     private func clearLogs() {
+        guard AdminAuthPrompt.authorize(reason: "Clear diagnostic logs", forcePrompt: true) else { return }
         let alert = NSAlert()
         alert.messageText = "Clear diagnostic logs?"
         alert.informativeText = "Audit records are retained. This action is itself audited."
@@ -338,7 +345,8 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
     }
 
     private func exportLogs() {
-        guard let window else { return }
+        guard AdminAuthPrompt.authorize(reason: "Export log records", forcePrompt: true),
+              let window else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "bucket-manager-logs.jsonl"
         panel.beginSheetModal(for: window) { [weak self] response in
@@ -488,6 +496,7 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
     }
 
     private func clearStats() {
+        guard AdminAuthPrompt.authorize(reason: "Clear request statistics", forcePrompt: true) else { return }
         let alert = NSAlert()
         alert.messageText = "Clear request statistics?"
         alert.informativeText = "This resets the counters. Audit records are retained."
@@ -570,8 +579,15 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
         save.onClick = { [weak self] in self?.saveSettings() }
         let reveal = FlatButton("Reveal Logs", icon: "folder", style: .action)
         reveal.onClick = { NSWorkspace.shared.activateFileViewerSelecting([LogStore.defaultDirectoryURL]) }
+        let changePasscode = FlatButton("Change Admin Passcode…", icon: "lock.rotation", style: .action)
+        changePasscode.onClick = { [weak self] in
+            if AdminAuthPrompt.changePasscode() {
+                self?.settingsStatusLabel.stringValue = "Admin passcode changed."
+            }
+        }
         buttons.addArrangedSubview(save)
         buttons.addArrangedSubview(reveal)
+        buttons.addArrangedSubview(changePasscode)
         stack.addArrangedSubview(buttons)
 
         settingsStatusLabel.font = Theme.Font.small
@@ -623,6 +639,7 @@ final class LogsWindowController: NSWindowController, NSTableViewDataSource, NST
     }
 
     private func saveSettings() {
+        guard AdminAuthPrompt.authorize(reason: "Change logging settings", forcePrompt: true) else { return }
         var settings = logs.currentSettings()
         settings.diagnosticsEnabled = diagnosticsSwitch.state == .on
         if let raw = settingsLevelPopup.selectedItem?.representedObject as? Int,
@@ -805,5 +822,6 @@ extension LogsWindowController: NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         refreshTimer?.invalidate()
         refreshTimer = nil
+        AdminAuthSession.shared.lock()
     }
 }

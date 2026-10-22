@@ -379,6 +379,22 @@ enum UITest {
             check(tabStrip.accessibilityRole() == .tabGroup,
                   "inspector tab strip exposes the tab-group role")
 
+            let passcode = PasscodeHasher.make(password: UUID().uuidString, iterations: 10)
+            check(passcode.salt.count == 16 && passcode.hash.count == 32,
+                  "admin passcode uses a salted 256-bit verifier")
+            check(PasscodeHasher.verify(UUID().uuidString, against: passcode),
+                  "admin passcode verifier accepts the correct passphrase")
+            check(!PasscodeHasher.verify("wrong horse", against: passcode),
+                  "admin passcode verifier rejects a wrong passphrase")
+            let secondPasscode = PasscodeHasher.make(password: UUID().uuidString, iterations: 10)
+            check(passcode.hash != secondPasscode.hash,
+                  "admin passcode verifiers are salted per creation")
+            AdminAuthSession.shared.lock()
+            check(!AdminAuthSession.shared.isUnlocked, "admin authorization starts locked")
+            AdminAuthSession.shared.unlock()
+            check(AdminAuthSession.shared.isUnlocked, "admin authorization unlocks the session")
+            AdminAuthSession.shared.lock()
+
             let logDirectory = FileManager.default.temporaryDirectory
                 .appendingPathComponent("s3c-log-test-\(UUID().uuidString)", isDirectory: true)
             let defaultsName = "BucketManagerLoggingTests-\(UUID().uuidString)"

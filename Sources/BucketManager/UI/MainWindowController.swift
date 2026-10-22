@@ -401,6 +401,7 @@ final class MainWindowController: NSWindowController {
     @objc func showEventLogAction() { transfers.selectTab("log") }
 
     @objc func showLogsAction() {
+        guard AdminAuthPrompt.authorize(reason: "View logs and request statistics") else { return }
         if logsWindowController == nil {
             logsWindowController = LogsWindowController()
         }

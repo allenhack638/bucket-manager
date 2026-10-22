@@ -447,6 +447,13 @@ final class TransfersViewController: NSViewController {
     }
 
     func selectTab(_ id: String) {
+        if id == "log", !AdminAuthSession.shared.isUnlocked {
+            let previous = selectedTab
+            guard AdminAuthPrompt.authorize(reason: "Unlock the event log") else {
+                tabStrip.selectedID = previous
+                return
+            }
+        }
         LogStore.shared.log(
             .debug, category: .ui, event: "ui.tab.changed",
             message: "Inspector tab changed", metadata: ["tab": id]

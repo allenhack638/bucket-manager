@@ -28,6 +28,24 @@ Do not include real access keys, secrets, presigned URLs, or bucket contents.
   they contain no credentials or object payloads.
 - The app has no telemetry or remote crash reporting.
 
+## Admin passcode gate
+
+- Opening **Logs & Statistics**, opening the **Event Log** inspector tab, exporting
+  logs, clearing logs/statistics, and changing logging settings require an admin
+  passcode.
+- The first protected action creates the passcode; it is stored only as a salted
+  100,000-round SHA-256 verifier in the macOS Keychain, with
+  `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
+- Passcodes are not recoverable. If lost, an administrator can remove the
+  `com.bucketmanager.admin` / `passcode` Keychain item to reset the gate; existing
+  logs remain readable at the filesystem level.
+- The gate is an in-app authorization control, not log encryption. Logs remain
+  owner-only (`0600`) on disk.
+- Authorization lasts five minutes; closing the Logs window locks it. Destructive
+  actions and settings changes always prompt again.
+- Passcode creation, successful unlock, failed unlock, and passcode changes are
+  audited without recording the passcode.
+
 ## Transport and endpoint validation
 
 - HTTPS is the default. Remote plain-HTTP endpoints are rejected; HTTP is

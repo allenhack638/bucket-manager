@@ -32,3 +32,5 @@
 - Add per-account/bucket/operation request counters with session and all-time statistics.
 - Add a Logs & Statistics window with logging settings; diagnostic logging defaults off.
 - Instrument every S3 request with duration, bytes, outcome, and redacted error context without logging credentials, authorization headers, or signatures.
+- Add a Keychain-backed admin passcode gate for logs/statistics, the Event Log inspector, export, clearing, and logging settings; destructive actions require a fresh prompt.
+- Add passcode creation and change flows, five-minute authorization sessions, and audited unlock failures.

@@ -310,6 +310,7 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | `Services/MultipartUploadStore.swift` | owner-only JSON store for resumable parts |
 | `Services/LogStore.swift` | JSONL diagnostics/audit, redaction, rotation, retention |
 | `Services/RequestMetricsStore.swift` | per-account/bucket/operation counters |
+| `Services/AdminPasscode.swift` | Keychain verifier, authorization session, passcode prompts |
 | `Services/RateLimiter.swift` | paced folder-size request starts |
 | `FolderStats/FolderStats.swift` | key/record/snapshot/policy types |
 | `FolderStats/FolderStatsCache.swift` | synchronous 0600 disk cache |

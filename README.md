@@ -48,7 +48,10 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
   account, bucket, object, transfer, and settings changes. A dedicated window provides
   search, level/category/account filters, live tail, detail inspection, redacted export,
   per-account/bucket request counters, and logging settings. Credentials, authorization
-  headers, and signatures are never logged.
+  headers, and signatures are never logged. An admin passcode is created on first access
+  and stored in Keychain; opening logs/statistics, the Event Log tab, exporting, clearing,
+  and changing settings require authentication. Clearing, exporting, and settings changes
+  require a fresh passcode prompt even within an unlocked session.
 - **Appearance** — native macOS **View → Appearance** with System, Light, and Dark
   modes. The custom chrome, tables, inspector, transfer footer, and menus all follow
   the selected appearance.
@@ -187,6 +190,7 @@ Sources/BucketManager/
     MultipartUploadStore     resumable part state (0600 JSON)
     LogStore                 structured JSONL logs, rotation, retention, redaction
     RequestMetricsStore      per-account/bucket/operation request counters
+    AdminPasscode            Keychain passcode verifier and authorization gate
     KeychainStore            secrets
     AccountStore             account JSON + secret lookup
     StripXIDInterceptor     S3-compatible signing fix
@@ -257,7 +261,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-logs settings.png --size 1080x680 --tab settings
 ```
 
-The current suite is 106 dialog/model checks plus 128 end-to-end checks. The
+The current suite is 112 dialog/model checks plus 128 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
