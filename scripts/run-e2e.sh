@@ -34,10 +34,13 @@ S3C_LOG_DIR="$LOGDIR" S3C_METRICS_FILE="$METRICS" \
 S3C_LOG_SETTINGS_SUITE="$SETTINGS_SUITE" \
 S3C_TRANSFER_QUEUE_STATE="$TRANSFER_QUEUE" \
 S3C_DOWNLOAD_TEMP_REGISTRY="$TEMP_REGISTRY" \
-    NSUnbufferedIO=YES .build/debug/BucketManager --e2e "$PORT" 2>&1 | tee "$APP_LOG"
+    NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+    NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost NSUnbufferedIO=YES .build/debug/BucketManager --e2e "$PORT" 2>&1 | tee "$APP_LOG"
 STATUS=${PIPESTATUS[0]}
 echo "E2E exit status: $STATUS"
 if [ "$STATUS" -ne 0 ]; then
+    echo "--- E2E app log ---"
+    cat "$APP_LOG"
     echo "--- fake S3 log ---"
     cat "$LOG"
 fi

@@ -1,5 +1,6 @@
 #if DEBUG
 import Foundation
+import Darwin
 
 /// End-to-end harness against `scripts/fake_s3.py`. It drives the real AWS SDK
 /// and BrowserModel, so listing XML, signing interception, error mapping,
