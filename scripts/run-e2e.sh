@@ -29,14 +29,19 @@ if [ -z "$PORT" ]; then
   exit 1
 fi
 
-S3C_MULTIPART_PART_SIZE=5242880 S3C_MULTIPART_STATE="$STATE" \
-S3C_LOG_DIR="$LOGDIR" S3C_METRICS_FILE="$METRICS" \
-S3C_LOG_SETTINGS_SUITE="$SETTINGS_SUITE" \
-S3C_TRANSFER_QUEUE_STATE="$TRANSFER_QUEUE" \
-S3C_DOWNLOAD_TEMP_REGISTRY="$TEMP_REGISTRY" \
-    NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost \
+export S3C_MULTIPART_PART_SIZE=5242880
+export S3C_MULTIPART_STATE="$STATE"
+export S3C_LOG_DIR="$LOGDIR"
+export S3C_METRICS_FILE="$METRICS"
+export S3C_LOG_SETTINGS_SUITE="$SETTINGS_SUITE"
+export S3C_TRANSFER_QUEUE_STATE="$TRANSFER_QUEUE"
+export S3C_DOWNLOAD_TEMP_REGISTRY="$TEMP_REGISTRY"
+export NO_PROXY=127.0.0.1,localhost
+export no_proxy=127.0.0.1,localhost
+export NSUnbufferedIO=YES
+
 set +e
-    NO_PROXY=127.0.0.1,localhost no_proxy=127.0.0.1,localhost NSUnbufferedIO=YES .build/debug/BucketManager --e2e "$PORT" 2>&1 | tee "$APP_LOG"
+.build/debug/BucketManager --e2e "$PORT" 2>&1 | tee "$APP_LOG"
 STATUS=${PIPESTATUS[0]}
 set -e
 echo "E2E exit status: $STATUS"
