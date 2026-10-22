@@ -173,6 +173,42 @@ actor S3Service {
 
     // MARK: - Objects
 
+    func listAllObjects(
+        account: Account,
+        secret: String,
+        bucket: String,
+        prefix: String
+    ) async throws -> [S3Item] {
+        let client = try await client(for: account, secret: secret)
+        var token: String?
+        var items: [S3Item] = []
+        repeat {
+            let input = ListObjectsV2Input(
+                bucket: bucket,
+                continuationToken: token,
+                maxKeys: 1000,
+                prefix: prefix
+            )
+            let output = try await throttle.run {
+                try await client.listObjectsV2(input: input)
+            }
+            for object in output.contents ?? [] {
+                guard let key = object.key else { continue }
+                items.append(S3Item.listed(
+                    key: key,
+                    size: object.size.map(Int64.init),
+                    lastModified: object.lastModified,
+                    storageClass: object.storageClass?.rawValue,
+                    eTag: object.eTag
+                ))
+            }
+            token = output.nextContinuationToken
+            if output.isTruncated != true { break }
+        } while token != nil
+        AppLog.shared.log("Recursive list ok bucket=\(bucket) prefix=\(prefix) count=\(items.count)")
+        return items
+    }
+
     func list(
         account: Account,
         secret: String,

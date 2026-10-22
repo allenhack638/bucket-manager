@@ -861,6 +861,7 @@ final class BrowserModel {
             let key = prefix + url.lastPathComponent
             transfers.enqueueUpload(account: account, secret: secret, bucket: bucket, key: key, url: url)
         }
+        folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
         onTransferChange?()
     }
 
@@ -887,6 +888,7 @@ final class BrowserModel {
             queued += 1
         }
         appendLog("Queued \(queued) file(s) from folder \(root.lastPathComponent)")
+        folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
         onTransferChange?()
     }
 
@@ -911,17 +913,50 @@ final class BrowserModel {
         }
     }
 
-    func download(items selected: [S3Item], to directory: URL) {
-        guard let account = selectedAccount, let bucket = selectedBucket else { return }
+    func download(items selected: [S3Item], to directory: URL) async {
+        guard let account = selectedAccount, let bucket = selectedBucket, !selected.isEmpty else { return }
         guard let secret = try? accounts.secret(for: account) else {
             setError(S3ServiceError.missingCredentials)
             return
         }
+
+        var downloads: [(item: S3Item, destination: URL)] = []
+        var seen = Set<String>()
         for item in selected where item.kind == .object {
-            let destination = directory.appendingPathComponent(S3Key.safeLocalName(item.displayName))
+            guard !item.key.hasSuffix("/") else { continue }
+            seen.insert(item.key)
+            downloads.append((
+                item,
+                directory.appendingPathComponent(S3Key.safeLocalName(item.displayName))
+            ))
+        }
+
+        for folder in selected where folder.kind == .folder {
+            let folderPrefix = folder.key.hasSuffix("/") ? folder.key : folder.key + "/"
+            do {
+                let objects = try await service.listAllObjects(
+                    account: account, secret: secret, bucket: bucket, prefix: folderPrefix
+                )
+                let root = directory.appendingPathComponent(
+                    S3Key.safeLocalName(folder.displayName), isDirectory: true
+                )
+                for object in objects where object.kind == .object && !object.key.hasSuffix("/") {
+                    guard seen.insert(object.key).inserted else { continue }
+                    let relative = String(object.key.dropFirst(folderPrefix.count))
+                    let safeRelative = S3Key.safeRelativePath(relative)
+                    guard !safeRelative.isEmpty else { continue }
+                    downloads.append((object, root.appendingPathComponent(safeRelative)))
+                }
+            } catch {
+                setError(error)
+                return
+            }
+        }
+
+        for download in downloads {
             transfers.enqueueDownload(
-                account: account, secret: secret, bucket: bucket, key: item.key,
-                size: item.size ?? 0, to: destination
+                account: account, secret: secret, bucket: bucket, key: download.item.key,
+                size: download.item.size ?? 0, to: download.destination
             )
         }
         onTransferChange?()
@@ -934,10 +969,48 @@ final class BrowserModel {
             return
         }
         isBusy = true
-        status = "Deleting \(selected.count) object\(selected.count == 1 ? "" : "s")…"
+        status = "Preparing to delete…"
+        onChromeChange?()
+
+        var targets: [S3Item] = []
+        var seen = Set<String>()
+        var expandedPrefixes: [String] = []
+        for item in selected where item.kind == .object {
+            guard seen.insert(item.key).inserted else { continue }
+            targets.append(item)
+        }
+        for folder in selected where folder.kind == .folder {
+            let folderPrefix = folder.key.hasSuffix("/") ? folder.key : folder.key + "/"
+            expandedPrefixes.append(folderPrefix)
+            do {
+                let objects = try await service.listAllObjects(
+                    account: account, secret: secret, bucket: bucket, prefix: folderPrefix
+                )
+                for object in objects where object.kind == .object && !object.key.hasSuffix("/") {
+                    guard seen.insert(object.key).inserted else { continue }
+                    targets.append(object)
+                }
+                if seen.insert(folderPrefix).inserted {
+                    targets.append(S3Item(key: folderPrefix, kind: .object))
+                }
+            } catch {
+                isBusy = false
+                setError(error)
+                return
+            }
+        }
+
+        guard !targets.isEmpty else {
+            isBusy = false
+            status = "Ready"
+            onChromeChange?()
+            return
+        }
+
+        status = "Deleting \(targets.count) object\(targets.count == 1 ? "" : "s")…"
         onChromeChange?()
         let results = await withTaskGroup(of: (String, String?).self) { group in
-            for item in selected where item.kind == .object {
+            for item in targets {
                 group.addTask { [service, account, secret, bucket] in
                     do {
                         try await service.delete(
@@ -963,6 +1036,10 @@ final class BrowserModel {
             }
         }
         await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
+        for expandedPrefix in expandedPrefixes {
+            await service.invalidateListing(account: account.id, bucket: bucket, prefix: expandedPrefix)
+        }
+        folderStats.invalidateBucket(accountID: account.id, bucket: bucket)
         await reload(useCache: false)
         if !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")
@@ -996,6 +1073,7 @@ final class BrowserModel {
             try await service.createFolder(account: account, secret: secret, bucket: bucket, prefix: prefix, name: clean)
             appendLog("Created folder \(prefix + clean)/")
             await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
+            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
             await reload(useCache: false)
         } catch {
             setError(error)
@@ -1025,6 +1103,7 @@ final class BrowserModel {
             )
             try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
             appendLog("Renamed \(item.key) to \(destination)")
+            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
             await reload(useCache: false)
         } catch {
             setError(error)
@@ -1075,6 +1154,9 @@ final class BrowserModel {
             }
         }
         folderStats.invalidate(accountID: account.id, bucket: toBucket, prefix: toPrefix)
+        if move {
+            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
+        }
         await reload(useCache: false)
         if !failures.isEmpty {
             errorMessage = failures.joined(separator: "\n")

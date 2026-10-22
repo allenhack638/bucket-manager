@@ -27,9 +27,10 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
 - **Folder sizes and dates** — recursive prefix totals shown for every folder row
   in the current listing, with cached/refreshing/partial/unavailable states and
   sorting by the computed values.
-- **Operations** — upload files, upload a folder tree, download, open, delete,
-  rename (copy + delete), copy/move to another bucket/prefix, cut/copy/paste,
-  create folder, new/delete bucket.
+- **Operations** — upload files, upload a folder tree, download objects or whole
+  folders recursively, delete objects or whole folders recursively, open, rename
+  (copy + delete), copy/move to another bucket/prefix, cut/copy/paste, create
+  folder, new/delete bucket.
 - **Transfer queue** — real byte progress for uploads and downloads, speed,
   concurrency cap of 4, running/queued/stopped/failed filters, start/stop/cancel,
   retry, open in Finder.
@@ -223,7 +224,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 64 dialog/model checks plus 76 end-to-end checks. The E2E
+The current suite is 66 dialog/model checks plus 79 end-to-end checks. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
 folder markers returned in `Contents`, AccessDenied, deliberately delayed
 responses, folder creation (`PUT .../name/`), metadata request counts, the 60s

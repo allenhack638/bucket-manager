@@ -717,7 +717,7 @@ final class BrowserViewController: NSViewController {
     }
 
     @objc func downloadSelected() {
-        guard let item = model.selectedItem, item.kind == .object else { return }
+        guard model.selectedItem != nil else { return }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -725,17 +725,20 @@ final class BrowserViewController: NSViewController {
         panel.prompt = "Download Here"
         panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         guard panel.runModal() == .OK, let directory = panel.url else { return }
-        model.download(items: model.selectedItems, to: directory)
+        Task { await model.download(items: model.selectedItems, to: directory) }
     }
 
     @objc func deleteSelected() {
         let items = model.selectedItems
         guard !items.isEmpty else { return }
+        let hasFolders = items.contains { $0.kind == .folder }
         let alert = NSAlert()
         alert.messageText = items.count == 1
             ? "Delete \(items[0].displayName)?"
-            : "Delete \(items.count) objects?"
-        alert.informativeText = "This removes the object(s) from \(model.currentPath). This cannot be undone."
+            : "Delete \(items.count) selected items?"
+        alert.informativeText = hasFolders
+            ? "This removes the selected objects and everything inside selected folders from \(model.currentPath). This cannot be undone."
+            : "This removes the object(s) from \(model.currentPath). This cannot be undone."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Delete")
         alert.addButton(withTitle: "Cancel")

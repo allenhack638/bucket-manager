@@ -90,6 +90,10 @@ enum UITest {
         check(marker.displayName == "new-folder", "folder markers hide the trailing slash")
         check(S3Key.safeLocalName("..") == "_", "download names cannot escape the directory")
         check(S3Key.safeLocalName("a/b") == "a_b", "download names cannot contain separators")
+        check(S3Key.safeRelativePath("photos/2026/a.jpg") == "photos/2026/a.jpg",
+              "recursive downloads preserve safe nested paths")
+        check(S3Key.safeRelativePath("../../etc/passwd") == "_/_/etc/passwd",
+              "recursive downloads cannot escape the destination")
         check(S3Key.parentPrefix(of: "folder/sub/item.txt") == "folder/sub/",
               "object keys resolve to their parent prefix")
         check(S3Key.parentPrefix(of: "folder/sub/") == "folder/",

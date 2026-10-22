@@ -478,7 +478,7 @@ enum E2E {
                 let directory = FileManager.default.temporaryDirectory
                     .appendingPathComponent("s3c-e2e-\(UUID().uuidString)", isDirectory: true)
                 try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                model.download(items: [readme], to: directory)
+                await model.download(items: [readme], to: directory)
                 let target = directory.appendingPathComponent("readme.txt")
                 var downloaded = false
                 for _ in 0..<80 {
@@ -492,6 +492,40 @@ enum E2E {
                 }
                 try? FileManager.default.removeItem(at: directory)
             }
+
+            let folderDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("s3c-e2e-folder-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: folderDirectory, withIntermediateDirectories: true)
+            await model.download(items: [S3Item(key: "photos/2026/", kind: .folder)], to: folderDirectory)
+            let nested = folderDirectory.appendingPathComponent("2026")
+            let nestedB = nested.appendingPathComponent("b.jpg")
+            let nestedC = nested.appendingPathComponent("c.jpg")
+            var folderDownloaded = false
+            for _ in 0..<80 {
+                if FileManager.default.fileExists(atPath: nestedB.path),
+                   FileManager.default.fileExists(atPath: nestedC.path) {
+                    folderDownloaded = true
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 50_000_000)
+            }
+            check(folderDownloaded, "folder download recreates nested object paths")
+            try? FileManager.default.removeItem(at: folderDirectory)
+
+            model.openLocation(accountID: account.id, bucket: "alpha", prefix: "photos/")
+            _ = await waitUntil { !model.isBusy }
+            if let folder = model.items.first(where: { $0.key == "photos/2026/" }) {
+                await resetStats()
+                await model.delete(items: [folder])
+                let deleteCounts = await stats()
+                check((deleteCounts["delete"] ?? 0) >= 2,
+                      "recursive delete removes objects inside the folder")
+                check(!model.isBusy, "recursive delete completes")
+            } else {
+                check(false, "nested folder is listed for recursive delete")
+            }
+            model.openLocation(accountID: account.id, bucket: "alpha", prefix: "")
+            _ = await waitUntil { !model.isBusy }
 
             let uploadURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("e2e-upload-\(UUID().uuidString).txt")

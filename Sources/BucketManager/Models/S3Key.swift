@@ -15,4 +15,10 @@ enum S3Key {
             .replacingOccurrences(of: "/", with: "_")
             .replacingOccurrences(of: ":", with: "_")
     }
+
+    static func safeRelativePath(_ key: String) -> String {
+        key.split(separator: "/", omittingEmptySubsequences: true)
+            .map { safeLocalName(String($0)) }
+            .joined(separator: "/")
+    }
 }

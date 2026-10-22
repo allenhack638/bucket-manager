@@ -319,7 +319,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return data, []
         if prefix == "paged/":
             return [(k, n) for k, n in data if k.startswith("paged/")], []
-        if prefix in ("photos/", "deniedfolder/", "marker/", "folder/"):
+        if prefix in ("deniedfolder/", "marker/", "folder/") or prefix.startswith("photos/"):
             return [(k, n) for k, n in data if k.startswith(prefix)], []
         return [], []
 
