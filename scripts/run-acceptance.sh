@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build >/dev/null
+swift build -Xswiftc -Xfrontend -Xswiftc -disable-round-trip-debug-types >/dev/null
 
 LOGDIR=$(mktemp -d /tmp/bm-acceptance-logs.XXXXXX)
 METRICS=$(mktemp /tmp/bm-acceptance-metrics.XXXXXX)

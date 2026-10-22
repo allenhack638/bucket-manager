@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build >/dev/null
+swift build -Xswiftc -Xfrontend -Xswiftc -disable-round-trip-debug-types >/dev/null
 LOG=/tmp/s3c-e2e-server.log
 rm -f "$LOG"
 STATE=$(mktemp /tmp/s3c-multipart-state.XXXXXX)
