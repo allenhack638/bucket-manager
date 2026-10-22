@@ -13,6 +13,7 @@ enum E2E {
 
     @MainActor
     static func run(port: String) {
+        setvbuf(stdout, nil, _IONBF, 0)
         Task { @MainActor in
             let base = URL(string: "http://127.0.0.1:\(port)")!
             var passed = 0
