@@ -447,6 +447,16 @@ final class BrowserModel {
         onFilesChange?()
         onChromeChange?()
 
+        if let scopedBucket = account.bucket?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !scopedBucket.isEmpty {
+            buckets = [S3Bucket(name: scopedBucket, creationDate: nil)]
+            isLoadingBuckets = false
+            status = "Ready"
+            onTreeChange?()
+            onChromeChange?()
+            return
+        }
+
         Task {
             await loadBuckets(account: account, requestID: requestID, useCache: true)
         }
@@ -469,7 +479,13 @@ final class BrowserModel {
             guard requestID == bucketRequestID,
                   selectedAccount?.id == account.id else { return }
             isLoadingBuckets = false
-            bucketError = S3ErrorPresenter.message(for: error)
+            let detail = S3ErrorPresenter.message(for: error)
+            if account.bucket?.isEmpty != false,
+               detail.localizedCaseInsensitiveContains("denied") || detail.localizedCaseInsensitiveContains("not entitled") {
+                bucketError = "This key cannot list all buckets. Edit the account and set its bucket name."
+            } else {
+                bucketError = detail
+            }
             AppLog.shared.error("List buckets failed: \(String(describing: error))")
             onTreeChange?()
             onChromeChange?()
@@ -562,6 +578,16 @@ final class BrowserModel {
 
     func refreshBuckets() async {
         guard let account = selectedAccount else { return }
+        if let scopedBucket = account.bucket?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !scopedBucket.isEmpty {
+            buckets = [S3Bucket(name: scopedBucket, creationDate: nil)]
+            isLoadingBuckets = false
+            bucketError = nil
+            if selectedBucket == nil { status = "Ready" }
+            onTreeChange?()
+            onChromeChange?()
+            return
+        }
         bucketRequestID += 1
         let requestID = bucketRequestID
         isLoadingBuckets = true

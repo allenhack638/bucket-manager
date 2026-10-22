@@ -53,9 +53,13 @@ enum UITest {
         compatible.testSave()
         check(saved == nil && !compatible.testErrorText.isEmpty, "compatible account requires an endpoint")
 
-        compatible.testFill(name: "Compatible", access: "KEY", secret: UUID().uuidString, region: "us-east-1", endpoint: "https://s3.example.com", kind: .compatible)
+        compatible.testFill(
+            name: "Compatible", access: "KEY", secret: UUID().uuidString, region: "us-east-1",
+            endpoint: "https://s3.example.com", kind: .compatible, bucket: "example-bucket"
+        )
         compatible.testSave()
         check(saved?.0.endpoint == "https://s3.example.com", "compatible endpoint is saved")
+        check(saved?.0.bucket == "example-bucket", "bucket-scoped account saves its bucket")
 
         let existing = Account(
             displayName: "Existing",
@@ -85,14 +89,29 @@ enum UITest {
         )
         check(editSheet.testEndpointControlsVisible,
               "editing a compatible account exposes endpoint controls")
+        check(editSheet.testBucketControlVisible,
+              "editing a compatible account exposes the bucket field")
         editSheet.testFill(
             name: "Existing", access: "KEY", secret: "", region: "us-east-1",
-            endpoint: "https://new.example.com", kind: .compatible
+            endpoint: "https://new.example.com", kind: .compatible, bucket: "new-bucket"
         )
         editSheet.testSave()
         check(edited?.0.endpoint == "https://new.example.com",
               "editing an account saves the changed endpoint")
+        check(edited?.0.bucket == "new-bucket", "editing an account saves the bucket")
         check(edited?.1 == nil, "blank secret keeps the existing Keychain secret")
+
+        let scopedAccount = Account(
+            displayName: "Bucket Scoped", accessKeyID: "KEY", kind: .compatible,
+            endpoint: "https://s3.example.com", bucket: "only-bucket"
+        )
+        let scopedStore = AccountStore(inMemoryAccounts: [scopedAccount])
+        let scopedModel = BrowserModel(accounts: scopedStore)
+        scopedModel.selectAccount(scopedAccount)
+        check(scopedModel.buckets.map(\.name) == ["only-bucket"],
+              "bucket-scoped account skips ListBuckets")
+        check(!scopedModel.isLoadingBuckets,
+              "bucket-scoped account does not wait for ListBuckets")
 
         let typeSheet = AddAccountWindowController(
             account: existing, secret: UUID().uuidString,

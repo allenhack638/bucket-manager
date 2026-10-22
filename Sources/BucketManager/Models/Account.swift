@@ -21,6 +21,7 @@ struct Account: Identifiable, Codable, Hashable, Sendable {
     var kind: Kind = .amazonS3
     var region: String = "us-east-1"
     var endpoint: String?
+    var bucket: String?
     var usePathStyle: Bool = false
     var useSSL: Bool = true
     var createdAt: Date = Date()
@@ -32,6 +33,7 @@ struct Account: Identifiable, Codable, Hashable, Sendable {
         kind: Kind = .amazonS3,
         region: String = "us-east-1",
         endpoint: String? = nil,
+        bucket: String? = nil,
         usePathStyle: Bool = false,
         useSSL: Bool = true,
         createdAt: Date = Date()
@@ -42,13 +44,14 @@ struct Account: Identifiable, Codable, Hashable, Sendable {
         self.kind = kind
         self.region = region
         self.endpoint = endpoint
+        self.bucket = bucket
         self.usePathStyle = usePathStyle
         self.useSSL = useSSL
         self.createdAt = createdAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, displayName, accessKeyID, kind, region, endpoint, usePathStyle, useSSL, createdAt
+        case id, displayName, accessKeyID, kind, region, endpoint, bucket, usePathStyle, useSSL, createdAt
     }
 
     init(from decoder: Decoder) throws {
@@ -58,6 +61,7 @@ struct Account: Identifiable, Codable, Hashable, Sendable {
         accessKeyID = try c.decode(String.self, forKey: .accessKeyID)
         region = try c.decodeIfPresent(String.self, forKey: .region) ?? "us-east-1"
         endpoint = try c.decodeIfPresent(String.self, forKey: .endpoint)
+        bucket = try c.decodeIfPresent(String.self, forKey: .bucket)
         usePathStyle = try c.decodeIfPresent(Bool.self, forKey: .usePathStyle) ?? false
         useSSL = try c.decodeIfPresent(Bool.self, forKey: .useSSL) ?? true
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()

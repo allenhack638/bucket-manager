@@ -14,6 +14,7 @@ final class AddAccountWindowController: NSWindowController {
     private let secretField = NSSecureTextField()
     private let regionField = NSTextField(string: "us-east-1")
     private let endpointField = NSTextField()
+    private let bucketField = NSTextField()
     private let sslCheck = NSButton(checkboxWithTitle: "Use secure transfer (SSL/TLS)", target: nil, action: nil)
     private let pathStyleCheck = NSButton(checkboxWithTitle: "Use path-style addressing", target: nil, action: nil)
     private let errorLabel = NSTextField(labelWithString: "")
@@ -23,6 +24,8 @@ final class AddAccountWindowController: NSWindowController {
     private let formStack = NSStackView()
     private var endpointRow: NSView?
     private var endpointHelpRow: NSView?
+    private var bucketRow: NSView?
+    private var bucketHelpRow: NSView?
     private var pathStyleRow: NSView?
     private var keyMonitor: Any?
 
@@ -40,7 +43,7 @@ final class AddAccountWindowController: NSWindowController {
         self.onSave = onSave
         self.onCancel = onCancel
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 500),
+            contentRect: NSRect(x: 0, y: 0, width: 640, height: 600),
             styleMask: [.titled],
             backing: .buffered,
             defer: false
@@ -59,7 +62,7 @@ final class AddAccountWindowController: NSWindowController {
         guard let window else { return }
         let parentRect = parent.contentLayoutRect
         let width = min(640, max(520, parentRect.width - 40))
-        let height = min(500, max(380, parentRect.height - 60))
+        let height = min(600, max(420, parentRect.height - 40))
         window.setContentSize(NSSize(width: width, height: height))
         parent.beginSheet(window)
         window.makeKey()
@@ -202,6 +205,13 @@ final class AddAccountWindowController: NSWindowController {
         addRow(endpoint, help: nil)
         addRawRow(endpointHelp)
 
+        let bucket = formRow("Bucket (optional):", bucketField)
+        let bucketHelp = helpRow("Required for bucket-scoped keys, such as Backblaze B2 keys that cannot list all buckets.")
+        bucketRow = bucket
+        bucketHelpRow = bucketHelp
+        addRow(bucket, help: nil)
+        addRawRow(bucketHelp)
+
         let pathStyle = formRow("Addressing:", pathStyleCheck)
         pathStyleRow = pathStyle
         addRow(pathStyle, help: nil)
@@ -282,7 +292,7 @@ final class AddAccountWindowController: NSWindowController {
     }
 
     private func configureFields() {
-        for field in [nameField, accessField, regionField, endpointField] {
+        for field in [nameField, accessField, regionField, endpointField, bucketField] {
             style(field)
         }
         style(secretField)
@@ -291,6 +301,7 @@ final class AddAccountWindowController: NSWindowController {
         accessField.placeholderString = "EXAMPLE_ACCESS_KEY"
         secretField.placeholderString = existing == nil ? "Secret access key" : "Leave blank to keep existing"
         endpointField.placeholderString = "https://s3.example.com"
+        bucketField.placeholderString = "bucket-name (optional)"
 
         typePopup.addItems(withTitles: Account.Kind.allCases.map(\.displayName))
         typePopup.font = Theme.Font.field
@@ -309,10 +320,11 @@ final class AddAccountWindowController: NSWindowController {
         secretField.setAccessibilityLabel("Secret Access Key")
         regionField.setAccessibilityLabel("Region")
         endpointField.setAccessibilityLabel("Custom endpoint")
+        bucketField.setAccessibilityLabel("Bucket name")
         sslCheck.setAccessibilityLabel("Use secure transfer SSL TLS")
         pathStyleCheck.setAccessibilityLabel("Use path-style addressing")
 
-        for field in [nameField, accessField, regionField, endpointField, secretField] as [NSTextField] {
+        for field in [nameField, accessField, regionField, endpointField, bucketField, secretField] as [NSTextField] {
             field.target = self
             field.action = #selector(returnKey)
         }
@@ -363,6 +375,7 @@ final class AddAccountWindowController: NSWindowController {
         accessField.stringValue = account.accessKeyID
         regionField.stringValue = account.region
         endpointField.stringValue = account.endpoint ?? ""
+        bucketField.stringValue = account.bucket ?? ""
         sslCheck.state = account.useSSL ? .on : .off
         pathStyleCheck.state = account.usePathStyle ? .on : .off
         if let index = Account.Kind.allCases.firstIndex(of: account.kind) {
@@ -383,6 +396,8 @@ final class AddAccountWindowController: NSWindowController {
         let compatible = selectedKind == .compatible
         endpointRow?.isHidden = !compatible
         endpointHelpRow?.isHidden = !compatible
+        bucketRow?.isHidden = !compatible
+        bucketHelpRow?.isHidden = !compatible
         pathStyleRow?.isHidden = !compatible
         formStack.needsLayout = true
     }
@@ -407,6 +422,10 @@ final class AddAccountWindowController: NSWindowController {
             } catch {
                 return fail(error.localizedDescription)
             }
+            let bucket = bucketField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if bucket.contains("/") {
+                return fail("Bucket name must not contain /.")
+            }
         }
         errorLabel.stringValue = ""
         return true
@@ -425,6 +444,8 @@ final class AddAccountWindowController: NSWindowController {
         account.kind = selectedKind
         account.region = regionField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         account.endpoint = selectedKind == .compatible ? endpoint : nil
+        let bucket = bucketField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        account.bucket = selectedKind == .compatible && !bucket.isEmpty ? bucket : nil
         account.useSSL = sslCheck.state == .on
         account.usePathStyle = pathStyleCheck.state == .on
         return account
@@ -478,13 +499,15 @@ final class AddAccountWindowController: NSWindowController {
         secret: String,
         region: String,
         endpoint: String,
-        kind: Account.Kind
+        kind: Account.Kind,
+        bucket: String = ""
     ) {
         nameField.stringValue = name
         accessField.stringValue = access
         secretField.stringValue = secret
         regionField.stringValue = region
         endpointField.stringValue = endpoint
+        bucketField.stringValue = bucket
         if let index = Account.Kind.allCases.firstIndex(of: kind) {
             typePopup.selectItem(at: index)
         }
@@ -498,6 +521,9 @@ final class AddAccountWindowController: NSWindowController {
         endpointRow?.isHidden == false
             && endpointHelpRow?.isHidden == false
             && pathStyleRow?.isHidden == false
+    }
+    var testBucketControlVisible: Bool {
+        bucketRow?.isHidden == false && bucketHelpRow?.isHidden == false
     }
     #endif
 
@@ -799,6 +825,7 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
         Type: \(account.kind.displayName)
         Region: \(account.region)
         Endpoint: \(account.endpoint ?? "Amazon S3")
+        Bucket: \(account.bucket ?? "all buckets")
         Path-style addressing: \(account.usePathStyle ? "yes" : "no")
         """
         alert.addButton(withTitle: "OK")

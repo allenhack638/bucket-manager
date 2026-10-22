@@ -21,6 +21,8 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
 - **Account picker → bucket sidebar → folder browser.** The sidebar lists buckets at
   bucket-level granularity for the active account; opening one browses its folders
   and objects in the right pane. Columns are resizable by dragging header dividers.
+  Accounts with bucket-scoped keys (for example Backblaze B2) can set a bucket name
+  in Edit Account to skip `ListBuckets`.
 - **Object browser** — a clickable breadcrumb (`/ bucket/ folder/ current/`), Name,
   Size, Type, Last Modified, Storage Class; multi-select, per-row checkboxes,
   sortable headers, filter/search, and resizable columns.
@@ -235,7 +237,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-sheet accounts --out accounts.png --size 760x460
 ```
 
-The current suite is 79 dialog/model checks plus 79 end-to-end checks. The
+The current suite is 84 dialog/model checks plus 79 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,

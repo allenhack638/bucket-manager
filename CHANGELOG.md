@@ -23,3 +23,4 @@
 - Send small uploads with an explicit Content-Length for stricter S3-compatible servers.
 - Fix custom endpoint and path-style controls staying hidden when editing S3-compatible accounts.
 - Add regression coverage for account edit, endpoint changes, type switching, update, and removal.
+- Support bucket-scoped credentials by letting accounts specify one bucket and skip ListBuckets.
