@@ -1,12 +1,12 @@
 import Foundation
 
 struct TransferTask: Identifiable, Sendable {
-    enum Direction: String, Sendable {
+    enum Direction: String, Codable, Sendable {
         case upload = "Upload"
         case download = "Download"
     }
 
-    enum Status: String, Sendable {
+    enum Status: String, Codable, Sendable {
         case queued = "Queued"
         case running = "Running"
         case paused = "Stopped"
@@ -20,6 +20,9 @@ struct TransferTask: Identifiable, Sendable {
     var bucket: String
     var key: String
     var localURL: URL
+    var accountID: UUID? = nil
+    var sourceModifiedAt: TimeInterval? = nil
+    var isRestored = false
     var size: Int64
     var bytesDone: Int64 = 0
     var status: Status = .queued

@@ -16,10 +16,11 @@ swift build >/dev/null
 LOGDIR=$(mktemp -d /tmp/bm-acceptance-logs.XXXXXX)
 METRICS=$(mktemp /tmp/bm-acceptance-metrics.XXXXXX)
 MULTIPART=$(mktemp /tmp/bm-acceptance-multipart.XXXXXX)
+TRANSFER_QUEUE=$(mktemp /tmp/bm-acceptance-transfer-queue.XXXXXX)
 SETTINGS_SUITE="BucketManagerAcceptanceSettings.$$"
-rm -f "$METRICS" "$MULTIPART"
+rm -f "$METRICS" "$MULTIPART" "$TRANSFER_QUEUE"
 cleanup_runtime() {
-  rm -rf "$LOGDIR" "$METRICS" "$MULTIPART"
+  rm -rf "$LOGDIR" "$METRICS" "$MULTIPART" "$TRANSFER_QUEUE"
   defaults delete "$SETTINGS_SUITE" >/dev/null 2>&1 || true
 }
 trap cleanup_runtime EXIT
@@ -29,6 +30,7 @@ run_acceptance() {
   S3C_METRICS_FILE="$METRICS" \
   S3C_MULTIPART_STATE="$MULTIPART" \
   S3C_LOG_SETTINGS_SUITE="$SETTINGS_SUITE" \
+  S3C_TRANSFER_QUEUE_STATE="$TRANSFER_QUEUE" \
     .build/debug/BucketManager --acceptance
 }
 

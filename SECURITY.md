@@ -16,6 +16,7 @@ Do not include real access keys, secrets, presigned URLs, or bucket contents.
 
 - Account metadata is stored in Application Support with `0600` permissions.
 - Multipart upload state contains upload IDs and ETags, no credentials, and is stored with `0600` permissions.
+- The persisted transfer queue contains account UUIDs, bucket/object keys, local paths, progress, and errors, never credentials. It is `0600`; account secrets are resolved from Keychain only when a restored task starts.
 - Secret access keys are stored in the macOS Keychain, never in JSON.
 - Secrets are read once per account per launch and cached in memory.
 - Logs never include secret access keys, authorization headers, signatures,

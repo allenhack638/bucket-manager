@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        model.flushTransfers()
         model.flushFolderStats()
     }
 

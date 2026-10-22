@@ -188,8 +188,11 @@ part ETags are written to `MultipartUploadStore` after each batch, so a paused,
 failed, or restarted upload can continue without re-sending completed parts.
 The state file is owner-only and contains no credentials. Cancel aborts the
 server-side upload; retry reuses the upload ID; a changed file invalidates and
-aborts the old session. The transfer queue itself is not persisted across app
-relaunches, so re-adding the same file/key resumes from the stored parts.
+aborts the old session. `TransferQueueStore` persists active queue tasks in an
+owner-only JSON file without secrets; running/queued tasks restore paused, failed
+tasks keep their error, downloads restart from the beginning, and missing or
+changed upload sources are marked failed. The account is resolved from
+`AccountStore` when a restored task starts.
 
 ### The queue
 
@@ -203,8 +206,14 @@ worker `Task`s. Each task has:
 
 Progress callbacks are hopped to the main actor and UI updates are throttled to
 about 10 per second. Speed is an exponentially smoothed bytes/second value.
-Stopping cancels the task and leaves it resumable-from-scratch; canceling also
-removes a partial download.
+Active tasks are persisted to `transfer-queue.json` (0600, no secrets) at most
+once every 400 ms and on quit. Relaunch restores queued/running tasks as paused
+and failed tasks as failed; uploads whose source is missing, resized, or has a
+different modification time are marked failed. Restored tasks resolve their
+account and Keychain secret only when started. Downloads restart from the
+beginning rather than using byte ranges and stream into a 0600 temporary file;
+the destination is replaced only after the received length is verified, so a
+failed/canceled download leaves any existing destination untouched.
 
 ---
 
@@ -308,6 +317,7 @@ AWS SDK for Swift → HTTPS → S3 endpoint
 | `Models/MultipartUploadRecord.swift` | persisted multipart session and part state |
 | `Models/LogRecord.swift` | log levels, categories, records, and settings |
 | `Services/MultipartUploadStore.swift` | owner-only JSON store for resumable parts |
+| `Services/TransferQueueStore.swift` | owner-only persisted queue tasks, no credentials |
 | `Services/LogStore.swift` | JSONL diagnostics/audit, redaction, rotation, retention |
 | `Services/RequestMetricsStore.swift` | per-account/bucket/operation counters |
 | `Services/AdminPasscode.swift` | Keychain verifier, authorization session, passcode prompts |
@@ -429,11 +439,10 @@ human taking screenshots.
 ## 12. Exercises
 
 1. Implement the **bucket policy / CORS / lifecycle** editors as JSON text editors.
-2. Persist the transfer queue itself so paused multipart uploads resume without re-adding the file.
-3. Implement **version deletion** and **restore** in the Versions tab.
-4. Replace the ad-hoc signature with a Developer ID or stable self-signed identity
+2. Implement **version deletion** and **restore** in the Versions tab.
+3. Replace the ad-hoc signature with a Developer ID or stable self-signed identity
    and verify the Keychain stops re-prompting across rebuilds.
-5. Add a UI test that focuses the Add Account name field, types, presses Return, and
+4. Add a UI test that focuses the Add Account name field, types, presses Return, and
    asserts the sheet closed — using the accessibility API.
 
 The code is deliberately small and direct: the goal is that each file can be read

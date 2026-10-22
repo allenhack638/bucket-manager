@@ -35,8 +35,10 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
   bucket/prefix, cut/copy/paste, create folder, new/delete bucket.
 - **Transfer queue** — real byte progress for uploads and downloads, multipart
   pause/resume, retry from completed parts, cancel with server-side abort, speed,
-  concurrency cap of 4, running/queued/stopped/failed filters, start/stop/cancel,
-  open in Finder.
+  a 0600 persisted queue that restores active tasks after relaunch, a concurrency
+  cap of 4, running/queued/stopped/failed filters, start/stop/cancel, and open in
+  Finder. Restored uploads validate source size and modification time; account
+  secrets are read from Keychain only when you start the task.
 - **Drag and drop** — drop files or folders from Finder onto the object table to
   upload them to the current prefix.
 - **Inspector tabs** — Tasks, Permissions (ACL), Headers, Tags, Properties, Preview,
@@ -193,6 +195,7 @@ Sources/BucketManager/
     S3Service                clients, listing, metadata, transfers, cache, multipart
     TransferQueue            queue, concurrency, progress, speed, resume/cancel
     MultipartUploadStore     resumable part state (0600 JSON)
+    TransferQueueStore       persisted active tasks (0600 JSON, no credentials)
     LogStore                 structured JSONL logs, rotation, retention, redaction
     RequestMetricsStore      per-account/bucket/operation request counters
     AdminPasscode            Keychain passcode verifier and authorization gate
@@ -266,7 +269,7 @@ S3C_APPEARANCE=dark .build/debug/BucketManager --snapshot dark.png --size 900x48
 .build/debug/BucketManager --snapshot-logs settings.png --size 1080x680 --tab settings
 ```
 
-The current suite is 112 dialog/model checks plus 128 end-to-end checks. The
+The current suite is 141 dialog/model checks plus 141 end-to-end checks. The
 optional acceptance harness adds a real S3-protocol pass and cleans up its test
 bucket/prefix. The E2E
 harness in `scripts/fake_s3.py` covers signed `ListBuckets`/`ListObjectsV2`,
@@ -292,9 +295,12 @@ headers, never the secret).
   invalidated by this app's own writes.
 - Uploads up to 16 MiB use a single explicit-length PUT. Larger uploads use
   multipart with 8 MiB parts, four concurrent parts, persisted part state,
-  pause/resume, retry, and abort-on-cancel. Paused state survives app restarts,
-  but the transfer queue itself does not: re-add the same file/key to resume.
-  Incomplete server-side uploads should be covered by a bucket lifecycle rule.
+  pause/resume, retry, and abort-on-cancel. Paused, queued, running, and failed
+  tasks are restored after relaunch as paused/failed with their account identity,
+  progress, and local file path. Uploads whose source disappeared or changed are
+  marked failed instead of being silently resumed. Incomplete server-side
+  uploads should be covered by a bucket lifecycle rule.
+- Downloads do not support byte-range resume. They stream to an owner-only temporary file, verify the received length when the server provides one, and replace the destination only on success; a completed response is never reported for a short body.
 - Cross-account copy/move is intentionally rejected; copy within one account works.
 - Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
   website, replication, CloudFront, sync, sharing wizard) are present but disabled.

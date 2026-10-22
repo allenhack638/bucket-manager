@@ -10,15 +10,27 @@ final class TransferQueue {
 
     private let service = S3Service.shared
     private let multipartStore: MultipartUploadStore
+    private let stateStore: TransferQueueStore
+    private let credentialProvider: ((UUID) -> (Account, String)?)?
     private let maxConcurrent = 4
     private var credentials: [UUID: (Account, String)] = [:]
     private var workTasks: [UUID: Task<Void, Never>] = [:]
     private var workGeneration: [UUID: Int] = [:]
     private var lastSample: [UUID: (at: Date, bytes: Int64)] = [:]
     private var lastEmit: Date = .distantPast
+    private var persistenceTask: Task<Void, Never>?
+    private var isDemoMode = false
+    private var isPumping = false
 
-    init(multipartStore: MultipartUploadStore = .shared) {
+    init(
+        multipartStore: MultipartUploadStore = .shared,
+        stateStore: TransferQueueStore = .shared,
+        credentialProvider: ((UUID) -> (Account, String)?)? = nil
+    ) {
         self.multipartStore = multipartStore
+        self.stateStore = stateStore
+        self.credentialProvider = credentialProvider
+        restorePersistedTasks()
     }
 
     var runningCount: Int { tasks.filter { $0.status == .running }.count }
@@ -30,11 +42,69 @@ final class TransferQueue {
     var doneBytes: Int64 { tasks.reduce(0) { $0 + $1.bytesDone } }
     var aggregateSpeed: Double { tasks.filter { $0.status == .running }.reduce(0) { $0 + $1.speed } }
 
+    private func restorePersistedTasks() {
+        tasks = stateStore.load().compactMap { record in
+            guard record.status != .completed, record.status != .canceled else { return nil }
+            var task = TransferTask(
+                direction: record.direction,
+                bucket: record.bucket,
+                key: record.key,
+                localURL: URL(fileURLWithPath: record.localPath),
+                size: record.size
+            )
+            task.id = record.id
+            task.accountID = record.accountID
+            task.sourceModifiedAt = record.fileModified
+            task.isRestored = true
+            task.speed = 0
+            task.startedAt = nil
+            task.finishedAt = nil
+            task.error = record.error
+            task.bytesDone = record.direction == .download ? 0 : min(max(0, record.bytesDone), record.size)
+            switch record.status {
+            case .queued, .running:
+                task.status = .paused
+            default:
+                task.status = record.status
+            }
+            if record.direction == .upload,
+               record.status == .queued || record.status == .running || record.status == .paused {
+                let attributes = try? FileManager.default.attributesOfItem(atPath: record.localPath)
+                let actualSize = (attributes?[.size] as? NSNumber)?.int64Value
+                let actualModified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970
+                if attributes == nil {
+                    task.status = .failed
+                    task.bytesDone = 0
+                    task.error = "Source file is no longer available; re-add it to upload."
+                } else if actualSize != record.size
+                            || (record.fileModified.flatMap { expected in
+                                actualModified.map { abs($0 - expected) > 0.5 }
+                            } ?? false) {
+                    task.status = .failed
+                    task.bytesDone = 0
+                    task.error = "Source file changed since the upload was queued; re-add it to upload."
+                }
+            }
+            return task
+        }
+    }
+
     // MARK: - Enqueue
 
     func enqueueUpload(account: Account, secret: String, bucket: String, key: String, url: URL) {
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attributes?[.size] as? NSNumber)?.int64Value ?? 0
         var task = TransferTask(direction: .upload, bucket: bucket, key: key, localURL: url, size: size)
+        task.accountID = account.id
+        task.sourceModifiedAt = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970
+        if attributes == nil {
+            task.status = .failed
+            task.error = "Source file is not readable; re-add it to upload."
+            tasks.append(task)
+            log("Could not queue upload \(key): source file is unavailable")
+            change()
+            return
+        }
         task.status = .queued
         tasks.append(task)
         credentials[task.id] = (account, secret)
@@ -45,6 +115,7 @@ final class TransferQueue {
 
     func enqueueDownload(account: Account, secret: String, bucket: String, key: String, size: Int64, to url: URL) {
         var task = TransferTask(direction: .download, bucket: bucket, key: key, localURL: url, size: size)
+        task.accountID = account.id
         task.status = .queued
         tasks.append(task)
         credentials[task.id] = (account, secret)
@@ -56,6 +127,7 @@ final class TransferQueue {
     // MARK: - Demo data (snapshot/self-test only)
 
     func seedDemoTasks() {
+        isDemoMode = true
         let now = Date()
         let samples: [(String, Int64, Double, TransferTask.Status, Double)] = [
             ("Uploading file /Users/me/Pictures/IMG_7089.JPG to photos/IMG_7089.JPG", 4_372_142, 0.7842, .running, 1_930_000),
@@ -92,7 +164,6 @@ final class TransferQueue {
             tasks[index].status = .paused
             tasks[index].speed = 0
             workTasks[id]?.cancel()
-            workTasks[id] = nil
             log("Stopped \(tasks[index].key)")
             audit("transfer.paused", task: tasks[index], account: credentials[id]?.0, outcome: "success")
         } else if tasks[index].status == .queued {
@@ -113,8 +184,8 @@ final class TransferQueue {
         let work = workTasks[id]
         work?.cancel()
         workTasks[id] = nil
-        workGeneration[id] = (workGeneration[id] ?? 0) + 1
-        if task.direction == .download { try? FileManager.default.removeItem(at: task.localURL) }
+        workGeneration[id] = nil
+        lastSample[id] = nil
         self.credentials[id] = nil
         audit("transfer.canceled", task: task, account: credentials?.0, outcome: "success")
         if task.direction == .upload, let credentials {
@@ -151,7 +222,7 @@ final class TransferQueue {
             switch tasks[index].status {
             case .paused, .failed:
                 tasks[index].status = .queued
-                tasks[index].bytesDone = 0
+                if tasks[index].direction == .download { tasks[index].bytesDone = 0 }
                 tasks[index].error = nil
                 tasks[index].startedAt = nil
                 tasks[index].finishedAt = nil
@@ -167,7 +238,7 @@ final class TransferQueue {
         guard let index = index(of: id),
               tasks[index].status == .failed || tasks[index].status == .paused else { return }
         tasks[index].status = .queued
-        tasks[index].bytesDone = 0
+        if tasks[index].direction == .download { tasks[index].bytesDone = 0 }
         tasks[index].error = nil
         tasks[index].startedAt = nil
         tasks[index].finishedAt = nil
@@ -177,17 +248,62 @@ final class TransferQueue {
 
     func clearFinished() {
         let finished = tasks.filter { $0.status == .completed || $0.status == .canceled }
-        for task in finished { credentials[task.id] = nil }
+        for task in finished {
+            credentials[task.id] = nil
+            clearRuntimeState(for: task.id)
+        }
         tasks.removeAll { $0.status == .completed || $0.status == .canceled }
         change()
+    }
+
+    func flushPersistence() {
+        persistenceTask?.cancel()
+        persistenceTask = nil
+        guard !isDemoMode else { return }
+        let records = tasks.compactMap { task -> PersistedTransferTask? in
+            guard let accountID = task.accountID else { return nil }
+            guard task.status != .completed, task.status != .canceled else { return nil }
+            let persistedStatus: TransferTask.Status
+            switch task.status {
+            case .running, .queued: persistedStatus = .paused
+            default: persistedStatus = task.status
+            }
+            return PersistedTransferTask(
+                id: task.id,
+                accountID: accountID,
+                direction: task.direction,
+                bucket: task.bucket,
+                key: task.key,
+                localPath: task.localURL.path,
+                size: task.size,
+                bytesDone: task.direction == .download ? 0 : task.bytesDone,
+                status: persistedStatus,
+                error: task.error.map { LogRedactor.message($0) },
+                fileModified: task.sourceModifiedAt
+            )
+        }
+        stateStore.save(records)
+    }
+
+    private func schedulePersistence() {
+        guard !isDemoMode, persistenceTask == nil else { return }
+        persistenceTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.flushPersistence()
+        }
     }
 
     // MARK: - Pumping
 
     private func pump() {
+        guard !isPumping else { return }
+        isPumping = true
+        defer { isPumping = false }
         var running = tasks.filter { $0.status == .running }.count
         for index in tasks.indices where tasks[index].status == .queued {
             guard running < maxConcurrent else { break }
+            guard workTasks[tasks[index].id] == nil else { continue }
             running += 1
             start(at: index)
         }
@@ -199,8 +315,12 @@ final class TransferQueue {
         let bucket = tasks[index].bucket
         let key = tasks[index].key
         let url = tasks[index].localURL
+        guard workTasks[id] == nil else { return }
         let generation = (workGeneration[id] ?? 0) + 1
         workGeneration[id] = generation
+        if let accountID = tasks[index].accountID, let provider = credentialProvider {
+            credentials[id] = provider(accountID)
+        }
         guard let (account, secret) = credentials[id] else {
             markFailed(
                 id,
@@ -210,11 +330,29 @@ final class TransferQueue {
             return
         }
 
+        if direction == .upload, tasks[index].isRestored {
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+            let actualSize = (attributes?[.size] as? NSNumber)?.int64Value
+            let actualModified = (attributes?[.modificationDate] as? Date)?.timeIntervalSince1970
+            let modifiedChanged = tasks[index].sourceModifiedAt.flatMap { expected in
+                actualModified.map { abs($0 - expected) > 0.5 }
+            } ?? false
+            if attributes == nil || actualSize != tasks[index].size || modifiedChanged {
+                markFailed(
+                    id,
+                    message: "Source file changed before the upload started; re-add it.",
+                    generation: generation
+                )
+                return
+            }
+        }
+
         tasks[index].status = .running
         tasks[index].startedAt = Date()
         tasks[index].error = nil
         lastSample[id] = (Date(), 0)
         log("\(direction.rawValue) started: \(key)")
+        change()
 
         workTasks[id] = Task {
             do {
@@ -285,6 +423,7 @@ final class TransferQueue {
             outcome: "success"
         )
         workTasks[id] = nil
+        workGeneration[id] = nil
         credentials[id] = nil
         lastSample[id] = nil
         change()
@@ -312,6 +451,8 @@ final class TransferQueue {
         log("Failed \(tasks[index].key): \(message)")
         audit("transfer.failed", task: tasks[index], account: credentials[id]?.0, outcome: "failure")
         workTasks[id] = nil
+        workGeneration[id] = nil
+        lastSample[id] = nil
         change()
         pump()
     }
@@ -320,7 +461,16 @@ final class TransferQueue {
         tasks.firstIndex { $0.id == id }
     }
 
-    private func change() { onChange?() }
+    private func change() {
+        onChange?()
+        schedulePersistence()
+    }
+
+    private func clearRuntimeState(for id: UUID) {
+        workGeneration[id] = nil
+        lastSample[id] = nil
+        workTasks[id] = nil
+    }
 
     private func audit(_ event: String, task: TransferTask, account: Account?, outcome: String) {
         LogStore.shared.audit(

@@ -31,6 +31,7 @@ enum S3ServiceError: Error, LocalizedError {
     case missingETag
     case incompleteMultipartUpload
     case shortRead
+    case incompleteDownload(expected: Int64, received: Int64)
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +42,8 @@ enum S3ServiceError: Error, LocalizedError {
         case .missingETag: return "The server did not return an ETag for an uploaded part."
         case .incompleteMultipartUpload: return "The multipart upload is missing one or more parts."
         case .shortRead: return "The local file changed while it was being uploaded."
+        case .incompleteDownload(let expected, let received):
+            return "The download ended after \(received) of \(expected) bytes."
         }
     }
 }
@@ -550,15 +553,15 @@ actor S3Service {
 
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if !fileManager.fileExists(atPath: url.path) {
-            fileManager.createFile(
-                atPath: url.path,
-                contents: nil,
-                attributes: [.posixPermissions: 0o600]
-            )
-        }
-        let handle = try FileHandle(forWritingTo: url)
-        try handle.truncate(atOffset: 0)
+        let temporaryURL = url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).part-\(UUID().uuidString)")
+        guard fileManager.createFile(
+            atPath: temporaryURL.path,
+            contents: nil,
+            attributes: [.posixPermissions: 0o600]
+        ) else { throw CocoaError(.fileWriteUnknown) }
+        defer { try? fileManager.removeItem(at: temporaryURL) }
+        let handle = try FileHandle(forWritingTo: temporaryURL)
         defer { try? handle.close() }
 
         var written: Int64 = 0
@@ -578,6 +581,16 @@ actor S3Service {
         case .noStream:
             throw S3ServiceError.emptyBody
         }
+        if let expected = output.contentLength.map(Int64.init), written != expected {
+            throw S3ServiceError.incompleteDownload(expected: expected, received: written)
+        }
+        try handle.close()
+        if fileManager.fileExists(atPath: url.path) {
+            _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
+        } else {
+            try fileManager.moveItem(at: temporaryURL, to: url)
+        }
+        try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private static let multipartThreshold: Int64 = 16 * 1024 * 1024

@@ -544,6 +544,199 @@ enum UITest {
             try? FileManager.default.removeItem(at: metricsURL)
             testDefaults.removePersistentDomain(forName: defaultsName)
 
+        let queueDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bm-queue-tests-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: queueDir, withIntermediateDirectories: true)
+        let queueSource = queueDir.appendingPathComponent("source.bin")
+        try? Data(repeating: 0x41, count: 100).write(to: queueSource)
+        let sourceModified = (try? FileManager.default.attributesOfItem(atPath: queueSource.path)[.modificationDate] as? Date)?
+            .timeIntervalSince1970
+        let queueAccount = Account(
+            displayName: "Queue Test",
+            accessKeyID: "QUEUEKEY",
+            kind: .compatible,
+            endpoint: "https://queue.example.test"
+        )
+        let queueStoreURL = queueDir.appendingPathComponent("transfer-queue.json")
+        let queueStore = TransferQueueStore(fileURL: queueStoreURL)
+        let validUpload = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .upload,
+            bucket: "alpha", key: "source.bin", localPath: queueSource.path,
+            size: 100, bytesDone: 20, status: .paused, error: nil,
+            fileModified: sourceModified
+        )
+        let runningUpload = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .upload,
+            bucket: "alpha", key: "running.bin", localPath: queueSource.path,
+            size: 100, bytesDone: 40, status: .running, error: nil
+        )
+        let queuedDownload = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .download,
+            bucket: "alpha", key: "download.bin", localPath: queueDir.appendingPathComponent("download.bin").path,
+            size: 200, bytesDone: 0, status: .queued, error: nil
+        )
+        let missingUpload = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .upload,
+            bucket: "alpha", key: "missing.bin", localPath: queueDir.appendingPathComponent("missing.bin").path,
+            size: 50, bytesDone: 10, status: .failed, error: "old failure"
+        )
+        let pausedMissing = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .upload,
+            bucket: "alpha", key: "paused-missing.bin", localPath: queueDir.appendingPathComponent("paused-missing.bin").path,
+            size: 50, bytesDone: 10, status: .paused, error: nil
+        )
+        let changedSize = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .upload,
+            bucket: "alpha", key: "changed-size.bin", localPath: queueSource.path,
+            size: 101, bytesDone: 5, status: .paused, error: nil,
+            fileModified: sourceModified
+        )
+        let sameSizeChanged = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .upload,
+            bucket: "alpha", key: "same-size-changed.bin", localPath: queueSource.path,
+            size: 100, bytesDone: 5, status: .paused, error: nil,
+            fileModified: sourceModified.map { $0 - 10 }
+        )
+        let completedTask = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .upload,
+            bucket: "alpha", key: "done.bin", localPath: queueSource.path,
+            size: 10, bytesDone: 10, status: .completed, error: nil
+        )
+        queueStore.save([validUpload, runningUpload, queuedDownload, missingUpload, pausedMissing, changedSize, sameSizeChanged, completedTask])
+        let queueMode = (try? FileManager.default.attributesOfItem(atPath: queueStoreURL.path)[.posixPermissions] as? NSNumber)?.intValue ?? 0
+        check(queueMode == 0o600, "queue state file is owner-only")
+
+        let restoredQueue = TransferQueue(stateStore: TransferQueueStore(fileURL: queueStoreURL), credentialProvider: nil)
+        check(restoredQueue.tasks.count == 7, "completed/canceled transfer tasks are not restored")
+        if let restoredRunning = restoredQueue.tasks.first(where: { $0.key == "running.bin" }) {
+            check(restoredRunning.status == .paused, "running transfer restores paused")
+        } else {
+            check(false, "running transfer restores paused")
+        }
+        if let restoredQueued = restoredQueue.tasks.first(where: { $0.key == "download.bin" }) {
+            check(restoredQueued.status == .paused, "queued transfer restores paused")
+            check(restoredQueued.accountID == queueAccount.id, "restored transfer keeps its account id")
+        } else {
+            check(false, "queued transfer restores paused")
+            check(false, "restored transfer keeps its account id")
+        }
+        if let restoredFailed = restoredQueue.tasks.first(where: { $0.key == "missing.bin" }) {
+            check(restoredFailed.status == .failed, "failed transfer keeps failed state")
+            check(restoredFailed.error == "old failure", "failed transfer keeps its error")
+        } else {
+            check(false, "failed transfer keeps failed state")
+            check(false, "failed transfer keeps its error")
+        }
+        if let restoredUpload = restoredQueue.tasks.first(where: { $0.key == "source.bin" }) {
+            check(restoredUpload.bytesDone == 20, "restored upload keeps completed bytes")
+            check(restoredUpload.status == .paused, "restored upload is paused")
+            check(restoredUpload.id == validUpload.id, "restored upload keeps its task id")
+        } else {
+            check(false, "restored upload keeps completed bytes")
+            check(false, "restored upload is paused")
+            check(false, "restored upload keeps its task id")
+        }
+        if let changed = restoredQueue.tasks.first(where: { $0.key == "changed-size.bin" }) {
+            check(changed.status == .failed, "changed upload source is not silently resumed")
+            check(changed.error?.contains("changed") == true, "changed upload source explains the failure")
+        } else {
+            check(false, "changed upload source is not silently resumed")
+            check(false, "changed upload source explains the failure")
+        }
+        if let sameSize = restoredQueue.tasks.first(where: { $0.key == "same-size-changed.bin" }) {
+            check(sameSize.status == .failed, "same-size edited upload is rejected by modification time")
+        } else {
+            check(false, "same-size edited upload is rejected by modification time")
+        }
+        if let missing = restoredQueue.tasks.first(where: { $0.key == "paused-missing.bin" }) {
+            check(missing.status == .failed, "missing upload source is not silently resumed")
+            check(missing.error?.isEmpty == false, "missing upload source gets an actionable error")
+        } else {
+            check(false, "missing upload source is not silently resumed")
+            check(false, "missing upload source gets an actionable error")
+        }
+        restoredQueue.flushPersistence()
+        let roundTrip = queueStore.load()
+        check(roundTrip.count == 7, "flushed queue omits completed tasks")
+        check(!roundTrip.contains { $0.key == "done.bin" }, "completed task is never persisted")
+        let queueText = (try? String(contentsOf: queueStoreURL, encoding: .utf8)) ?? ""
+        check(!queueText.contains(queueAccount.accessKeyID), "queue state never contains credentials")
+
+        let noProviderURL = queueDir.appendingPathComponent("no-provider.json")
+        let noProviderStore = TransferQueueStore(fileURL: noProviderURL)
+        noProviderStore.save([validUpload])
+        let noProviderQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: noProviderURL),
+            credentialProvider: nil
+        )
+        noProviderQueue.startAll()
+        check(noProviderQueue.tasks.first?.status == .failed,
+              "restored task without credentials fails safely")
+        check(noProviderQueue.tasks.first?.error?.lowercased().contains("credential") == true,
+              "restored task without credentials reports the cause")
+        check(noProviderQueue.tasks.first?.bytesDone == 20,
+              "retry preserves resumable upload progress")
+        noProviderQueue.flushPersistence()
+
+        let unreadableURL = queueDir.appendingPathComponent("does-not-exist.bin")
+        let unreadableQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: queueDir.appendingPathComponent("unreadable-queue.json")),
+            credentialProvider: nil
+        )
+        unreadableQueue.enqueueUpload(
+            account: queueAccount, secret: "unused", bucket: "alpha", key: "unreadable.bin", url: unreadableURL
+        )
+        check(unreadableQueue.tasks.first?.status == .failed,
+              "unreadable upload source is rejected at enqueue")
+        check(unreadableQueue.tasks.first?.error?.lowercased().contains("readable") == true,
+              "unreadable upload source has an actionable error")
+        unreadableQueue.flushPersistence()
+
+        let cancelPath = queueDir.appendingPathComponent("pre-existing-download.bin")
+        try? Data("keep me".utf8).write(to: cancelPath)
+        let cancelURL = queueDir.appendingPathComponent("cancel-download-queue.json")
+        let cancelStore = TransferQueueStore(fileURL: cancelURL)
+        cancelStore.save([
+            PersistedTransferTask(
+                id: UUID(), accountID: queueAccount.id, direction: .download,
+                bucket: "alpha", key: "download.bin", localPath: cancelPath.path,
+                size: 20, bytesDone: 0, status: .queued, error: nil
+            )
+        ])
+        let cancelQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: cancelURL),
+            credentialProvider: nil
+        )
+        if let cancelTask = cancelQueue.tasks.first {
+            cancelQueue.cancel(id: cancelTask.id)
+        }
+        check(FileManager.default.fileExists(atPath: cancelPath.path),
+              "canceling a queued download preserves an existing destination")
+        cancelQueue.flushPersistence()
+
+        let corruptURL = queueDir.appendingPathComponent("corrupt-queue.json")
+        try? Data("not-json".utf8).write(to: corruptURL)
+        check(TransferQueueStore(fileURL: corruptURL).load().isEmpty, "corrupt queue state fails safely")
+
+        let mixedURL = queueDir.appendingPathComponent("mixed-queue.json")
+        let validData = (try? JSONEncoder().encode([validUpload])) ?? Data()
+        var mixedArray = ((try? JSONSerialization.jsonObject(with: validData)) as? [Any]) ?? []
+        mixedArray.append(["id": UUID().uuidString, "status": "Bogus"])
+        try? JSONSerialization.data(withJSONObject: mixedArray).write(to: mixedURL)
+        check(TransferQueueStore(fileURL: mixedURL).load().count == 1,
+              "one invalid queue record does not discard valid records")
+        check(FileManager.default.fileExists(atPath: mixedURL.path),
+              "partially invalid queue state is preserved")
+        check(FileManager.default.fileExists(atPath: mixedURL.appendingPathExtension("corrupt").path),
+              "partially invalid queue state is backed up")
+
+        let emptyQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: queueDir.appendingPathComponent("empty.json")),
+            credentialProvider: nil
+        )
+        check(emptyQueue.tasks.isEmpty, "missing queue state starts empty")
+        try? FileManager.default.removeItem(at: queueDir)
+
         print("UITEST SUMMARY passed=\(passed) failed=\(failed)")
         exit(failed == 0 ? 0 : 1)
     }

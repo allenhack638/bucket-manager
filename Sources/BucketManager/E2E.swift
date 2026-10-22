@@ -800,6 +800,80 @@ enum E2E {
             ) == nil, "multipart state can be removed")
             try? FileManager.default.removeItem(at: stateURL)
 
+            await resetStats()
+            let persistedURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-persisted-\(UUID().uuidString).bin")
+            try? Data(repeating: 0x6A, count: bigSize).write(to: persistedURL)
+            let persistedQueueURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("persisted-queue-\(UUID().uuidString).json")
+            let persistedQueueStore = TransferQueueStore(fileURL: persistedQueueURL)
+            let credentialsProvider: (UUID) -> (Account, String)? = { id in
+                id == account.id ? (account, secret) : nil
+            }
+            let persistentQueue = TransferQueue(
+                stateStore: persistedQueueStore,
+                credentialProvider: credentialsProvider
+            )
+            persistentQueue.enqueueUpload(
+                account: account,
+                secret: secret,
+                bucket: "alpha",
+                key: "persisted/big.bin",
+                url: persistedURL
+            )
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let autoSavedRecords = persistedQueueStore.load()
+            check(autoSavedRecords.count == 1, "active queue auto-persists without an explicit flush")
+            check(autoSavedRecords.first?.status == .paused, "active queue persists as paused")
+
+            var persistedPaused = false
+            for _ in 0..<240 {
+                if let record = await MultipartUploadStore.shared.recordsSnapshot()
+                    .first(where: { $0.key == "persisted/big.bin" }),
+                   record.parts.count >= 4,
+                   (await stats())["uploadPart"] ?? 0 >= 4,
+                   let task = persistentQueue.tasks.first(where: { $0.key == "persisted/big.bin" }) {
+                    persistentQueue.stop(id: task.id)
+                    persistedPaused = true
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+            check(persistedPaused, "persistent multipart upload can be paused")
+            persistentQueue.flushPersistence()
+            let persistedRecords = persistedQueueStore.load()
+            check(persistedRecords.count == 1, "queue state contains the paused upload")
+            check(persistedRecords.first?.status == .paused, "queue state records paused status")
+
+            let restoredQueue = TransferQueue(
+                stateStore: TransferQueueStore(fileURL: persistedQueueURL),
+                credentialProvider: credentialsProvider
+            )
+            check(restoredQueue.tasks.count == 1, "queue restores after a new queue instance starts")
+            if let restored = restoredQueue.tasks.first {
+                check(restored.status == .paused, "restored queue task is paused")
+                check(restored.accountID == account.id, "restored queue task keeps account identity")
+            } else {
+                check(false, "restored queue task is paused")
+                check(false, "restored queue task keeps account identity")
+            }
+            restoredQueue.startAll()
+            let restoredCompleted = await waitUntil(timeout: 30) {
+                restoredQueue.tasks.first?.status == .completed
+            }
+            check(restoredCompleted, "restored queue resumes and completes")
+            let restoreCounts = await stats()
+            check((restoreCounts["createMultipart"] ?? 0) == 1,
+                  "restart resumes the same multipart upload")
+            check((restoreCounts["completeMultipart"] ?? 0) == 1,
+                  "restart completes the multipart upload")
+            check((await objects())["persisted/big.bin"] == bigSize,
+                  "restored upload produced the full object")
+            restoredQueue.flushPersistence()
+            check(TransferQueueStore(fileURL: persistedQueueURL).load().isEmpty,
+                  "completed restored task leaves queue state")
+            try? FileManager.default.removeItem(at: persistedURL)
+
             model.openLocation(accountID: account.id, bucket: "alpha", prefix: "")
             _ = await waitUntil { !model.isBusy }
             let boundaryURL = FileManager.default.temporaryDirectory

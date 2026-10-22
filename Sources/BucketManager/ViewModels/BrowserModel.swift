@@ -91,7 +91,11 @@ final class BrowserModel {
         folderStatsCache: FolderStatsCache = FolderStatsCache()
     ) {
         self.accounts = accounts
-        self.transfers = TransferQueue()
+        self.transfers = TransferQueue(credentialProvider: { id in
+            guard let account = accounts.account(id: id),
+                  let secret = try? accounts.secret(for: account) else { return nil }
+            return (account, secret)
+        })
         self.folderStats = FolderStatsCoordinator(
             cache: folderStatsCache,
             scanner: FolderStatsScanner(service: S3Service.shared)
@@ -805,6 +809,10 @@ final class BrowserModel {
 
     func invalidateFolderStats(accountID: UUID) {
         folderStats.invalidateAccount(accountID: accountID)
+    }
+
+    func flushTransfers() {
+        transfers.flushPersistence()
     }
 
     func flushFolderStats() {
