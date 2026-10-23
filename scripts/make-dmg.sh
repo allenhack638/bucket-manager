@@ -23,6 +23,6 @@ hdiutil create \
   -format UDZO \
   "$OUTPUT_PATH"
 
-shasum -a 256 "$OUTPUT_PATH" > "$OUTPUT_PATH.sha256"
+(cd "$(dirname "$OUTPUT_PATH")" && shasum -a 256 "$(basename "$OUTPUT_PATH")") > "$OUTPUT_PATH.sha256"
 echo "Created $OUTPUT_PATH"
 cat "$OUTPUT_PATH.sha256"
