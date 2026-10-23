@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-10-23
+
+- Add light and dark README screenshots for the browser, Logs & Statistics, and edit-account sheet.
+- Correct macOS Gatekeeper instructions for current macOS: use Privacy & Security → Open Anyway or remove quarantine for this app.
+- Make the release SHA-256 file portable by recording only the DMG filename.
+- Publish the open-source release workflow and source-build distribution guidance.
+
 ## 0.2.0 — 2026-10-23
 
 - **Crash-orphan cleanup**: startup removes stale download temp files and queue-state temp files, and aborts multipart state that has no matching transfer task.
