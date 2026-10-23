@@ -1,11 +1,13 @@
 # Bucket Manager
 
+[![CI](https://github.com/allenhack638/bucket-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/allenhack638/bucket-manager/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/allenhack638/bucket-manager?sort=semver)](https://github.com/allenhack638/bucket-manager/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A native macOS client for S3-compatible object storage, built with AppKit and the
 AWS SDK for Swift. Bucket Manager gives you an account picker and bucket sidebar, an
 object browser, a transfer queue, and property, permissions, tag, version, and
 event-log inspectors in one focused desktop app.
 
-Bucket Manager is open source under the MIT License.
+Bucket Manager is open source under the MIT License. Repository: https://github.com/allenhack638/bucket-manager
 
 For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
@@ -65,15 +67,36 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
 - **Empty states** for no accounts, no bucket, empty folders, a failed bucket load
   (with **Retry**), and an empty queue.
 
-## Quick start
+## Install
+
+### GitHub release (unsigned)
+
+Download the latest DMG from [Releases](https://github.com/allenhack638/bucket-manager/releases),
+drag **Bucket Manager** to Applications, and launch it.
+
+The release DMG is ad-hoc signed with Hardened Runtime but **not notarized**.
+macOS will block the first launch. Use **Right-click → Open**, or remove the
+quarantine flag for this app:
 
 ```bash
-cd /Users/allen/Documents/Projects/Practise/bucket-manager
-./make-app.sh
+xattr -dr com.apple.quarantine "/Applications/Bucket Manager.app"
+```
+
+Do not disable Gatekeeper globally. If you prefer a trusted local build, build
+from source.
+
+### Build from source
+
+Requirements: macOS 14 or later, Xcode command-line tools, and Swift 6.2+.
+
+```bash
+git clone https://github.com/allenhack638/bucket-manager.git
+cd bucket-manager
+./make-app.sh release
 open "build/Bucket Manager.app"
 ```
 
-Or run from the toolchain:
+Or run directly from the toolchain:
 
 ```bash
 swift run
@@ -82,7 +105,7 @@ swift run
 Brand assets live in `Assets/AppIcon.svg` and `Assets/AppIcon.icns`; regenerate the
 iconset with `swift scripts/make-icon.swift`.
 
-For a distributable build, pass the version and signing identity:
+For a Developer ID-signed build, pass the identity:
 
 ```bash
 VERSION=0.2.0 BUILD_NUMBER=42 \
@@ -90,7 +113,8 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 ./make-app.sh release
 ```
 
-See [docs/RELEASE.md](docs/RELEASE.md) for signing, notarization, and verification.
+See [docs/RELEASE.md](docs/RELEASE.md) for signing, notarization, unsigned DMG
+creation, and verification.
 
 The first launch auto-opens **Add New Account** if no account exists. Enter:
 
@@ -311,9 +335,10 @@ headers, never the secret).
 - Diagnostic logs default off and are pruned after 14 days; audit logs are always on
   and retained for 90 days. Request counters persist across launches; session and
   all-time totals are shown in Statistics.
-- Local builds are ad-hoc signed with Hardened Runtime; Developer ID signing and
-  notarization are required for distribution. Ad-hoc rebuilds may re-prompt for
-  Keychain access.
+- GitHub release builds are ad-hoc signed with Hardened Runtime and are not
+  notarized; macOS requires a one-time Right-click → Open or quarantine removal.
+  Developer ID signing and notarization remain optional for trusted distribution.
+  Ad-hoc rebuilds may re-prompt for Keychain access.
 - The app is not App Sandboxed; see [SECURITY.md](SECURITY.md) for the migration
   requirements before enabling it.
 - The window uses native macOS traffic lights at top-left; offscreen snapshot
@@ -322,8 +347,12 @@ headers, never the secret).
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test, and review guidance.
-Security reports should follow [SECURITY.md](SECURITY.md).
+Security reports should follow [SECURITY.md](SECURITY.md). Community participation
+is covered by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Third-party licenses are
+listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## License
 
 Bucket Manager is released under the MIT License. See [LICENSE](LICENSE).
+The Bucket Manager name and icon are not licensed for use as another project's
+branding.

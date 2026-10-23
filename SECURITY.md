@@ -3,7 +3,10 @@
 ## Reporting a vulnerability
 
 Please report security issues privately rather than opening a public issue.
-Email the maintainer listed in the repository profile with:
+Use GitHub's private vulnerability reporting:
+https://github.com/allenhack638/bucket-manager/security/advisories/new
+
+Alternatively, email the maintainer listed in the repository profile with:
 
 - the affected version or commit,
 - reproduction steps,

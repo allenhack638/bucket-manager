@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Build unsigned app
+        env:
+          VERSION: ${{ github.ref_name }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          VERSION="${VERSION#v}" ./make-app.sh release
+
+      - name: Create DMG
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCH="$(uname -m)"
+          ./scripts/make-dmg.sh \
+            "build/Bucket Manager.app" \
+            "build/BucketManager-${VERSION}-${ARCH}.dmg"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "ARCH=$ARCH" >> "$GITHUB_ENV"
+
+      - name: Write release notes
+        run: |
+          cat > build/release-notes.md <<EOF
+          ## Bucket Manager ${VERSION}
+
+          Native macOS S3-compatible storage browser. This build targets
+          **${ARCH}**.
+
+          ### Unsigned build
+
+          This release is ad-hoc signed with Hardened Runtime but is **not
+          notarized**. macOS will block the first launch. After dragging the app
+          to Applications, use **Right-click → Open**, or remove the quarantine
+          flag for this app:
+
+          ```bash
+          xattr -dr com.apple.quarantine "/Applications/Bucket Manager.app"
+          ```
+
+          Do not disable Gatekeeper globally. To build from source instead, see
+          the repository README.
+
+          ### Verify
+
+          SHA-256: see the attached \`.sha256\` file.
+
+          Source code is available from the GitHub source archive.
+          EOF
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            "build/BucketManager-${VERSION}-${ARCH}.dmg" \
+            "build/BucketManager-${VERSION}-${ARCH}.dmg.sha256" \
+            "build/release-notes.md" \
+            --title "Bucket Manager ${VERSION}" \
+            --notes-file build/release-notes.md

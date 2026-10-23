@@ -38,3 +38,18 @@ spctl -a -vv "build/Bucket Manager.app"
 
 Distribute the stapled `.app` or a DMG created from it. Keep the version in
 `CHANGELOG.md` aligned with `CFBundleShortVersionString`.
+
+
+## Unsigned GitHub release
+
+The tag-driven `Release` workflow builds an ad-hoc signed, Hardened Runtime app
+and attaches an unsigned DMG plus SHA-256 checksum to the GitHub release. This
+does not require an Apple Developer account, but users must bypass Gatekeeper
+once with **Right-click → Open** or by removing the app's quarantine attribute.
+
+To create the same artifact locally:
+
+```bash
+./make-app.sh release
+./scripts/make-dmg.sh "build/Bucket Manager.app" "build/BucketManager-0.2.0-$(uname -m).dmg"
+```

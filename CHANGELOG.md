@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-10-23
 
 - **Crash-orphan cleanup**: startup removes stale download temp files and queue-state temp files, and aborts multipart state that has no matching transfer task.
 
