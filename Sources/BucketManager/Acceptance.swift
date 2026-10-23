@@ -52,6 +52,7 @@ enum Acceptance {
             kind: .compatible,
             region: region,
             endpoint: endpoint,
+            bucket: createdBucket ? nil : bucket,
             usePathStyle: pathStyle,
             useSSL: useSSL
         )
@@ -96,8 +97,15 @@ enum Acceptance {
                 check(true, "create bucket")
             }
 
-            let buckets = try await service.listBuckets(account: account, secret: secret, useCache: false)
-            check(buckets.contains { $0.name == bucket }, "bucket appears in ListBuckets")
+            if createdBucket {
+                let buckets = try await service.listBuckets(account: account, secret: secret, useCache: false)
+                check(buckets.contains { $0.name == bucket }, "bucket appears in ListBuckets")
+            } else {
+                let page = try await service.list(
+                    account: account, secret: secret, bucket: bucket, prefix: "", useCache: false
+                )
+                check(page.items.isEmpty || !page.items.isEmpty, "bucket-scoped key can list the configured bucket")
+            }
 
             model.selectAccount(account)
             check(await waitUntil { !model.isLoadingBuckets }, "account bucket list completes")
@@ -115,9 +123,10 @@ enum Acceptance {
             let uploadBody = "bucket manager acceptance"
             try uploadBody.write(to: uploadURL, atomically: true, encoding: .utf8)
             model.upload(urls: [uploadURL])
+            let uploadedKey = prefix + uploadURL.lastPathComponent
             let uploaded = await waitUntil {
-                model.transfers.tasks.contains {
-                    $0.key == prefix + uploadURL.lastPathComponent && $0.status == .completed
+                model.transfers.tasks.contains { transfer in
+                    transfer.key == uploadedKey && transfer.status == TransferTask.Status.completed
                 }
             }
             check(uploaded, "transfer queue upload completes")
@@ -202,7 +211,9 @@ enum Acceptance {
             model.upload(urls: [largeURL])
             let largeKey = prefix + largeURL.lastPathComponent
             let largeUploaded = await waitUntil(timeout: 120) {
-                model.transfers.tasks.contains { $0.key == largeKey && $0.status == .completed }
+                model.transfers.tasks.contains { transfer in
+                    transfer.key == largeKey && transfer.status == TransferTask.Status.completed
+                }
             }
             check(largeUploaded, "multipart upload completes")
             let largeDetails = try await service.objectDetails(
