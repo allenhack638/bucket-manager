@@ -653,18 +653,13 @@ final class MainWindowController: NSWindowController {
             "Mount as Windows Drive…",
             "Bucket Sharing Wizard…",
             "Edit Tags…",
-            "Edit Bucket Policy…",
             "Edit Logging Settings…",
-            "Edit Website Configuration…",
             "Edit Versioning Settings…",
             "Default Encryption Configuration…",
             "Public Access Block Configuration…",
             "Object Ownership Configuration…",
             "Object Lock",
             "Transfer Acceleration…",
-            "Cross-Region Replication…",
-            "Lifecycle Configuration…",
-            "CORS Configuration…",
             "Intelligent Tiering Configuration…"
         ]
         for title in advanced {
