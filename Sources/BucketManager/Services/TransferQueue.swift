@@ -88,6 +88,7 @@ final class TransferQueue {
             task.destinationKey = record.destinationKey
             task.moveSource = record.moveSource ?? false
             task.sourceETag = record.sourceETag
+            task.destinationUploadID = record.destinationUploadID
             task.sourceModifiedAt = record.fileModified
             task.isRestored = true
             task.speed = 0
@@ -420,7 +421,8 @@ final class TransferQueue {
                 destinationBucket: task.destinationBucket,
                 destinationKey: task.destinationKey,
                 moveSource: task.moveSource,
-                sourceETag: task.sourceETag
+                sourceETag: task.sourceETag,
+                destinationUploadID: task.destinationUploadID
             )
         }
         stateStore.save(records)
@@ -631,6 +633,13 @@ final class TransferQueue {
                                     id, generation: generation, phase: .upload, bytes: bytes
                                 )
                             }
+                        },
+                        onUploadID: { uploadID in
+                            Task { @MainActor in
+                                self.updateCopyUploadID(
+                                    id, generation: generation, uploadID: uploadID
+                                )
+                            }
                         }
                     )
                     let destinationDetails: ObjectDetails
@@ -718,6 +727,14 @@ final class TransferQueue {
               let index = index(of: id) else { return }
         if size > 0 { tasks[index].size = size }
         if let eTag { tasks[index].sourceETag = eTag }
+        schedulePersistence()
+    }
+
+    private func updateCopyUploadID(
+        _ id: UUID, generation: Int, uploadID: String?
+    ) {
+        guard workGeneration[id] == generation, let index = index(of: id) else { return }
+        tasks[index].destinationUploadID = uploadID
         schedulePersistence()
     }
 
@@ -817,6 +834,9 @@ final class TransferQueue {
             tasks[index].speed = 0
         }
         if tasks[index].direction == .copy {
+            if let copy = copyCredentials[id] {
+                abortCopyMultipart(task: tasks[index], credentials: copy)
+            }
             cleanupCopyTemporary(tasks[index])
         }
         if credentialProvider != nil {
@@ -855,7 +875,9 @@ final class TransferQueue {
     }
 
     private func abortCopyMultipart(task: TransferTask, credentials: CopyCredentials) {
-        guard let bucket = task.destinationBucket, let key = task.destinationKey else { return }
+        guard let bucket = task.destinationBucket,
+              let key = task.destinationKey,
+              let uploadID = task.destinationUploadID else { return }
         log("Aborting destination multipart upload \(bucket)/\(key)")
         let service = service
         let store = multipartStore
@@ -865,6 +887,7 @@ final class TransferQueue {
                 secret: credentials.destination.1,
                 bucket: bucket,
                 key: key,
+                uploadID: uploadID,
                 store: store
             )
         }

@@ -18,6 +18,7 @@ struct PersistedTransferTask: Codable, Sendable {
     var destinationKey: String? = nil
     var moveSource: Bool? = nil
     var sourceETag: String? = nil
+    var destinationUploadID: String? = nil
 }
 
 final class TransferQueueStore: @unchecked Sendable {

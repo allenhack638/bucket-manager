@@ -729,7 +729,8 @@ actor S3Service {
         contentType: String? = nil,
         metadata: [String: String]? = nil,
         multipartStore: MultipartUploadStore = .shared,
-        progress: @escaping @Sendable (Int64) -> Void
+        progress: @escaping @Sendable (Int64) -> Void,
+        onUploadID: (@Sendable (String?) -> Void)? = nil
     ) async throws {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
@@ -746,10 +747,12 @@ actor S3Service {
                 metadata: metadata,
                 store: multipartStore,
                 progress: progress,
-                forceRestart: false
+                forceRestart: false,
+                onUploadID: onUploadID
             )
             return
         }
+        onUploadID?(nil)
 
         let client = try await client(for: account, secret: secret)
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -802,6 +805,43 @@ actor S3Service {
         return true
     }
 
+    @discardableResult
+    func abortMultipart(
+        account: Account,
+        secret: String,
+        bucket: String,
+        key: String,
+        uploadID: String,
+        store: MultipartUploadStore = .shared
+    ) async -> Bool {
+        guard let client = try? await client(for: account, secret: secret) else {
+            return false
+        }
+        guard await abortMultipart(
+            client: client,
+            account: account,
+            bucket: bucket,
+            key: key,
+            uploadID: uploadID
+        ) else {
+            return false
+        }
+        let record = await store.record(accountID: account.id, bucket: bucket, key: key)
+        if record?.uploadID == uploadID {
+            await store.remove(accountID: account.id, bucket: bucket, key: key)
+        }
+        LogStore.shared.audit(
+            event: "multipart.aborted",
+            message: "Multipart upload aborted",
+            accountID: account.id,
+            accountName: account.displayName,
+            bucket: bucket,
+            key: key,
+            operation: "AbortMultipartUpload"
+        )
+        return true
+    }
+
     private func uploadMultipart(
         account: Account,
         secret: String,
@@ -814,7 +854,8 @@ actor S3Service {
         metadata: [String: String]?,
         store: MultipartUploadStore,
         progress: @escaping @Sendable (Int64) -> Void,
-        forceRestart: Bool
+        forceRestart: Bool,
+        onUploadID: (@Sendable (String?) -> Void)? = nil
     ) async throws {
         try Task.checkCancellation()
         let partSize = Self.multipartPartSize(for: size)
@@ -889,6 +930,7 @@ actor S3Service {
             )
         }
 
+        onUploadID?(record.uploadID)
         var partMap: [Int: MultipartPart] = [:]
         for part in record.parts where part.number >= 1 && part.number <= totalParts {
             partMap[part.number] = part
@@ -970,7 +1012,8 @@ actor S3Service {
                     metadata: metadata,
                     store: store,
                     progress: progress,
-                    forceRestart: true
+                    forceRestart: true,
+                    onUploadID: onUploadID
                 )
                 return
             }

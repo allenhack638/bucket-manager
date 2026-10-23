@@ -780,7 +780,8 @@ enum UITest {
             size: 10, bytesDone: 4, status: .paused, error: nil,
             destinationAccountID: copyDestinationAccount,
             destinationBucket: "archive", destinationKey: "incoming/copy.txt",
-            moveSource: true, sourceETag: "\"etag-copy\""
+            moveSource: true, sourceETag: "\"etag-copy\"",
+            destinationUploadID: "upload-copy"
         )
         let copyURL = queueDir.appendingPathComponent("copy-queue.json")
         TransferQueueStore(fileURL: copyURL).save([copyRecord])
@@ -798,6 +799,8 @@ enum UITest {
             check(restoredCopy.destinationKey == "incoming/copy.txt",
                   "copy transfer keeps destination key")
             check(restoredCopy.moveSource, "copy transfer keeps move intent")
+            check(restoredCopy.destinationUploadID == "upload-copy",
+                  "copy transfer keeps destination upload id")
             check(restoredCopy.bytesDone == 0, "copy transfer restarts from zero")
             check(!FileManager.default.fileExists(atPath: copyTemp.path),
                   "copy restore discards its temporary file")
@@ -922,16 +925,32 @@ enum UITest {
             partSize: 8, parts: [], createdAt: now.addingTimeInterval(-600),
             updatedAt: now.addingTimeInterval(-600)
         )
+        var pausedCopy = TransferTask(
+            direction: .copy, bucket: "source.bin", key: "source.bin",
+            localURL: maintenanceDir.appendingPathComponent("copy.bin"), size: 100
+        )
+        pausedCopy.destinationAccountID = activeUploadAccount
+        pausedCopy.destinationBucket = "alpha"
+        pausedCopy.destinationKey = "copy.bin"
+        pausedCopy.status = .paused
+        let orphanCopyRecord = MultipartUploadRecord(
+            accountID: activeUploadAccount, bucket: "alpha", key: "copy.bin",
+            uploadID: "copy-upload", fileSize: 100, fileModified: nil,
+            partSize: 8, parts: [], createdAt: now.addingTimeInterval(-600),
+            updatedAt: now.addingTimeInterval(-600)
+        )
         let planned = MultipartOrphanPlanner.orphans(
-            records: [activeRecord, orphanRecord],
-            activeUploads: [activeUploadTask],
+            records: [activeRecord, orphanRecord, orphanCopyRecord],
+            activeUploads: [activeUploadTask, pausedCopy],
             now: now,
             grace: 60
         )
-        check(planned.count == 1 && planned.first?.uploadID == "orphan-upload",
+        check(planned.contains { $0.uploadID == "orphan-upload" },
               "multipart orphan planner keeps active uploads")
-        check(planned.first?.key == "orphan.bin",
+        check(planned.contains { $0.key == "orphan.bin" },
               "multipart orphan planner finds stale upload state")
+        check(planned.contains { $0.uploadID == "copy-upload" },
+              "multipart orphan planner reclaims paused copy uploads")
         try? FileManager.default.removeItem(at: maintenanceDir)
 
         print("UITEST SUMMARY passed=\(passed) failed=\(failed)")

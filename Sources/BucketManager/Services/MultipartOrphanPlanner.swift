@@ -14,7 +14,8 @@ enum MultipartOrphanPlanner {
                 guard let accountID = task.accountID else { return nil }
                 return "\(accountID.uuidString)|\(task.bucket)|\(task.key)"
             case .copy:
-                guard let accountID = task.destinationAccountID,
+                guard task.status == .running || task.status == .queued,
+                      let accountID = task.destinationAccountID,
                       let bucket = task.destinationBucket,
                       let key = task.destinationKey else { return nil }
                 return "\(accountID.uuidString)|\(bucket)|\(key)"

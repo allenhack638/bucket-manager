@@ -27,6 +27,7 @@ struct TransferTask: Identifiable, Sendable {
     var destinationKey: String? = nil
     var moveSource: Bool = false
     var sourceETag: String? = nil
+    var destinationUploadID: String? = nil
     var sourceModifiedAt: TimeInterval? = nil
     var downloadETag: String? = nil
     var isRestored = false

@@ -27,8 +27,10 @@ and optional prefix.
 5. Cancellation during transport leaves the source untouched. Cancellation or
    failure of a multipart destination upload attempts an abort against the
    destination account.
-6. Destination keys that already exist are refused before any transfer starts.
-   Selected items that collapse to the same destination key are also refused.
+6. Destination keys that already exist are checked and refused before any transfer
+   starts. Selected items that collapse to the same destination key are also refused.
+   This is a best-effort check; a concurrent writer can race between the check and
+   the upload.
 7. A source and destination that resolve to the same storage location and key are
    refused, preventing self-move deletion.
 8. The source content type and user metadata are carried to the destination.
@@ -39,12 +41,15 @@ and optional prefix.
   objects require temporary disk space.
 - Copy tasks restart from the beginning after cancellation or app relaunch. They
   do not resume a partially downloaded copy.
-- Existing destination objects are not overwritten. An overwrite/replace policy is
-  tracked in `docs/BACKLOG.md`.
+- Existing destination objects are rejected by a best-effort preflight check. An
+  explicit overwrite/replace policy is tracked in `docs/BACKLOG.md`.
 - Same-account folder copies are not supported by the synchronous server-side copy
   path; use cross-account copy or copy the folder contents individually.
-- Object tags, ACLs, storage class, encryption settings, and object lock settings
-  are not preserved by the relay path.
+- Object tags, ACLs, storage class, encryption settings, object lock settings,
+  `Content-Encoding`, `Cache-Control`, `Content-Disposition`, and `Content-Language`
+  are not preserved by the relay path. Content type and user metadata are preserved.
+- Conflict checks and destination verification run serially before/after each
+  transfer; very large folder selections can take time before the queue starts.
 
 ## Test coverage
 

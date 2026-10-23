@@ -1468,9 +1468,10 @@ final class BrowserModel {
     }
 
     private func storageIdentity(_ account: Account) -> String {
-        let endpoint = account.endpoint?
+        var endpoint = account.endpoint?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased() ?? ""
+        while endpoint.hasSuffix("/") { endpoint.removeLast() }
         return [
             account.kind.rawValue,
             endpoint,
@@ -1518,6 +1519,45 @@ final class BrowserModel {
                 NSLocalizedDescriptionKey: "Paste supports objects only. Use Copy to… for folders."
             ]))
             return
+        }
+        var destinationKeys = Set<String>()
+        for entry in clipboard {
+            guard let sourceAccount = accounts.account(id: entry.accountID),
+                  (try? accounts.secret(for: sourceAccount)) != nil else {
+                setError(S3ServiceError.missingCredentials)
+                return
+            }
+            let name = String(entry.key.split(separator: "/").last ?? "object")
+            let destination = prefix + name
+            guard destinationKeys.insert(destination).inserted else {
+                setError(NSError(domain: "BucketManager", code: 6, userInfo: [
+                    NSLocalizedDescriptionKey: "Multiple clipboard items map to the same destination key."
+                ]))
+                return
+            }
+            if storageIdentity(sourceAccount) == storageIdentity(account),
+               entry.bucket == bucket,
+               entry.key == destination {
+                setError(NSError(domain: "BucketManager", code: 7, userInfo: [
+                    NSLocalizedDescriptionKey: "The source and destination resolve to the same object."
+                ]))
+                return
+            }
+            guard sourceAccount.id != account.id else { continue }
+            do {
+                _ = try await service.objectDetails(
+                    account: account, secret: secret, bucket: bucket, key: destination
+                )
+                setError(NSError(domain: "BucketManager", code: 8, userInfo: [
+                    NSLocalizedDescriptionKey: "Destination already contains \(destination)."
+                ]))
+                return
+            } catch {
+                guard isNotFound(error) else {
+                    setError(error)
+                    return
+                }
+            }
         }
         isBusy = true
         status = "Pasting \(clipboard.count) object(s)…"

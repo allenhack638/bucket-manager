@@ -125,8 +125,18 @@ enum E2E {
                 destinationAccount = nil
                 destinationSecret = ""
             }
-            var inMemoryAccounts = [account]
-            var inMemorySecrets = [account.id: secret]
+            let cloneAccount = Account(
+                displayName: "E2E Clone",
+                accessKeyID: "test-clone",
+                kind: .compatible,
+                region: "us-east-1",
+                endpoint: base.absoluteString + "/",
+                usePathStyle: true,
+                useSSL: false
+            )
+            let cloneSecret = "e2e-clone-" + UUID().uuidString.lowercased()
+            var inMemoryAccounts = [account, cloneAccount]
+            var inMemorySecrets = [account.id: secret, cloneAccount.id: cloneSecret]
             if let destinationAccount {
                 inMemoryAccounts.append(destinationAccount)
                 inMemorySecrets[destinationAccount.id] = destinationSecret
@@ -1262,6 +1272,36 @@ enum E2E {
 
                 model.openLocation(accountID: account.id, bucket: "alpha", prefix: "cross-account/")
                 _ = await waitUntil { !model.isBusy }
+                model.setSelection(Set([crossSourceKey]))
+                model.copySelectionToClipboard(cut: false)
+                model.selectAccount(destinationAccount)
+                _ = await waitUntil { !model.isLoadingBuckets }
+                model.openLocation(accountID: destinationAccount.id, bucket: "alpha", prefix: "clipboard/")
+                _ = await waitUntil { !model.isBusy }
+                let beforeClipboardConflict = model.transfers.tasks.count
+                await model.paste()
+                check(model.transfers.tasks.count == beforeClipboardConflict,
+                      "cross-account paste refuses an existing destination")
+                check(model.errorMessage?.lowercased().contains("destination already") == true,
+                      "cross-account paste conflict is explained")
+
+                model.openLocation(accountID: account.id, bucket: "alpha", prefix: "cross-account/")
+                _ = await waitUntil { !model.isBusy }
+                model.setSelection(Set([crossSourceKey]))
+                model.copySelectionToClipboard(cut: true)
+                let beforeSelfPaste = model.transfers.tasks.count
+                await model.paste()
+                check(model.transfers.tasks.count == beforeSelfPaste,
+                      "paste refuses to move an object onto itself")
+                check(model.errorMessage?.lowercased().contains("same object") == true,
+                      "self-paste is explained")
+                let selfPasteSource = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: crossSourceKey
+                )
+                check(selfPasteSource != nil, "self-paste leaves the source object")
+
+                model.openLocation(accountID: account.id, bucket: "alpha", prefix: "cross-account/")
+                _ = await waitUntil { !model.isBusy }
                 let beforeSelfMove = model.transfers.tasks.count
                 await model.copy(
                     items: [copyItem], toBucket: "alpha", toPrefix: "cross-account/",
@@ -1275,6 +1315,21 @@ enum E2E {
                     account: account, secret: secret, bucket: "alpha", key: crossSourceKey
                 )
                 check(selfSource != nil, "self-move leaves the source object")
+
+                let beforeCrossAccountSelfMove = model.transfers.tasks.count
+                await model.copy(
+                    items: [copyItem], toBucket: "alpha", toPrefix: "cross-account/",
+                    move: true, toAccount: cloneAccount
+                )
+                check(model.transfers.tasks.count == beforeCrossAccountSelfMove,
+                      "cross-account self-move is refused by storage identity")
+                check(model.errorMessage?.lowercased().contains("same object") == true,
+                      "cross-account self-move is explained")
+                let crossAccountSelfSource = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: crossSourceKey
+                )
+                check(crossAccountSelfSource != nil,
+                      "cross-account self-move leaves the source object")
 
                 let existingKey = "existing/source.txt"
                 let existingURL = FileManager.default.temporaryDirectory
@@ -1552,6 +1607,10 @@ enum E2E {
             }.joined(separator: "\n")
             check(!allLogText.isEmpty, "log files contain records")
             check(!allLogText.contains(secret), "secrets never appear in log files")
+            if !destinationSecret.isEmpty {
+                check(!allLogText.contains(destinationSecret),
+                      "destination secrets never appear in log files")
+            }
             check(!allLogText.lowercased().contains("authorization"),
                   "authorization headers never appear in log files")
 
