@@ -30,7 +30,12 @@ final class TransferCellView: NSTableCellView {
 
     func configure(task: TransferTask, selected: Bool) {
         label.stringValue = task.title
-        let name = task.direction == .upload ? "arrow.up.circle.fill" : "arrow.down.circle.fill"
+        let name: String
+        switch task.direction {
+        case .upload: name = "arrow.up.circle.fill"
+        case .download: name = "arrow.down.circle.fill"
+        case .copy: name = "arrow.left.arrow.right.circle.fill"
+        }
         icon.image = Theme.Icon.image(name, style: Theme.Icon.status)
         icon.contentTintColor = selected ? Theme.Colors.selectionText : Theme.Colors.accent
         label.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.text
@@ -729,19 +734,22 @@ final class TransfersViewController: NSViewController {
     // MARK: - Task actions
 
     private var selectedTask: TransferTask? {
-        guard tasksTable.selectedRow >= 0, tasksTable.selectedRow < visibleTasks.count else { return nil }
-        return visibleTasks[tasksTable.selectedRow]
+        selectedTasks.first
+    }
+
+    private var selectedTasks: [TransferTask] {
+        tasksTable.selectedRowIndexes.compactMap { row in
+            guard visibleTasks.indices.contains(row) else { return nil }
+            return visibleTasks[row]
+        }
     }
 
     @objc private func stopSelected() {
-        guard let task = selectedTask else { return }
-        model.transfers.stop(id: task.id)
+        for task in selectedTasks { model.transfers.stop(id: task.id) }
     }
 
     @objc private func cancelSelected() {
-        for task in visibleTasks where tasksTable.selectedRowIndexes.contains(visibleTasks.firstIndex(where: { $0.id == task.id }) ?? -1) {
-            model.transfers.cancel(id: task.id)
-        }
+        for task in selectedTasks { model.transfers.cancel(id: task.id) }
     }
 
     @objc private func retrySelected() {
@@ -751,6 +759,10 @@ final class TransfersViewController: NSViewController {
 
     @objc private func openTaskLocation() {
         guard let task = selectedTask else { return }
+        guard task.direction != .copy else {
+            NSSound.beep()
+            return
+        }
         NSWorkspace.shared.activateFileViewerSelecting([task.localURL])
     }
 

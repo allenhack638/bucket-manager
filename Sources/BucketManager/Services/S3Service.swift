@@ -39,6 +39,8 @@ enum S3ServiceError: Error, LocalizedError {
     case shortRead
     case incompleteDownload(expected: Int64, received: Int64)
     case sourceChangedDuringUpload
+    case sourceChangedDuringCopy
+    case destinationVerificationFailed
     case rangeRestart
 
     var errorDescription: String? {
@@ -51,6 +53,8 @@ enum S3ServiceError: Error, LocalizedError {
         case .incompleteMultipartUpload: return "The multipart upload is missing one or more parts."
         case .shortRead: return "The local file changed while it was being uploaded."
         case .sourceChangedDuringUpload: return "The local file changed during the upload; retry to restart from the current contents."
+        case .sourceChangedDuringCopy: return "The source object changed during the copy; the source was not deleted."
+        case .destinationVerificationFailed: return "The copied object could not be verified at the destination."
         case .rangeRestart: return "The remote object changed; restarting the download."
         case .incompleteDownload(let expected, let received):
             return "The download ended after \(received) of \(expected) bytes."
@@ -550,6 +554,19 @@ actor S3Service {
             .appendingPathComponent(".\(destination.lastPathComponent).bmdownload")
     }
 
+    nonisolated static func copyTemporaryURL() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("BucketManager-Copy-\(UUID().uuidString).tmp")
+    }
+
+    nonisolated static func isCopyTemporaryURL(_ url: URL) -> Bool {
+        let temporaryDirectory = FileManager.default.temporaryDirectory.standardizedFileURL
+        let candidate = url.standardizedFileURL
+        guard candidate.path.hasPrefix(temporaryDirectory.path + "/") else { return false }
+        let name = candidate.lastPathComponent
+        return name.hasPrefix("BucketManager-Copy-") && name.hasSuffix(".tmp")
+    }
+
     @discardableResult
     func download(
         account: Account,
@@ -709,6 +726,8 @@ actor S3Service {
         bucket: String,
         key: String,
         from url: URL,
+        contentType: String? = nil,
+        metadata: [String: String]? = nil,
         multipartStore: MultipartUploadStore = .shared,
         progress: @escaping @Sendable (Int64) -> Void
     ) async throws {
@@ -723,6 +742,8 @@ actor S3Service {
                 from: url,
                 size: size,
                 modified: (attributes[.modificationDate] as? Date)?.timeIntervalSince1970,
+                contentType: contentType,
+                metadata: metadata,
                 store: multipartStore,
                 progress: progress,
                 forceRestart: false
@@ -735,7 +756,8 @@ actor S3Service {
         // Some S3-compatible servers reject chunked PUTs without Content-Length.
         var input = PutObjectInput(body: .data(data), bucket: bucket, key: key)
         input.contentLength = Int(size)
-        input.contentType = Self.mimeType(for: url)
+        input.contentType = contentType ?? Self.mimeType(for: url)
+        input.metadata = metadata
         let finalInput = input
         _ = try await measured("PutObject", account: account, bucket: bucket, key: key, bytes: size) {
             try await throttle.run { try await client.putObject(input: finalInput) }
@@ -788,6 +810,8 @@ actor S3Service {
         from url: URL,
         size: Int64,
         modified: TimeInterval?,
+        contentType: String?,
+        metadata: [String: String]?,
         store: MultipartUploadStore,
         progress: @escaping @Sendable (Int64) -> Void,
         forceRestart: Bool
@@ -826,7 +850,8 @@ actor S3Service {
             )
         } else {
             var input = CreateMultipartUploadInput(bucket: bucket, key: key)
-            input.contentType = Self.mimeType(for: url)
+            input.contentType = contentType ?? Self.mimeType(for: url)
+            input.metadata = metadata
             let finalInput = input
             let output: CreateMultipartUploadOutput = try await measured(
                 "CreateMultipartUpload", account: account, bucket: bucket, key: key
@@ -941,6 +966,8 @@ actor S3Service {
                     from: url,
                     size: size,
                     modified: modified,
+                    contentType: contentType,
+                    metadata: metadata,
                     store: store,
                     progress: progress,
                     forceRestart: true

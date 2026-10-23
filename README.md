@@ -359,9 +359,13 @@ headers, never the secret).
   marked failed instead of being silently resumed. Incomplete server-side
   uploads should be covered by a bucket lifecycle rule.
 - Downloads resume from the persisted byte offset with a Range request and ETag validation. If the ETag changes or the server ignores Range, they restart safely. They stream to an owner-only temporary file, verify the received length when available, and replace the destination only on success; cancellation removes the temporary file without touching the existing destination.
-- Cross-account copy/move is intentionally rejected; copy within one account works.
-- Some advanced bucket-management commands (ACL editor, bucket policy, lifecycle, CORS,
-  website, replication, CloudFront, sync, sharing wizard) are present but disabled.
+- Cross-account copy/move is available through **Copy to…** and **Move to…**. Files
+  and folders are queued through an owner-only temporary file; the destination is
+  verified before a move deletes the source. Existing destination keys are refused
+  rather than silently overwritten. See
+  [docs/CROSS_ACCOUNT_TRANSFER.md](docs/CROSS_ACCOUNT_TRANSFER.md).
+- Advanced bucket administration (ACL, policy, lifecycle, CORS, website, replication)
+  is not implemented and is tracked in [docs/BACKLOG.md](docs/BACKLOG.md).
 - Preview renders common image formats and UTF-8 text; other binary objects show a size summary.
 - Versioning, tags, metadata, and ACLs are read-only.
 - Diagnostic logs default off and are pruned after 14 days; audit logs are always on

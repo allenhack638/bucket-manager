@@ -823,33 +823,52 @@ final class BrowserViewController: NSViewController {
 
     private func presentCopyDialog(move: Bool) {
         guard let window = view.window, !model.selectedItems.isEmpty else { return }
+        let selectedItems = model.selectedItems
+        let accounts = model.accounts.accounts
+        guard !accounts.isEmpty else { return }
         let alert = NSAlert()
         alert.messageText = move ? "Move to…" : "Copy to…"
-        alert.informativeText = "Choose the destination bucket and optional folder prefix."
+        alert.informativeText = "Choose the destination account, bucket, and optional folder prefix."
         alert.addButton(withTitle: move ? "Move" : "Copy")
         alert.addButton(withTitle: "Cancel")
 
-        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 58))
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 340, height: 24), pullsDown: false)
-        popup.addItems(withTitles: model.buckets.map(\.name))
-        if let current = model.selectedBucket, let index = model.buckets.firstIndex(where: { $0.name == current }) {
-            popup.selectItem(at: index)
+        let accessory = NSView(frame: NSRect(x: 0, y: 0, width: 340, height: 88))
+        let accountPopup = NSPopUpButton(
+            frame: NSRect(x: 0, y: 60, width: 340, height: 24), pullsDown: false
+        )
+        accountPopup.addItems(withTitles: accounts.map(\.displayName))
+        if let selected = model.selectedAccount,
+           let index = accounts.firstIndex(where: { $0.id == selected.id }) {
+            accountPopup.selectItem(at: index)
         }
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 340, height: 24))
-        field.placeholderString = "Destination prefix (optional), e.g. archive/2026/"
-        field.stringValue = model.prefix
-        accessory.addSubview(popup)
-        accessory.addSubview(field)
+        let bucketField = NSTextField(frame: NSRect(x: 0, y: 32, width: 340, height: 24))
+        bucketField.placeholderString = "Destination bucket"
+        bucketField.stringValue = model.selectedBucket ?? ""
+        let prefixField = NSTextField(frame: NSRect(x: 0, y: 4, width: 340, height: 24))
+        prefixField.placeholderString = "Destination prefix (optional), e.g. archive/2026/"
+        prefixField.stringValue = model.prefix
+        accessory.addSubview(accountPopup)
+        accessory.addSubview(bucketField)
+        accessory.addSubview(prefixField)
         alert.accessoryView = accessory
-        alert.window.initialFirstResponder = field
+        alert.window.initialFirstResponder = bucketField
 
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
-            guard let bucket = popup.titleOfSelectedItem else { return }
-            var prefix = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let index = accountPopup.indexOfSelectedItem
+            guard accounts.indices.contains(index) else { return }
+            let bucket = bucketField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !bucket.isEmpty else { return }
+            var prefix = prefixField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if !prefix.isEmpty && !prefix.hasSuffix("/") { prefix += "/" }
             Task {
-                await self.model.copy(items: self.model.selectedItems, toBucket: bucket, toPrefix: prefix, move: move)
+                await self.model.copy(
+                    items: selectedItems,
+                    toBucket: bucket,
+                    toPrefix: prefix,
+                    move: move,
+                    toAccount: accounts[index]
+                )
             }
         }
     }

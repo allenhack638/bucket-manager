@@ -4,6 +4,7 @@ struct TransferTask: Identifiable, Sendable {
     enum Direction: String, Codable, Sendable {
         case upload = "Upload"
         case download = "Download"
+        case copy = "Copy"
     }
 
     enum Status: String, Codable, Sendable {
@@ -21,6 +22,11 @@ struct TransferTask: Identifiable, Sendable {
     var key: String
     var localURL: URL
     var accountID: UUID? = nil
+    var destinationAccountID: UUID? = nil
+    var destinationBucket: String? = nil
+    var destinationKey: String? = nil
+    var moveSource: Bool = false
+    var sourceETag: String? = nil
     var sourceModifiedAt: TimeInterval? = nil
     var downloadETag: String? = nil
     var isRestored = false
@@ -38,6 +44,11 @@ struct TransferTask: Identifiable, Sendable {
             return "Uploading file \(localURL.path) to \(key)"
         case .download:
             return "Downloading \(key) to \(localURL.path)"
+        case .copy:
+            let destination = [destinationBucket, destinationKey]
+                .compactMap { $0 }
+                .joined(separator: "/")
+            return "\(moveSource ? "Moving" : "Copying") \(bucket)/\(key) to \(destination)"
         }
     }
 

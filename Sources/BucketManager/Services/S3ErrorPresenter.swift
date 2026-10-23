@@ -2,6 +2,10 @@ import Foundation
 
 enum S3ErrorPresenter {
     static func message(for error: Error) -> String {
+        if let description = (error as? LocalizedError)?.errorDescription,
+           !description.isEmpty {
+            return description
+        }
         let text = String(describing: error)
         if text.contains("AccessDenied") { return "Access denied. Check the IAM policy for this access key." }
         if text.contains("InvalidAccessKeyId") { return "The access key ID is not valid." }

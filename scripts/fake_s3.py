@@ -30,6 +30,7 @@ FAILED_PARTS = set()
 NEXT_UPLOAD = 0
 MULTIPART_DELAY = float(os.environ.get("FAKE_MULTIPART_DELAY", "0"))
 MULTIPART_STAGGER = os.environ.get("FAKE_MULTIPART_STAGGER", "0") == "1"
+GET_DELAY = float(os.environ.get("FAKE_GET_DELAY", "0"))
 LOCK = threading.Lock()
 XMLNS = "http://s3.amazonaws.com/doc/2006-03-01/"
 DATE = "2026-01-02T03:04:05.000Z"
@@ -182,6 +183,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with LOCK:
             stored = OBJECTS.get(key)
         if stored:
+            if key.startswith("slowcopy/") or GET_DELAY:
+                time.sleep(GET_DELAY or 0.5)
             bump("getObject")
             body = stored["body"]
             self.send_response(200)
@@ -245,10 +248,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             stored = OBJECTS.get(key)
         if stored:
             bump("head")
+            content_length = len(stored["body"])
+            if key.startswith("verify-fail/"):
+                content_length += 1
+            e_tag = '"head-etag"' if key.startswith("mutating/") else '"etag-multipart"'
             self.send_response(200)
             self.send_header("Content-Type", stored["content_type"])
-            self.send_header("Content-Length", str(len(stored["body"])))
-            self.send_header("ETag", '"etag-multipart"')
+            self.send_header("Content-Length", str(content_length))
+            self.send_header("ETag", e_tag)
             self.send_header("Last-Modified", HTTP_DATE)
             self.end_headers()
             return
@@ -270,6 +277,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_PUT(self):
         bucket, key, query = self.split()
+        if bucket == "denied":
+            bump("deniedPut")
+            return error_response(self, "AccessDenied", "Access Denied", 403)
         length = int(self.headers.get("Content-Length", "0") or 0)
         body = self.rfile.read(length) if length else b""
         upload_id = query.get("uploadId", [None])[0]
@@ -279,6 +289,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 delay = MULTIPART_DELAY
                 if MULTIPART_STAGGER:
                     delay *= 1 + 0.4 * (int(part_number) - 1)
+                if key.startswith("large-cancel/"):
+                    delay = 0.1 if int(part_number) == 1 else 5.0
                 time.sleep(delay)
             with LOCK:
                 upload = MULTIPART.get(upload_id)
@@ -304,6 +316,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         with LOCK:
             LAST_PUT.update(key=key, size=len(body))
+            OBJECTS[key] = {
+                "body": body,
+                "content_type": self.headers.get("Content-Type", "application/octet-stream"),
+            }
         bump("put")
         self.send_response(200)
         self.send_header("ETag", '"etag-put"')
@@ -313,6 +329,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         global NEXT_UPLOAD
         bucket, key, query = self.split()
+        if bucket == "denied":
+            bump("deniedPost")
+            return error_response(self, "AccessDenied", "Access Denied", 403)
         if "uploads" in query:
             with LOCK:
                 NEXT_UPLOAD += 1

@@ -107,7 +107,9 @@ final class DownloadTempRegistry: @unchecked Sendable {
     }
 
     private func removeIfSafeDownloadTemp(_ url: URL) {
-        guard url.path.hasSuffix(".bmdownload"),
+        let name = url.lastPathComponent
+        let isCopyTemp = name.hasPrefix("BucketManager-Copy-") && name.hasSuffix(".tmp")
+        guard (url.path.hasSuffix(".bmdownload") || isCopyTemp),
               !url.path.split(separator: "/").contains("..") else { return }
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
               (attributes[.type] as? FileAttributeType) == .typeRegular,

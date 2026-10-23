@@ -13,6 +13,11 @@ struct PersistedTransferTask: Codable, Sendable {
     var error: String?
     var fileModified: TimeInterval? = nil
     var downloadETag: String? = nil
+    var destinationAccountID: UUID? = nil
+    var destinationBucket: String? = nil
+    var destinationKey: String? = nil
+    var moveSource: Bool? = nil
+    var sourceETag: String? = nil
 }
 
 final class TransferQueueStore: @unchecked Sendable {

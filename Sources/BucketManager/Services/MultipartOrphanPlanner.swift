@@ -8,10 +8,19 @@ enum MultipartOrphanPlanner {
         grace: TimeInterval
     ) -> [MultipartUploadRecord] {
         let active = Set(activeUploads.compactMap { task -> String? in
-            guard task.direction == .upload,
-                  [.queued, .running, .paused, .failed].contains(task.status),
-                  let accountID = task.accountID else { return nil }
-            return "\(accountID.uuidString)|\(task.bucket)|\(task.key)"
+            guard [.queued, .running, .paused, .failed].contains(task.status) else { return nil }
+            switch task.direction {
+            case .upload:
+                guard let accountID = task.accountID else { return nil }
+                return "\(accountID.uuidString)|\(task.bucket)|\(task.key)"
+            case .copy:
+                guard let accountID = task.destinationAccountID,
+                      let bucket = task.destinationBucket,
+                      let key = task.destinationKey else { return nil }
+                return "\(accountID.uuidString)|\(bucket)|\(key)"
+            case .download:
+                return nil
+            }
         })
         let cutoff = now.addingTimeInterval(-grace)
         return records.filter { record in

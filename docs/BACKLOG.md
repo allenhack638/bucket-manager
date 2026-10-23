@@ -28,7 +28,8 @@ These commands were removed from the macOS menu because they were disabled place
 
 ## Other deferred work
 
-- Cross-account copy/move
+- Optional overwrite/replace confirmation for copy destinations
+- Copy resume across app restarts (copies restart from the beginning today)
 - Temporary credential/session-token support
 - Presigned share links
 - Writable object tags, metadata, ACLs

@@ -769,6 +769,67 @@ enum UITest {
               "canceling a queued download preserves an existing destination")
         cancelQueue.flushPersistence()
 
+        let copyTemp = queueDir.appendingPathComponent(
+            "BucketManager-Copy-\(UUID().uuidString).tmp"
+        )
+        try? Data("copy".utf8).write(to: copyTemp)
+        let copyDestinationAccount = UUID()
+        let copyRecord = PersistedTransferTask(
+            id: UUID(), accountID: queueAccount.id, direction: .copy,
+            bucket: "alpha", key: "source/copy.txt", localPath: copyTemp.path,
+            size: 10, bytesDone: 4, status: .paused, error: nil,
+            destinationAccountID: copyDestinationAccount,
+            destinationBucket: "archive", destinationKey: "incoming/copy.txt",
+            moveSource: true, sourceETag: "\"etag-copy\""
+        )
+        let copyURL = queueDir.appendingPathComponent("copy-queue.json")
+        TransferQueueStore(fileURL: copyURL).save([copyRecord])
+        let copyQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: copyURL),
+            credentialProvider: nil
+        )
+        if let restoredCopy = copyQueue.tasks.first {
+            check(restoredCopy.direction == .copy, "copy transfer restores its direction")
+            check(restoredCopy.status == .paused, "copy transfer restores paused")
+            check(restoredCopy.destinationAccountID == copyDestinationAccount,
+                  "copy transfer keeps destination account")
+            check(restoredCopy.destinationBucket == "archive",
+                  "copy transfer keeps destination bucket")
+            check(restoredCopy.destinationKey == "incoming/copy.txt",
+                  "copy transfer keeps destination key")
+            check(restoredCopy.moveSource, "copy transfer keeps move intent")
+            check(restoredCopy.bytesDone == 0, "copy transfer restarts from zero")
+            check(!FileManager.default.fileExists(atPath: copyTemp.path),
+                  "copy restore discards its temporary file")
+            check(restoredCopy.title.contains("Moving"), "copy transfer title reflects move intent")
+        } else {
+            check(false, "copy transfer restores its direction")
+        }
+        copyQueue.flushPersistence()
+
+        let unsafeCopyPath = queueDir.appendingPathComponent("keep-me.txt")
+        try? Data("keep".utf8).write(to: unsafeCopyPath)
+        let unsafeCopyURL = queueDir.appendingPathComponent("unsafe-copy-queue.json")
+        TransferQueueStore(fileURL: unsafeCopyURL).save([
+            PersistedTransferTask(
+                id: UUID(), accountID: queueAccount.id, direction: .copy,
+                bucket: "alpha", key: "source.txt", localPath: unsafeCopyPath.path,
+                size: 4, bytesDone: 0, status: .paused, error: nil,
+                destinationAccountID: copyDestinationAccount,
+                destinationBucket: "archive", destinationKey: "source.txt"
+            )
+        ])
+        let unsafeCopyQueue = TransferQueue(
+            stateStore: TransferQueueStore(fileURL: unsafeCopyURL),
+            credentialProvider: nil
+        )
+        check(FileManager.default.fileExists(atPath: unsafeCopyPath.path),
+              "restored copy never deletes an unsafe path")
+        check(unsafeCopyQueue.tasks.first?.status == .failed,
+              "unsafe restored copy fails safely")
+        check(unsafeCopyQueue.tasks.first?.error?.lowercased().contains("invalid") == true,
+              "unsafe restored copy reports its invalid path")
+
         let corruptURL = queueDir.appendingPathComponent("corrupt-queue.json")
         try? Data("not-json".utf8).write(to: corruptURL)
         check(TransferQueueStore(fileURL: corruptURL).load().isEmpty, "corrupt queue state fails safely")
@@ -797,18 +858,25 @@ enum UITest {
         try? FileManager.default.createDirectory(at: maintenanceDir, withIntermediateDirectories: true)
         let orphanTemp = maintenanceDir.appendingPathComponent("orphan.bmdownload")
         let activeTemp = maintenanceDir.appendingPathComponent("active.bmdownload")
+        let orphanCopyTemp = maintenanceDir.appendingPathComponent(
+            "BucketManager-Copy-\(UUID().uuidString).tmp"
+        )
         let unrelatedFile = maintenanceDir.appendingPathComponent("keep.txt")
         try? Data("orphan".utf8).write(to: orphanTemp)
         try? Data("active".utf8).write(to: activeTemp)
+        try? Data("copy".utf8).write(to: orphanCopyTemp)
         try? Data("keep".utf8).write(to: unrelatedFile)
         let registryURL = maintenanceDir.appendingPathComponent("download-temps.json")
         let registry = DownloadTempRegistry(fileURL: registryURL)
         registry.register(orphanTemp)
         registry.register(activeTemp)
+        registry.register(orphanCopyTemp)
         registry.register(unrelatedFile)
         registry.cleanup(active: [activeTemp.path])
         check(!FileManager.default.fileExists(atPath: orphanTemp.path),
               "orphan download temp file is removed")
+        check(!FileManager.default.fileExists(atPath: orphanCopyTemp.path),
+              "orphan copy temp file is removed")
         check(FileManager.default.fileExists(atPath: activeTemp.path),
               "active download temp file is preserved")
         check(FileManager.default.fileExists(atPath: unrelatedFile.path),

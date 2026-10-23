@@ -72,7 +72,7 @@ if CommandLine.arguments.contains("--verify-startup") {
 }
 
 if let port = argumentValue("--e2e") {
-    E2E.run(port: port)
+    E2E.run(port: port, secondPort: argumentValue("--e2e-second"))
 }
 
 if CommandLine.arguments.contains("--acceptance") {

@@ -11,6 +11,9 @@ final class BrowserModel {
         let accountID: UUID
         let bucket: String
         let key: String
+        let size: Int64?
+        let eTag: String?
+        let isFolder: Bool
     }
 
     let accounts: AccountStore
@@ -1195,10 +1198,29 @@ final class BrowserModel {
         }
     }
 
-    func copy(items selected: [S3Item], toBucket: String, toPrefix: String, move: Bool) async {
+    func copy(
+        items selected: [S3Item],
+        toBucket: String,
+        toPrefix: String,
+        move: Bool,
+        toAccount: Account? = nil
+    ) async {
         guard let account = selectedAccount, let bucket = selectedBucket else { return }
         guard let secret = try? accounts.secret(for: account) else {
             setError(S3ServiceError.missingCredentials)
+            return
+        }
+        if let toAccount, toAccount.id != account.id {
+            await copyCrossAccount(
+                items: selected,
+                sourceAccount: account,
+                sourceSecret: secret,
+                sourceBucket: bucket,
+                destinationAccount: toAccount,
+                destinationBucket: toBucket,
+                destinationPrefix: toPrefix,
+                move: move
+            )
             return
         }
         isBusy = true
@@ -1208,6 +1230,9 @@ final class BrowserModel {
             for item in selected where item.kind == .object {
                 group.addTask { [service, account, secret, bucket] in
                     let destination = toPrefix + item.displayName
+                    if toBucket == bucket && destination == item.key {
+                        return (item.key, "Cannot copy an object onto itself.")
+                    }
                     do {
                         try await service.copyObject(
                             account: account, secret: secret,
@@ -1238,6 +1263,9 @@ final class BrowserModel {
                 appendLog("\(move ? "Moved" : "Copied") \(key)")
             }
         }
+        for folder in selected where folder.kind == .folder {
+            failures.append("\(folder.key): folder copy is not supported for same-account transfers")
+        }
         folderStats.invalidate(accountID: account.id, bucket: toBucket, prefix: toPrefix)
         if move {
             folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
@@ -1267,9 +1295,212 @@ final class BrowserModel {
         onChromeChange?()
     }
 
+    private struct CopyEntry {
+        let sourceKey: String
+        let destinationKey: String
+        let size: Int64
+        let eTag: String?
+    }
+
+    private func copyCrossAccount(
+        items selected: [S3Item],
+        sourceAccount: Account,
+        sourceSecret: String,
+        sourceBucket: String,
+        destinationAccount: Account,
+        destinationBucket: String,
+        destinationPrefix: String,
+        move: Bool
+    ) async {
+        guard !destinationBucket.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            setError(NSError(domain: "BucketManager", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "Choose a destination bucket."
+            ]))
+            return
+        }
+        guard let destinationSecret = try? accounts.secret(for: destinationAccount) else {
+            setError(S3ServiceError.missingCredentials)
+            return
+        }
+        let prefix = destinationPrefix.isEmpty || destinationPrefix.hasSuffix("/")
+            ? destinationPrefix
+            : destinationPrefix + "/"
+        isBusy = true
+        status = "Preparing \(move ? "move" : "copy")…"
+        onChromeChange?()
+
+        var entries: [CopyEntry] = []
+        do {
+            for item in selected {
+                if item.kind == .object {
+                    entries.append(CopyEntry(
+                        sourceKey: item.key,
+                        destinationKey: prefix + item.displayName,
+                        size: item.size ?? 0,
+                        eTag: item.eTag
+                    ))
+                    continue
+                }
+                let objects = try await service.listAllObjects(
+                    account: sourceAccount,
+                    secret: sourceSecret,
+                    bucket: sourceBucket,
+                    prefix: item.key
+                )
+                for object in objects {
+                    let relative = object.key.hasPrefix(item.key)
+                        ? String(object.key.dropFirst(item.key.count))
+                        : object.displayName
+                    guard !relative.isEmpty || object.key == item.key else { continue }
+                    entries.append(CopyEntry(
+                        sourceKey: object.key,
+                        destinationKey: prefix + item.displayName + "/" + relative,
+                        size: object.size ?? 0,
+                        eTag: object.eTag
+                    ))
+                }
+            }
+        } catch {
+            isBusy = false
+            setError(error)
+            onChromeChange?()
+            return
+        }
+
+        guard !entries.isEmpty else {
+            isBusy = false
+            status = "No objects to copy"
+            onChromeChange?()
+            return
+        }
+
+        let destinationKeys = entries.map(\.destinationKey)
+        guard Set(destinationKeys).count == destinationKeys.count else {
+            isBusy = false
+            setError(NSError(domain: "BucketManager", code: 6, userInfo: [
+                NSLocalizedDescriptionKey: "Multiple selected objects map to the same destination key."
+            ]))
+            onChromeChange?()
+            return
+        }
+        if storageIdentity(sourceAccount) == storageIdentity(destinationAccount),
+           sourceBucket == destinationBucket,
+           entries.contains(where: { $0.sourceKey == $0.destinationKey }) {
+            isBusy = false
+            setError(NSError(domain: "BucketManager", code: 7, userInfo: [
+                NSLocalizedDescriptionKey: "The source and destination resolve to the same object."
+            ]))
+            onChromeChange?()
+            return
+        }
+
+        var conflicts: [String] = []
+        do {
+            for entry in entries {
+                do {
+                    _ = try await service.objectDetails(
+                        account: destinationAccount,
+                        secret: destinationSecret,
+                        bucket: destinationBucket,
+                        key: entry.destinationKey
+                    )
+                    conflicts.append(entry.destinationKey)
+                } catch {
+                    if !isNotFound(error) { throw error }
+                }
+            }
+        } catch {
+            isBusy = false
+            setError(error)
+            onChromeChange?()
+            return
+        }
+        guard conflicts.isEmpty else {
+            isBusy = false
+            setError(NSError(domain: "BucketManager", code: 8, userInfo: [
+                NSLocalizedDescriptionKey: "Destination already contains \(conflicts.count) object(s); choose an empty prefix."
+            ]))
+            onChromeChange?()
+            return
+        }
+
+        for entry in entries {
+            transfers.enqueueCopy(
+                sourceAccount: sourceAccount,
+                sourceSecret: sourceSecret,
+                sourceBucket: sourceBucket,
+                sourceKey: entry.sourceKey,
+                sourceSize: entry.size,
+                sourceETag: entry.eTag,
+                destinationAccount: destinationAccount,
+                destinationSecret: destinationSecret,
+                destinationBucket: destinationBucket,
+                destinationKey: entry.destinationKey,
+                move: move
+            )
+        }
+        appendLog("Queued \(move ? "move" : "copy") of \(entries.count) object(s) from \(sourceBucket) to \(destinationAccount.displayName)/\(destinationBucket)")
+        auditOperation(
+            event: move ? "objects.move.queued" : "objects.copy.queued",
+            message: "Cross-account transfer queued",
+            account: sourceAccount,
+            bucket: sourceBucket,
+            key: S3Key.parentPrefix(of: entries[0].sourceKey),
+            metadata: [
+                "count": String(entries.count),
+                "destinationAccount": destinationAccount.displayName,
+                "destinationBucket": destinationBucket,
+                "destinationPrefix": prefix,
+                "sourceBucket": sourceBucket
+            ]
+        )
+        for entry in entries {
+            folderStats.invalidate(
+                accountID: sourceAccount.id,
+                bucket: sourceBucket,
+                prefix: S3Key.parentPrefix(of: entry.sourceKey)
+            )
+        }
+        folderStats.invalidate(accountID: destinationAccount.id, bucket: destinationBucket, prefix: prefix)
+        status = "Queued \(entries.count) \(move ? "move" : "copy")\(entries.count == 1 ? "" : "s")"
+        isBusy = false
+        onChromeChange?()
+    }
+
+    private func storageIdentity(_ account: Account) -> String {
+        let endpoint = account.endpoint?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() ?? ""
+        return [
+            account.kind.rawValue,
+            endpoint,
+            account.region.lowercased(),
+            String(account.usePathStyle)
+        ].joined(separator: "|")
+    }
+
+    private func isNotFound(_ error: Error) -> Bool {
+        let text = String(describing: error).lowercased()
+        return text.contains("notfound")
+            || text.contains("not found")
+            || text.contains("nosuchkey")
+            || text.contains("nosuchbucket")
+            || text.contains("status code: 404")
+            || text.contains("unknownhttpserviceerror")
+    }
+
     func copySelectionToClipboard(cut: Bool) {
         guard let account = selectedAccount, let bucket = selectedBucket else { return }
-        clipboard = selectedItems.map { ClipboardItem(accountID: account.id, bucket: bucket, key: $0.key) }
+        clipboard = selectedItems.map {
+            ClipboardItem(
+                accountID: account.id,
+                bucket: bucket,
+                key: $0.key,
+                size: $0.size,
+                eTag: $0.eTag,
+                isFolder: $0.kind == .folder
+            )
+        }
         clipboardIsCut = cut
         appendLog("\(cut ? "Cut" : "Copied") \(clipboard.count) object(s)")
     }
@@ -1282,42 +1513,74 @@ final class BrowserModel {
             setError(S3ServiceError.missingCredentials)
             return
         }
+        if clipboard.contains(where: \.isFolder) {
+            setError(NSError(domain: "BucketManager", code: 5, userInfo: [
+                NSLocalizedDescriptionKey: "Paste supports objects only. Use Copy to… for folders."
+            ]))
+            return
+        }
         isBusy = true
         status = "Pasting \(clipboard.count) object(s)…"
         onChromeChange?()
+        var queued = 0
         do {
             for entry in clipboard {
-                guard entry.accountID == account.id else {
-                    throw NSError(domain: "BucketManager", code: 1, userInfo: [
-                        NSLocalizedDescriptionKey: "Copying between different accounts is not supported in this build."
-                    ])
+                guard let sourceAccount = accounts.account(id: entry.accountID) else {
+                    throw S3ServiceError.missingCredentials
                 }
+                let sourceSecret = try accounts.secret(for: sourceAccount)
                 let name = String(entry.key.split(separator: "/").last ?? "object")
                 let destination = prefix + name
-                try await service.copyObject(
-                    account: account, secret: secret,
-                    sourceBucket: entry.bucket, sourceKey: entry.key,
-                    destinationBucket: bucket, destinationKey: destination
-                )
-                if clipboardIsCut {
-                    try await service.delete(account: account, secret: secret, bucket: entry.bucket, key: entry.key)
+                if sourceAccount.id == account.id {
+                    try await service.copyObject(
+                        account: account, secret: secret,
+                        sourceBucket: entry.bucket, sourceKey: entry.key,
+                        destinationBucket: bucket, destinationKey: destination
+                    )
+                    if clipboardIsCut {
+                        try await service.delete(
+                            account: account, secret: secret, bucket: entry.bucket, key: entry.key
+                        )
+                    }
+                } else {
+                    transfers.enqueueCopy(
+                        sourceAccount: sourceAccount,
+                        sourceSecret: sourceSecret,
+                        sourceBucket: entry.bucket,
+                        sourceKey: entry.key,
+                        sourceSize: entry.size ?? 0,
+                        sourceETag: entry.eTag,
+                        destinationAccount: account,
+                        destinationSecret: secret,
+                        destinationBucket: bucket,
+                        destinationKey: destination,
+                        move: clipboardIsCut
+                    )
+                    queued += 1
                 }
             }
-            appendLog("Pasted \(clipboard.count) object(s) into \(currentPath)")
+            appendLog(
+                queued > 0
+                    ? "Queued \(queued) cross-account paste(s) into \(currentPath)"
+                    : "Pasted \(clipboard.count) object(s) into \(currentPath)"
+            )
             auditOperation(
                 event: clipboardIsCut ? "clipboard.moved" : "clipboard.copied",
-                message: "Clipboard paste completed",
+                message: queued > 0 ? "Cross-account clipboard transfer queued" : "Clipboard paste completed",
                 account: account,
                 bucket: bucket,
                 key: prefix,
-                metadata: ["count": String(clipboard.count)]
+                metadata: [
+                    "count": String(clipboard.count),
+                    "queuedCrossAccount": String(queued)
+                ]
             )
             let pastedEntries = clipboard
             if clipboardIsCut { clipboard = [] }
-            status = "Ready"
+            status = queued > 0 ? "Queued \(queued) cross-account transfer\(queued == 1 ? "" : "s")" : "Ready"
             for entry in pastedEntries {
                 let sourcePrefix = S3Key.parentPrefix(of: entry.key)
-                folderStats.invalidate(accountID: account.id, bucket: entry.bucket, prefix: sourcePrefix)
+                folderStats.invalidate(accountID: entry.accountID, bucket: entry.bucket, prefix: sourcePrefix)
             }
             folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
             await reload(useCache: false)

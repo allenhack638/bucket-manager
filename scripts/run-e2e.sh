@@ -5,8 +5,9 @@ cd "$(dirname "$0")/.."
 
 swift build -Xswiftc -Xfrontend -Xswiftc -disable-round-trip-debug-types >/dev/null
 LOG=/tmp/s3c-e2e-server.log
+LOG2=/tmp/s3c-e2e-server-2.log
 APP_LOG=/tmp/s3c-e2e-app.log
-rm -f "$LOG" "$APP_LOG"
+rm -f "$LOG" "$LOG2" "$APP_LOG"
 STATE=$(mktemp /tmp/s3c-multipart-state.XXXXXX)
 LOGDIR=$(mktemp -d /tmp/s3c-logs.XXXXXX)
 METRICS=$(mktemp /tmp/s3c-metrics.XXXXXX)
@@ -16,16 +17,21 @@ SETTINGS_SUITE="BucketManagerE2ESettings.$$"
 rm -f "$STATE" "$METRICS" "$TRANSFER_QUEUE" "$TEMP_REGISTRY"
 PYTHONUNBUFFERED=1 FAKE_MULTIPART_DELAY=0.25 FAKE_MULTIPART_STAGGER=1 python3 scripts/fake_s3.py 0 >"$LOG" 2>&1 &
 SERVER=$!
-trap 'kill "$SERVER" 2>/dev/null || true; rm -rf "$STATE" "$LOGDIR" "$METRICS" "$TRANSFER_QUEUE" "$TEMP_REGISTRY" "$APP_LOG"; defaults delete "$SETTINGS_SUITE" >/dev/null 2>&1 || true' EXIT
+PYTHONUNBUFFERED=1 FAKE_MULTIPART_DELAY=0.25 FAKE_MULTIPART_STAGGER=1 python3 scripts/fake_s3.py 0 >"$LOG2" 2>&1 &
+SERVER2=$!
+trap 'kill "$SERVER" "$SERVER2" 2>/dev/null || true; rm -rf "$STATE" "$LOGDIR" "$METRICS" "$TRANSFER_QUEUE" "$TEMP_REGISTRY" "$APP_LOG" "$LOG2"; defaults delete "$SETTINGS_SUITE" >/dev/null 2>&1 || true' EXIT
 
 PORT=""
+PORT2=""
 for _ in $(seq 1 300); do
   PORT=$(grep -o 'LISTENING [0-9]*' "$LOG" 2>/dev/null | awk '{print $2}' | tail -1 || true)
-  [ -n "$PORT" ] && break
+  PORT2=$(grep -o 'LISTENING [0-9]*' "$LOG2" 2>/dev/null | awk '{print $2}' | tail -1 || true)
+  [ -n "$PORT" ] && [ -n "$PORT2" ] && break
   sleep 0.1
 done
-if [ -z "$PORT" ]; then
+if [ -z "$PORT" ] || [ -z "$PORT2" ]; then
   cat "$LOG"
+  cat "$LOG2"
   exit 1
 fi
 
@@ -41,10 +47,10 @@ export no_proxy=127.0.0.1,localhost
 export NSUnbufferedIO=YES
 
 echo "E2E starting"
-python3 - "$PORT" "$APP_LOG" <<'PY'
+python3 - "$PORT" "$PORT2" "$APP_LOG" <<'PY'
 import os, subprocess, sys, time
-port, log_path = sys.argv[1], sys.argv[2]
-cmd = [".build/debug/BucketManager", "--e2e", port]
+port, port2, log_path = sys.argv[1], sys.argv[2], sys.argv[3]
+cmd = [".build/debug/BucketManager", "--e2e", port, "--e2e-second", port2]
 start = time.time()
 try:
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=240)
@@ -62,4 +68,6 @@ PY
 STATUS=$?
 echo "--- fake S3 log ---"
 cat "$LOG"
+echo "--- fake S3 secondary log ---"
+cat "$LOG2"
 exit "$STATUS"

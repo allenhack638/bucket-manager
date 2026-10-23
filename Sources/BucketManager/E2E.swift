@@ -12,7 +12,7 @@ enum E2E {
     }
 
     @MainActor
-    static func run(port: String) {
+    static func run(port: String, secondPort: String? = nil) {
         setvbuf(stdout, nil, _IONBF, 0)
         Task { @MainActor in
             let base = URL(string: "http://127.0.0.1:\(port)")!
@@ -39,6 +39,28 @@ enum E2E {
             func stats() async -> [String: Int] {
                 let raw = await json("__stats")
                 return raw.compactMapValues { $0 as? Int }
+            }
+
+            func stats(at endpoint: String?) async -> [String: Int] {
+                guard let endpoint,
+                      let secondaryBase = URL(string: endpoint),
+                      let (data, _) = try? await URLSession.shared.data(
+                          from: secondaryBase.appendingPathComponent("__stats")
+                      ),
+                      let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                else { return [:] }
+                return raw.compactMapValues { $0 as? Int }
+            }
+
+            func waitForStat(
+                at endpoint: String?, name: String, timeout: TimeInterval = 30
+            ) async -> Bool {
+                let deadline = Date().addingTimeInterval(timeout)
+                while Date() < deadline {
+                    if (await stats(at: endpoint))[name] ?? 0 > 0 { return true }
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                }
+                return (await stats(at: endpoint))[name] ?? 0 > 0
             }
 
             func lastPut() async -> String {
@@ -85,7 +107,34 @@ enum E2E {
                 useSSL: false
             )
             let secret = "e2e-" + UUID().uuidString.lowercased()
-            let store = AccountStore(inMemoryAccounts: [account], secrets: [account.id: secret])
+            let destinationAccount: Account?
+            let destinationSecret: String
+            if let secondPort, let secondaryBase = URL(string: "http://127.0.0.1:\(secondPort)") {
+                let account = Account(
+                    displayName: "E2E Destination",
+                    accessKeyID: "test-destination",
+                    kind: .compatible,
+                    region: "us-east-1",
+                    endpoint: secondaryBase.absoluteString,
+                    usePathStyle: true,
+                    useSSL: false
+                )
+                destinationAccount = account
+                destinationSecret = "e2e-destination-" + UUID().uuidString.lowercased()
+            } else {
+                destinationAccount = nil
+                destinationSecret = ""
+            }
+            var inMemoryAccounts = [account]
+            var inMemorySecrets = [account.id: secret]
+            if let destinationAccount {
+                inMemoryAccounts.append(destinationAccount)
+                inMemorySecrets[destinationAccount.id] = destinationSecret
+            }
+            let store = AccountStore(
+                inMemoryAccounts: inMemoryAccounts,
+                secrets: inMemorySecrets
+            )
             let folderCacheURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("s3c-folder-stats-\(UUID().uuidString).json")
             try? FileManager.default.removeItem(at: folderCacheURL)
@@ -1055,6 +1104,429 @@ enum E2E {
             check((await objects())[boundaryName] == threshold + 1,
                   "boundary multipart object has the full size")
             try? FileManager.default.removeItem(at: boundaryURL)
+
+            if let destinationAccount {
+                let crossSourceURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("e2e-cross-\(UUID().uuidString).txt")
+                let crossSourceKey = "cross-account/source.txt"
+                let crossData = Data("cross-account payload".utf8)
+                try? crossData.write(to: crossSourceURL)
+                do {
+                    try await service.upload(
+                        account: account, secret: secret, bucket: "alpha",
+                        key: crossSourceKey, from: crossSourceURL, progress: { _ in }
+                    )
+                } catch {
+                    check(false, "cross-account source upload failed: \(error)")
+                }
+                model.openLocation(accountID: account.id, bucket: "alpha", prefix: "cross-account/")
+                _ = await waitUntil { !model.isBusy }
+
+                let copyItem = S3Item.listed(
+                    key: crossSourceKey,
+                    size: Int64(crossData.count),
+                    lastModified: nil,
+                    storageClass: nil,
+                    eTag: nil
+                )
+                await model.copy(
+                    items: [copyItem], toBucket: "alpha", toPrefix: "incoming/",
+                    move: false, toAccount: destinationAccount
+                )
+                let copyCompleted = await waitUntil(timeout: 30) {
+                    model.transfers.tasks.contains {
+                        $0.direction == .copy
+                            && $0.key == crossSourceKey
+                            && $0.status == .completed
+                    }
+                }
+                check(copyCompleted, "cross-account copy completes")
+                do {
+                    let copied = try await service.objectDetails(
+                        account: destinationAccount, secret: destinationSecret,
+                        bucket: "alpha", key: "incoming/source.txt"
+                    )
+                    check(copied.contentLength == Int64(crossData.count),
+                          "cross-account copy preserves destination bytes")
+                    check(copied.contentType == "text/plain",
+                          "cross-account copy preserves destination content type")
+                } catch {
+                    check(false, "cross-account destination is readable: \(error)")
+                }
+                let sourceStillExists = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: crossSourceKey
+                )
+                check(sourceStillExists != nil, "cross-account copy leaves the source object")
+
+                let moveSourceKey = "cross-account/move.txt"
+                let moveData = Data("move payload".utf8)
+                let moveURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("e2e-cross-move-\(UUID().uuidString).txt")
+                try? moveData.write(to: moveURL)
+                try? await service.upload(
+                    account: account, secret: secret, bucket: "alpha",
+                    key: moveSourceKey, from: moveURL, progress: { _ in }
+                )
+                let moveItem = S3Item.listed(
+                    key: moveSourceKey, size: Int64(moveData.count),
+                    lastModified: nil, storageClass: nil, eTag: nil
+                )
+                await model.copy(
+                    items: [moveItem], toBucket: "alpha", toPrefix: "moved/",
+                    move: true, toAccount: destinationAccount
+                )
+                let moveCompleted = await waitUntil(timeout: 30) {
+                    model.transfers.tasks.contains {
+                        $0.direction == .copy
+                            && $0.key == moveSourceKey
+                            && $0.status == .completed
+                    }
+                }
+                check(moveCompleted, "cross-account move completes")
+                do {
+                    _ = try await service.objectDetails(
+                        account: account, secret: secret, bucket: "alpha", key: moveSourceKey
+                    )
+                    check(false, "cross-account move removes the source object")
+                } catch {
+                    check(true, "cross-account move removes the source object")
+                }
+
+                let folderOneKey = "cross-folder/one.txt"
+                let folderTwoKey = "cross-folder/nested/two.txt"
+                for (key, body) in [(folderOneKey, "one"), (folderTwoKey, "two")] {
+                    let url = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("e2e-cross-folder-\(UUID().uuidString).txt")
+                    try? Data(body.utf8).write(to: url)
+                    try? await service.upload(
+                        account: account, secret: secret, bucket: "alpha",
+                        key: key, from: url, progress: { _ in }
+                    )
+                }
+                let folderItem = S3Item.listed(
+                    key: "cross-folder/", size: nil, lastModified: nil,
+                    storageClass: nil, eTag: nil
+                )
+                await model.copy(
+                    items: [folderItem], toBucket: "alpha", toPrefix: "archive/",
+                    move: false, toAccount: destinationAccount
+                )
+                let folderCopyCompleted = await waitUntil(timeout: 30) {
+                    model.transfers.tasks.filter {
+                        $0.direction == .copy && $0.destinationKey?.hasPrefix("archive/cross-folder/") == true
+                    }.count == 2 && model.transfers.tasks.filter {
+                        $0.direction == .copy && $0.destinationKey?.hasPrefix("archive/cross-folder/") == true
+                    }.allSatisfy { $0.status == .completed }
+                }
+                check(folderCopyCompleted, "cross-account folder copy completes recursively")
+                do {
+                    let one = try await service.objectDetails(
+                        account: destinationAccount, secret: destinationSecret,
+                        bucket: "alpha", key: "archive/cross-folder/one.txt"
+                    )
+                    let two = try await service.objectDetails(
+                        account: destinationAccount, secret: destinationSecret,
+                        bucket: "alpha", key: "archive/cross-folder/nested/two.txt"
+                    )
+                    check(one.contentLength == 3 && two.contentLength == 3,
+                          "cross-account folder copy preserves nested keys")
+                } catch {
+                    check(false, "cross-account folder destination is readable: \(error)")
+                }
+
+                model.openLocation(accountID: account.id, bucket: "alpha", prefix: "cross-account/")
+                _ = await waitUntil { !model.isBusy }
+                model.setSelection(Set([crossSourceKey]))
+                model.copySelectionToClipboard(cut: false)
+                model.selectAccount(destinationAccount)
+                _ = await waitUntil { !model.isLoadingBuckets }
+                model.openLocation(accountID: destinationAccount.id, bucket: "alpha", prefix: "clipboard/")
+                _ = await waitUntil { !model.isBusy }
+                await model.paste()
+                let clipboardCopy = await waitUntil(timeout: 30) {
+                    model.transfers.tasks.contains {
+                        $0.destinationKey == "clipboard/source.txt" && $0.status == .completed
+                    }
+                }
+                check(clipboardCopy, "cross-account clipboard paste completes")
+                do {
+                    let pasted = try await service.objectDetails(
+                        account: destinationAccount, secret: destinationSecret,
+                        bucket: "alpha", key: "clipboard/source.txt"
+                    )
+                    check(pasted.contentLength == Int64(crossData.count),
+                          "cross-account clipboard paste preserves bytes")
+                } catch {
+                    check(false, "cross-account clipboard destination is readable: \(error)")
+                }
+
+                model.openLocation(accountID: account.id, bucket: "alpha", prefix: "cross-account/")
+                _ = await waitUntil { !model.isBusy }
+                let beforeSelfMove = model.transfers.tasks.count
+                await model.copy(
+                    items: [copyItem], toBucket: "alpha", toPrefix: "cross-account/",
+                    move: true, toAccount: account
+                )
+                check(model.transfers.tasks.count == beforeSelfMove,
+                      "moving an object onto itself is refused")
+                check(model.errorMessage?.lowercased().contains("itself") == true,
+                      "self-move is explained")
+                let selfSource = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: crossSourceKey
+                )
+                check(selfSource != nil, "self-move leaves the source object")
+
+                let existingKey = "existing/source.txt"
+                let existingURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("e2e-existing-\(UUID().uuidString).txt")
+                try? Data("existing".utf8).write(to: existingURL)
+                try? await service.upload(
+                    account: destinationAccount, secret: destinationSecret, bucket: "alpha",
+                    key: existingKey, from: existingURL, progress: { _ in }
+                )
+                let beforeConflict = model.transfers.tasks.count
+                await model.copy(
+                    items: [copyItem], toBucket: "alpha", toPrefix: "existing/",
+                    move: false, toAccount: destinationAccount
+                )
+                check(model.transfers.tasks.count == beforeConflict,
+                      "existing destination objects are not silently overwritten")
+                check(model.errorMessage?.lowercased().contains("destination already") == true,
+                      "destination conflict is explained")
+                try? FileManager.default.removeItem(at: existingURL)
+
+                let duplicateA = "dupe-a/same.txt"
+                let duplicateB = "dupe-b/same.txt"
+                for (key, value) in [(duplicateA, "a"), (duplicateB, "b")] {
+                    let url = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("e2e-dupe-\(UUID().uuidString).txt")
+                    try? Data(value.utf8).write(to: url)
+                    try? await service.upload(
+                        account: account, secret: secret, bucket: "alpha",
+                        key: key, from: url, progress: { _ in }
+                    )
+                }
+                let duplicateItems = [
+                    S3Item.listed(key: duplicateA, size: 1, lastModified: nil, storageClass: nil, eTag: nil),
+                    S3Item.listed(key: duplicateB, size: 1, lastModified: nil, storageClass: nil, eTag: nil)
+                ]
+                let beforeDuplicate = model.transfers.tasks.count
+                await model.copy(
+                    items: duplicateItems, toBucket: "alpha", toPrefix: "dupe-dest/",
+                    move: false, toAccount: destinationAccount
+                )
+                check(model.transfers.tasks.count == beforeDuplicate,
+                      "colliding destination names are rejected before transfer")
+                check(model.errorMessage?.lowercased().contains("same destination") == true,
+                      "colliding destination names are explained")
+
+                let beforeBlank = model.transfers.tasks.count
+                await model.copy(
+                    items: [copyItem], toBucket: "   ", toPrefix: "",
+                    move: false, toAccount: destinationAccount
+                )
+                check(model.transfers.tasks.count == beforeBlank,
+                      "blank destination bucket is rejected")
+                check(model.errorMessage?.lowercased().contains("destination bucket") == true,
+                      "blank destination bucket is explained")
+
+                await model.copy(
+                    items: [copyItem], toBucket: "denied", toPrefix: "rejected/",
+                    move: true, toAccount: destinationAccount
+                )
+                let rejectedMove = await waitUntil(timeout: 30) {
+                    model.transfers.tasks.contains {
+                        $0.destinationBucket == "denied" && $0.status == .failed
+                    }
+                }
+                check(rejectedMove, "destination write failure fails a cross-account move")
+                check(model.transfers.tasks.contains {
+                    $0.destinationBucket == "denied" && $0.error != nil
+                }, "destination write failure is reported")
+                let rejectedSource = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: crossSourceKey
+                )
+                check(rejectedSource != nil, "failed cross-account move keeps the source")
+
+                await model.copy(
+                    items: [copyItem], toBucket: "alpha", toPrefix: "verify-fail/",
+                    move: true, toAccount: destinationAccount
+                )
+                let verifyFailed = await waitUntil(timeout: 30) {
+                    model.transfers.tasks.contains {
+                        $0.destinationKey == "verify-fail/source.txt" && $0.status == .failed
+                    }
+                }
+                check(verifyFailed, "destination verification failure fails the move")
+                check(model.transfers.tasks.contains {
+                    $0.destinationKey == "verify-fail/source.txt"
+                        && $0.error?.lowercased().contains("verified") == true
+                }, "destination verification failure is explained")
+                let verifiedSource = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: crossSourceKey
+                )
+                check(verifiedSource != nil, "failed verification keeps the source")
+
+                let mutatedKey = "mutating/source.txt"
+                let mutatedURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("e2e-mutating-\(UUID().uuidString).txt")
+                try? Data("mutating".utf8).write(to: mutatedURL)
+                try? await service.upload(
+                    account: account, secret: secret, bucket: "alpha",
+                    key: mutatedKey, from: mutatedURL, progress: { _ in }
+                )
+                let mutatedItem = S3Item.listed(
+                    key: mutatedKey, size: 8, lastModified: nil,
+                    storageClass: nil, eTag: nil
+                )
+                await model.copy(
+                    items: [mutatedItem], toBucket: "alpha", toPrefix: "mutated/",
+                    move: true, toAccount: destinationAccount
+                )
+                let mutationFailed = await waitUntil(timeout: 30) {
+                    model.transfers.tasks.contains {
+                        $0.key == mutatedKey && $0.status == .failed
+                    }
+                }
+                check(mutationFailed, "source mutation aborts a cross-account move")
+                check(model.transfers.tasks.contains {
+                    $0.key == mutatedKey
+                        && $0.error?.lowercased().contains("source object changed") == true
+                }, "source mutation failure is explained")
+                let mutatedSource = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: mutatedKey
+                )
+                check(mutatedSource != nil, "source mutation never deletes the source")
+
+                let largeCopyData = Data(repeating: 0x55, count: 17 * 1024 * 1024)
+                let largeCopyURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("e2e-large-copy-\(UUID().uuidString).bin")
+                try? largeCopyData.write(to: largeCopyURL)
+                let largeCopyKey = "large-cross/source.bin"
+                try? await service.upload(
+                    account: account, secret: secret, bucket: "alpha",
+                    key: largeCopyKey, from: largeCopyURL, progress: { _ in }
+                )
+                let largeCopyItem = S3Item.listed(
+                    key: largeCopyKey, size: Int64(largeCopyData.count),
+                    lastModified: nil, storageClass: nil, eTag: nil
+                )
+                await model.copy(
+                    items: [largeCopyItem], toBucket: "alpha", toPrefix: "large-dest/",
+                    move: false, toAccount: destinationAccount
+                )
+                let largeCopyDone = await waitUntil(timeout: 90) {
+                    model.transfers.tasks.contains {
+                        $0.key == largeCopyKey && $0.status == .completed
+                    }
+                }
+                check(largeCopyDone, "17 MiB cross-account multipart copy completes")
+                do {
+                    let largeDestination = try await service.objectDetails(
+                        account: destinationAccount, secret: destinationSecret,
+                        bucket: "alpha", key: "large-dest/source.bin"
+                    )
+                    check(largeDestination.contentLength == Int64(largeCopyData.count),
+                          "large cross-account copy preserves bytes")
+                } catch {
+                    check(false, "large cross-account destination is readable: \(error)")
+                }
+
+                await model.copy(
+                    items: [largeCopyItem], toBucket: "alpha", toPrefix: "fail/",
+                    move: true, toAccount: destinationAccount
+                )
+                let largeFailure = await waitUntil(timeout: 60) {
+                    model.transfers.tasks.contains {
+                        $0.destinationKey == "fail/source.bin" && $0.status == .failed
+                    }
+                }
+                check(largeFailure, "large cross-account destination failure is reported")
+                let aborted = await waitForStat(
+                    at: destinationAccount.endpoint, name: "abortMultipart", timeout: 15
+                )
+                check(aborted, "large copy failure aborts destination multipart upload")
+                let largeFailureSource = try? await service.objectDetails(
+                    account: account, secret: secret, bucket: "alpha", key: largeCopyKey
+                )
+                check(largeFailureSource != nil, "failed large move keeps the source")
+
+                let cancelKey = "slowcopy/source.bin"
+                let cancelURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("e2e-cancel-copy-\(UUID().uuidString).bin")
+                try? Data(repeating: 0x66, count: 1024 * 1024).write(to: cancelURL)
+                try? await service.upload(
+                    account: account, secret: secret, bucket: "alpha",
+                    key: cancelKey, from: cancelURL, progress: { _ in }
+                )
+                let cancelItem = S3Item.listed(
+                    key: cancelKey, size: 1024 * 1024, lastModified: nil,
+                    storageClass: nil, eTag: nil
+                )
+                await model.copy(
+                    items: [cancelItem], toBucket: "alpha", toPrefix: "cancel-dest/",
+                    move: true, toAccount: destinationAccount
+                )
+                let cancelTaskStarted = await waitUntil(timeout: 10) {
+                    model.transfers.tasks.contains {
+                        $0.key == cancelKey && $0.status == .running
+                    }
+                }
+                if let cancelTask = model.transfers.tasks.last(where: {
+                    $0.key == cancelKey && $0.direction == .copy
+                }), cancelTaskStarted {
+                    model.transfers.cancel(id: cancelTask.id)
+                    let canceled = await waitUntil(timeout: 10) {
+                        model.transfers.tasks.first { $0.id == cancelTask.id }?.status == .canceled
+                    }
+                    check(canceled, "cross-account copy can be canceled")
+                    let cancelSource = try? await service.objectDetails(
+                        account: account, secret: secret, bucket: "alpha", key: cancelKey
+                    )
+                    check(cancelSource != nil, "canceled cross-account move keeps the source")
+                    let leftoversCleared = await waitUntil(timeout: 10) {
+                        let leftovers = (try? FileManager.default.contentsOfDirectory(
+                            at: FileManager.default.temporaryDirectory,
+                            includingPropertiesForKeys: nil
+                        ))?.filter {
+                            $0.lastPathComponent == cancelTask.localURL.lastPathComponent
+                                || $0.lastPathComponent == S3Service.downloadTemporaryURL(
+                                    for: cancelTask.localURL
+                                ).lastPathComponent
+                        } ?? []
+                        return leftovers.isEmpty
+                    }
+                    check(leftoversCleared, "canceled cross-account copy removes staging files")
+                } else {
+                    check(false, "cross-account copy reaches a cancellable state")
+                }
+                try? FileManager.default.removeItem(at: mutatedURL)
+                try? FileManager.default.removeItem(at: largeCopyURL)
+                try? FileManager.default.removeItem(at: cancelURL)
+
+                let foreignAccount = Account(
+                    displayName: "No Secret",
+                    accessKeyID: "missing",
+                    kind: .compatible,
+                    region: "us-east-1",
+                    endpoint: destinationAccount.endpoint,
+                    usePathStyle: true,
+                    useSSL: false
+                )
+                let taskCountBefore = model.transfers.tasks.count
+                await model.copy(
+                    items: [copyItem], toBucket: "alpha", toPrefix: "missing/",
+                    move: false, toAccount: foreignAccount
+                )
+                check(model.transfers.tasks.count == taskCountBefore,
+                      "missing destination credentials do not enqueue a copy")
+                check(model.errorMessage != nil,
+                      "missing destination credentials surface an error")
+                try? FileManager.default.removeItem(at: crossSourceURL)
+                try? FileManager.default.removeItem(at: moveURL)
+            } else {
+                check(false, "second fake S3 endpoint was not provided")
+            }
 
             logs.flush()
             let finalLogs = logs.recent(limit: 20_000)
