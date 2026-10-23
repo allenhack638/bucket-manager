@@ -11,6 +11,23 @@ Bucket Manager is open source under the MIT License. Repository: https://github.
 
 For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 
+
+## Screenshots
+
+These captures use the built-in demo account only; no real credentials or bucket data are shown.
+
+| Browser — Light | Browser — Dark |
+| --- | --- |
+| ![Bucket browser in light mode](docs/screenshots/browser-light.png) | ![Bucket browser in dark mode](docs/screenshots/browser-dark.png) |
+
+| Logs & Statistics — Light | Logs & Statistics — Dark |
+| --- | --- |
+| ![Logs and statistics in light mode](docs/screenshots/logs-statistics.png) | ![Logs and statistics in dark mode](docs/screenshots/logs-statistics-dark.png) |
+
+| Edit Account — Light | Edit Account — Dark |
+| --- | --- |
+| ![Edit account sheet in light mode](docs/screenshots/edit-account.png) | ![Edit account sheet in dark mode](docs/screenshots/edit-account-dark.png) |
+
 ## What works
 
 - **Unlimited accounts** — Amazon S3, S3-compatible endpoints (Linode, MinIO, Wasabi,
