@@ -93,11 +93,13 @@ drag **Bucket Manager** to Applications, and launch it. The current release DMG
 is Apple Silicon (`arm64`); Intel Macs should build from source.
 
 The release DMG is ad-hoc signed with Hardened Runtime but **not notarized**.
-macOS will block the first launch. Use **Right-click → Open**, or remove the
-quarantine flag for this app:
+macOS will block the first launch. Click **Done** on the warning, then open
+**System Settings → Privacy & Security → Security** and click **Open Anyway**.
+Alternatively, remove the quarantine flag for this app:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Bucket Manager.app"
+open "/Applications/Bucket Manager.app"
 ```
 
 Do not disable Gatekeeper globally. If you prefer a trusted local build, build
@@ -354,7 +356,7 @@ headers, never the secret).
   and retained for 90 days. Request counters persist across launches; session and
   all-time totals are shown in Statistics.
 - GitHub release builds are ad-hoc signed with Hardened Runtime and are not
-  notarized; macOS requires a one-time Right-click → Open or quarantine removal.
+  notarized; macOS requires a one-time **System Settings → Privacy & Security → Open Anyway** step or quarantine removal.
   Developer ID signing and notarization remain optional for trusted distribution.
   Ad-hoc rebuilds may re-prompt for Keychain access.
 - The app is not App Sandboxed; see [SECURITY.md](SECURITY.md) for the migration
