@@ -43,7 +43,7 @@ jobs:
           ## Bucket Manager ${VERSION}
 
           Native macOS S3-compatible storage browser. This build targets
-          **${ARCH}**.
+          **${ARCH}**. Intel Macs can build from source.
 
           ### Unsigned build
 
@@ -52,9 +52,9 @@ jobs:
           to Applications, use **Right-click → Open**, or remove the quarantine
           flag for this app:
 
-          ```bash
+          \`\`\`bash
           xattr -dr com.apple.quarantine "/Applications/Bucket Manager.app"
-          ```
+          \`\`\`
 
           Do not disable Gatekeeper globally. To build from source instead, see
           the repository README.
@@ -74,6 +74,5 @@ jobs:
           gh release create "$TAG" \
             "build/BucketManager-${VERSION}-${ARCH}.dmg" \
             "build/BucketManager-${VERSION}-${ARCH}.dmg.sha256" \
-            "build/release-notes.md" \
             --title "Bucket Manager ${VERSION}" \
             --notes-file build/release-notes.md

@@ -72,7 +72,8 @@ For the "how and why" behind the code, read **[docs/ARCHITECTURE.md](docs/ARCHIT
 ### GitHub release (unsigned)
 
 Download the latest DMG from [Releases](https://github.com/allenhack638/bucket-manager/releases),
-drag **Bucket Manager** to Applications, and launch it.
+drag **Bucket Manager** to Applications, and launch it. The current release DMG
+is Apple Silicon (`arm64`); Intel Macs should build from source.
 
 The release DMG is ad-hoc signed with Hardened Runtime but **not notarized**.
 macOS will block the first launch. Use **Right-click → Open**, or remove the
