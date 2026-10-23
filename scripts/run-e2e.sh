@@ -14,12 +14,12 @@ TRANSFER_QUEUE=$(mktemp /tmp/s3c-transfer-queue.XXXXXX)
 TEMP_REGISTRY=$(mktemp /tmp/s3c-temp-registry.XXXXXX)
 SETTINGS_SUITE="BucketManagerE2ESettings.$$"
 rm -f "$STATE" "$METRICS" "$TRANSFER_QUEUE" "$TEMP_REGISTRY"
-FAKE_MULTIPART_DELAY=0.25 FAKE_MULTIPART_STAGGER=1 python3 scripts/fake_s3.py 0 >"$LOG" 2>&1 &
+PYTHONUNBUFFERED=1 FAKE_MULTIPART_DELAY=0.25 FAKE_MULTIPART_STAGGER=1 python3 scripts/fake_s3.py 0 >"$LOG" 2>&1 &
 SERVER=$!
 trap 'kill "$SERVER" 2>/dev/null || true; rm -rf "$STATE" "$LOGDIR" "$METRICS" "$TRANSFER_QUEUE" "$TEMP_REGISTRY" "$APP_LOG"; defaults delete "$SETTINGS_SUITE" >/dev/null 2>&1 || true' EXIT
 
 PORT=""
-for _ in $(seq 1 50); do
+for _ in $(seq 1 300); do
   PORT=$(grep -o 'LISTENING [0-9]*' "$LOG" 2>/dev/null | awk '{print $2}' | tail -1 || true)
   [ -n "$PORT" ] && break
   sleep 0.1
