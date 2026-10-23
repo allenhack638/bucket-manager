@@ -647,30 +647,7 @@ final class MainWindowController: NSWindowController {
         _ = item(menu, "Delete bucket…", #selector(deleteBucketAction))
         _ = item(menu, "Refresh buckets list", #selector(refreshBucketsAction), key: "r", modifiers: [.command, .shift])
         menu.addItem(.separator())
-        let advanced = [
-            "Edit Access Control List (ACL)…",
-            "Add External Bucket…",
-            "Mount as Windows Drive…",
-            "Bucket Sharing Wizard…",
-            "Edit Tags…",
-            "Edit Logging Settings…",
-            "Edit Versioning Settings…",
-            "Default Encryption Configuration…",
-            "Public Access Block Configuration…",
-            "Object Ownership Configuration…",
-            "Object Lock",
-            "Transfer Acceleration…",
-            "Intelligent Tiering Configuration…"
-        ]
-        for title in advanced {
-            let item = menu.addItem(withTitle: title, action: nil, keyEquivalent: "")
-            item.tag = 999
-            item.isEnabled = false
-        }
         _ = item(menu, "Generate Web URLs…", #selector(generateWebURL))
-        let storage = menu.addItem(withTitle: "Change Storage Class to…", action: nil, keyEquivalent: "")
-        storage.tag = 999
-        storage.isEnabled = false
         return menu
     }
 
