@@ -105,6 +105,18 @@ open "/Applications/Bucket Manager.app"
 Do not disable Gatekeeper globally. If you prefer a trusted local build, build
 from source.
 
+### Homebrew source build (no Gatekeeper warning)
+
+```bash
+brew tap allenhack638/bucket-manager
+brew install --build-from-source bucket-manager
+bucket-manager
+```
+
+This builds Bucket Manager locally and installs it under Homebrew's prefix, not
+`/Applications`. It requires macOS 14+ and a Swift 6.2+ toolchain. The tap is at
+[allenhack638/homebrew-bucket-manager](https://github.com/allenhack638/homebrew-bucket-manager).
+
 ### Build from source
 
 Requirements: macOS 14 or later, Xcode command-line tools, and Swift 6.2+.
