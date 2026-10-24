@@ -166,6 +166,8 @@ pub fn run() {
             match app.get_webview_window("main") {
                 Some(window) => {
                     startup_log("main window exists");
+                    let _ = window
+                        .set_size(tauri::Size::Logical(tauri::LogicalSize::new(1120.0, 650.0)));
                     let _ = window.show();
                     let _ = window.set_focus();
                 }

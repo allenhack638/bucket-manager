@@ -234,6 +234,39 @@ svg {
   font-size: 12px;
 }
 
+.sidebar-empty-state {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  text-align: center;
+}
+
+.sidebar-empty-state > svg {
+  width: 32px;
+  height: 32px;
+  color: var(--secondary);
+  stroke-width: 1.2;
+}
+
+.sidebar-empty-state strong {
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.sidebar-empty-state p {
+  margin: 3px 0 12px;
+  color: var(--secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .main {
   display: flex;
   min-width: 0;
@@ -284,11 +317,6 @@ svg {
   color: var(--secondary);
 }
 
-.breadcrumbs button + button::before {
-  margin-right: 4px;
-  color: var(--tertiary);
-  content: "/";
-}
 
 .breadcrumbs button:first-child {
   color: var(--secondary);

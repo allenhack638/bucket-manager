@@ -729,7 +729,22 @@ export default function App() {
           {loadingBuckets ? (
             <div className="sidebar-empty">Loading buckets…</div>
           ) : buckets.length === 0 ? (
-            <div className="sidebar-empty">{accountId ? "No buckets" : "No storage accounts yet"}</div>
+            <div className="sidebar-empty-state">
+              <Icon name="bucket" />
+              <strong>{accountId ? "No buckets" : "No storage accounts yet"}</strong>
+              <p>
+                {accountId
+                  ? "Create a bucket in this account to get started."
+                  : "Add an S3 account to start browsing buckets."}
+              </p>
+              <button
+                className="button primary"
+                type="button"
+                onClick={() => (accountId ? void createBucket() : setDialog({}))}
+              >
+                {accountId ? "New bucket" : "Add new account"}
+              </button>
+            </div>
           ) : (
             buckets.map((item) => (
               <button
@@ -756,12 +771,14 @@ export default function App() {
             <button type="button" onClick={() => setPrefix("")} disabled={!bucket}>
               /
             </button>
-            <button type="button" onClick={() => setPrefix("")} disabled={!bucket}>
-              {bucket || "Objects"}
-            </button>
+            {bucket && (
+              <button type="button" onClick={() => setPrefix("")}>
+                {bucket}/
+              </button>
+            )}
             {breadcrumb.map((item) => (
               <button type="button" key={item.prefix} onClick={() => setPrefix(item.prefix)}>
-                {item.name}
+                {item.name}/
               </button>
             ))}
           </div>
