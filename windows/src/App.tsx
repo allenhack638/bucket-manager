@@ -11,7 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
 import { applyAppearance, initAppearance, type Appearance } from "./theme";
-import type { Account, AccountInput, Bucket, ListPage, ObjectEntry } from "./types";
+import type { Account, AccountInput, Bucket, ListPage, ObjectEntry, TransferTask } from "./types";
 
 type SortKey = "name" | "size" | "modified" | "storage";
 
@@ -381,6 +381,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
   const [dialog, setDialog] = useState<{ account?: Account } | null>(null);
+  const [transfers, setTransfers] = useState<TransferTask[]>([]);
 
   const activeAccount = useMemo(
     () => accounts.find((account) => account.id === accountId),
@@ -411,6 +412,33 @@ export default function App() {
     let unlisten: (() => void) | undefined;
     void listen<Appearance>("appearance-changed", (event) => {
       applyAppearance(event.payload);
+    }).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    const upsert = (task: TransferTask) =>
+      setTransfers((current) => {
+        const next = current.filter((item) => item.id !== task.id);
+        next.push(task);
+        return next.sort((left, right) => right.createdAt - left.createdAt);
+      });
+    void api.listTransfers().then((tasks) => {
+      if (active) setTransfers(tasks);
+    });
+    void listen<TransferTask>("transfer-updated", (event) => {
+      upsert(event.payload);
+      if (event.payload.kind === "upload" && event.payload.status === "completed") {
+        setRefreshTick((value) => value + 1);
+      }
     }).then((stop) => {
       if (active) unlisten = stop;
       else stop();
@@ -502,6 +530,16 @@ export default function App() {
   );
   const selectedEntry = selectedEntries[selectedEntries.length - 1] ?? null;
   const visibleTotalSize = entries.reduce((sum, entry) => sum + (entry.size ?? 0), 0);
+  const transferCounts = {
+    running: transfers.filter((task) => task.status === "running").length,
+    queued: transfers.filter((task) => task.status === "queued").length,
+    paused: transfers.filter((task) => task.status === "paused").length,
+    failed: transfers.filter((task) => task.status === "failed").length,
+    completed: transfers.filter((task) => task.status === "completed").length,
+    cancelled: transfers.filter((task) => task.status === "cancelled").length,
+  };
+  const transferBytes = transfers.reduce((sum, task) => sum + task.transferred, 0);
+  const transferTotal = transfers.reduce((sum, task) => sum + task.size, 0);
 
   const breadcrumb = useMemo(() => {
     const parts = prefix.split("/").filter(Boolean);
@@ -589,9 +627,8 @@ export default function App() {
       for (const path of paths) {
         const name = path.split(/[\\/]/).pop();
         if (!name) continue;
-        await api.uploadObject(accountId, bucket, joinKey(prefix, name), path);
+        await api.enqueueUpload(accountId, bucket, joinKey(prefix, name), path);
       }
-      refresh();
     } catch (nextError) {
       setError(errorMessage(nextError));
     } finally {
@@ -615,7 +652,7 @@ export default function App() {
           break;
         }
         if (!destination) break;
-        await api.downloadObject(accountId, bucket, entry.key, destination);
+        await api.enqueueDownload(accountId, bucket, entry.key, destination, entry.size ?? 0);
       }
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -641,6 +678,58 @@ export default function App() {
       setError(errorMessage(nextError));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const pauseTransfer = async (id: string) => {
+    try {
+      await api.pauseTransfer(id);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    }
+  };
+
+  const resumeTransfer = async (id: string) => {
+    try {
+      await api.resumeTransfer(id);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    }
+  };
+
+  const cancelTransfer = async (id: string) => {
+    try {
+      await api.cancelTransfer(id);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    }
+  };
+
+  const retryTransfer = async (id: string) => {
+    try {
+      await api.retryTransfer(id);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    }
+  };
+
+  const startAll = async () => {
+    for (const task of transfers.filter((item) => item.status === "paused")) {
+      await resumeTransfer(task.id);
+    }
+  };
+
+  const stopAll = async () => {
+    for (const task of transfers.filter((item) => item.status === "running" || item.status === "queued")) {
+      await pauseTransfer(task.id);
+    }
+  };
+
+  const cancelAll = async () => {
+    for (const task of transfers.filter((item) =>
+      ["running", "queued", "paused"].includes(item.status),
+    )) {
+      await cancelTransfer(task.id);
     }
   };
 
@@ -1014,13 +1103,61 @@ export default function App() {
                   onClick={() => setTab(id)}
                 >
                   {label}
-                  {id === "tasks" && " (0)"}
+                  {id === "tasks" && ` (${transfers.length})`}
                 </button>
               ))}
             </div>
 
             <div className="inspector">
-              {tab === "tasks" && <div className="inspector-empty">No transfers in this session.</div>}
+              {tab === "tasks" &&
+                (transfers.length === 0 ? (
+                  <div className="inspector-empty">No transfers in this session.</div>
+                ) : (
+                  <div className="transfer-table">
+                    <div className="transfer-head">
+                      <span>Task</span>
+                      <span>Size</span>
+                      <span>%</span>
+                      <span>Progress</span>
+                      <span>Status</span>
+                      <span />
+                    </div>
+                    {transfers.map((task) => {
+                      const percent = task.size > 0 ? Math.min(100, Math.round((task.transferred / task.size) * 100)) : 0;
+                      const active = ["queued", "running", "paused"].includes(task.status);
+                      return (
+                        <div className="transfer-row" key={task.id}>
+                          <span className="transfer-name" title={`${task.localPath} → ${task.bucket}/${task.key}`}>
+                            <Icon name={task.kind === "upload" ? "upload" : "download"} />
+                            {task.kind === "upload" ? "Upload" : "Download"} {task.key.split("/").pop()}
+                            <small>{task.multipart ? "multipart" : "single"}</small>
+                          </span>
+                          <span>{formatSize(task.size)}</span>
+                          <span>{percent}%</span>
+                          <span className="transfer-progress-track">
+                            <span style={{ width: `${percent}%` }} />
+                          </span>
+                          <span className={`transfer-status ${task.status}`} title={task.error ?? ""}>
+                            {task.status}
+                          </span>
+                          <span className="transfer-row-actions">
+                            {task.status === "running" || task.status === "queued" ? (
+                              <button type="button" onClick={() => void pauseTransfer(task.id)}>Pause</button>
+                            ) : task.status === "paused" ? (
+                              <button type="button" onClick={() => void resumeTransfer(task.id)}>Resume</button>
+                            ) : null}
+                            {active && (
+                              <button type="button" onClick={() => void cancelTransfer(task.id)}>Cancel</button>
+                            )}
+                            {(task.status === "failed" || task.status === "cancelled") && (
+                              <button type="button" onClick={() => void retryTransfer(task.id)}>Retry</button>
+                            )}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               {tab === "permissions" && (
                 <div className="inspector-empty">Select an object to view its permissions.</div>
               )}
@@ -1074,20 +1211,31 @@ export default function App() {
 
       <footer className="transfer-footer">
         <div className="transfer-counts">
-          <button type="button" className="transfer-filter">Running (0)</button>
-          <button type="button" className="transfer-filter">Queued (0)</button>
-          <button type="button" className="transfer-filter">Stopped</button>
-          <button type="button" className="transfer-filter">Failed</button>
+          <button type="button" className="transfer-filter">Running ({transferCounts.running})</button>
+          <button type="button" className="transfer-filter">Queued ({transferCounts.queued})</button>
+          <button type="button" className="transfer-filter">Stopped ({transferCounts.paused})</button>
+          <button type="button" className="transfer-filter">Failed ({transferCounts.failed})</button>
         </div>
-        <span className="transfer-summary">All (0) · 0 MB / 0 MB · 0 MB/s · 00:00:00</span>
+        <span className="transfer-summary">
+          All ({transfers.length}) · {formatSize(transferBytes)} / {formatSize(transferTotal)}
+          {transferCounts.completed > 0 ? ` · ${transferCounts.completed} complete` : ""}
+        </span>
         <div className="transfer-actions">
-          <button type="button" disabled>
+          <button type="button" onClick={() => void startAll()} disabled={transferCounts.paused === 0}>
             <Icon name="play" /> Start All
           </button>
-          <button type="button" disabled>
+          <button
+            type="button"
+            onClick={() => void stopAll()}
+            disabled={transferCounts.running + transferCounts.queued === 0}
+          >
             <Icon name="stop" /> Stop All
           </button>
-          <button type="button" disabled>
+          <button
+            type="button"
+            onClick={() => void cancelAll()}
+            disabled={transferCounts.running + transferCounts.queued + transferCounts.paused === 0}
+          >
             <Icon name="cancel" /> Cancel All
           </button>
         </div>

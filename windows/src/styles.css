@@ -1104,3 +1104,102 @@ button.header-cell:hover {
     display: none;
   }
 }
+
+.transfer-table {
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.transfer-head,
+.transfer-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 76px 44px 160px 74px 130px;
+  align-items: center;
+  gap: 8px;
+}
+
+.transfer-head {
+  height: 24px;
+  border-bottom: 1px solid var(--border);
+  color: var(--tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.transfer-row {
+  min-height: 22px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.transfer-name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.transfer-name svg {
+  width: 12px;
+  height: 12px;
+  color: var(--secondary);
+}
+
+.transfer-name small {
+  color: var(--tertiary);
+  font-size: 10px;
+}
+
+.transfer-progress-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--pressed);
+}
+
+.transfer-progress-track span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--progress);
+  transition: width 120ms linear;
+}
+
+.transfer-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--secondary);
+}
+
+.transfer-status.running {
+  color: var(--progress);
+}
+
+.transfer-status.failed {
+  color: var(--warning);
+}
+
+.transfer-status.completed {
+  color: var(--link);
+}
+
+.transfer-row-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.transfer-row-actions button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--link);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.transfer-row-actions button:hover {
+  text-decoration: underline;
+}

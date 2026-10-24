@@ -40,3 +40,18 @@ export type ListPage = {
   entries: ObjectEntry[];
   nextToken: string | null;
 };
+
+export type TransferTask = {
+  id: string;
+  kind: "upload" | "download";
+  accountId: string;
+  bucket: string;
+  key: string;
+  localPath: string;
+  size: number;
+  transferred: number;
+  status: "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
+  error: string | null;
+  multipart: boolean;
+  createdAt: number;
+};

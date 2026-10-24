@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AccountInput, Bucket, ListPage } from "./types";
+import type { Account, AccountInput, Bucket, ListPage, TransferTask } from "./types";
 
 export const api = {
   listAccounts: () => invoke<Account[]>("list_accounts"),
@@ -24,4 +24,13 @@ export const api = {
     invoke<void>("delete_object", { id, bucket, key }),
   createFolder: (id: string, bucket: string, key: string) =>
     invoke<void>("create_folder", { id, bucket, key }),
+  listTransfers: () => invoke<TransferTask[]>("list_transfers"),
+  enqueueUpload: (id: string, bucket: string, key: string, filePath: string) =>
+    invoke<TransferTask>("enqueue_upload", { id, bucket, key, filePath }),
+  enqueueDownload: (id: string, bucket: string, key: string, destination: string, size: number) =>
+    invoke<TransferTask>("enqueue_download", { id, bucket, key, destination, size }),
+  pauseTransfer: (id: string) => invoke<void>("pause_transfer", { id }),
+  resumeTransfer: (id: string) => invoke<void>("resume_transfer", { id }),
+  cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),
+  retryTransfer: (id: string) => invoke<void>("retry_transfer", { id }),
 };

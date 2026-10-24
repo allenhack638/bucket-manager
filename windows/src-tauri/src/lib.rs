@@ -1,13 +1,15 @@
 mod accounts;
 mod s3;
+mod transfer;
 
 use accounts::{Account, AccountInput, AccountStore};
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
+use transfer::{TransferManager, TransferTask};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AppearanceMode {
@@ -43,8 +45,93 @@ struct AppearanceMenuItems {
 
 pub struct AppState {
     pub store: AccountStore,
+    pub transfers: Arc<TransferManager>,
     appearance: Mutex<AppearanceMode>,
     menu_items: Mutex<Option<AppearanceMenuItems>>,
+}
+
+#[tauri::command]
+fn list_transfers(state: State<'_, AppState>) -> Vec<TransferTask> {
+    state.transfers.list()
+}
+
+fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Result<(), String> {
+    let account = state.store.get(&task.account_id)?;
+    let secret = state.store.secret(&task.account_id)?;
+    let manager = state.transfers.clone();
+    let app = app.clone();
+    let id = task.id.clone();
+    if task.kind == "upload" {
+        tauri::async_runtime::spawn(async move {
+            transfer::run_upload(app, manager, account, secret, id).await;
+        });
+    } else {
+        tauri::async_runtime::spawn(async move {
+            transfer::run_download(app, manager, account, secret, id).await;
+        });
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn enqueue_upload(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    bucket: String,
+    key: String,
+    file_path: String,
+) -> Result<TransferTask, String> {
+    let task = state
+        .transfers
+        .add_upload(&app, &id, &bucket, &key, &file_path)?;
+    spawn_transfer(&app, &state, task.clone())?;
+    Ok(task)
+}
+
+#[tauri::command]
+fn enqueue_download(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+    bucket: String,
+    key: String,
+    destination: String,
+    size: u64,
+) -> Result<TransferTask, String> {
+    let task = state
+        .transfers
+        .add_download(&app, &id, &bucket, &key, &destination, size);
+    spawn_transfer(&app, &state, task.clone())?;
+    Ok(task)
+}
+
+#[tauri::command]
+fn pause_transfer(app: AppHandle, state: State<'_, AppState>, id: String) {
+    state.transfers.pause(&app, &id);
+}
+
+#[tauri::command]
+fn resume_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let Some(task) = state.transfers.get(&id) else {
+        return Err("Transfer not found.".to_string());
+    };
+    state.transfers.resume(&app, &id);
+    spawn_transfer(&app, &state, task)
+}
+
+#[tauri::command]
+fn cancel_transfer(app: AppHandle, state: State<'_, AppState>, id: String) {
+    state.transfers.cancel(&app, &id);
+}
+
+#[tauri::command]
+fn retry_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let Some(task) = state.transfers.get(&id) else {
+        return Err("Transfer not found.".to_string());
+    };
+    state.transfers.retry(&app, &id);
+    spawn_transfer(&app, &state, task)
 }
 
 #[tauri::command]
@@ -261,10 +348,12 @@ pub fn run() {
     startup_log("account store loaded");
 
     let appearance = load_appearance();
+    let transfers = Arc::new(TransferManager::load());
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             store,
+            transfers,
             appearance: Mutex::new(appearance),
             menu_items: Mutex::new(None),
         })
@@ -336,6 +425,13 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            list_transfers,
+            enqueue_upload,
+            enqueue_download,
+            pause_transfer,
+            resume_transfer,
+            cancel_transfer,
+            retry_transfer,
             get_appearance,
             set_appearance,
             list_accounts,
