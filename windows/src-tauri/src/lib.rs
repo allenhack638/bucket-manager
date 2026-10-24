@@ -527,7 +527,7 @@ fn open_logs_window_impl(app: &AppHandle, state: &AppState, tab: &str) -> Result
         let _ = window.emit("logs-tab", tab);
         return Ok(());
     }
-    let window = tauri::WebviewWindowBuilder::new(app, "logs", tauri::WebviewUrl::default())
+    let window = tauri::WebviewWindowBuilder::new(app, "logs", tauri::WebviewUrl::App("index.html".into()))
         .title("Logs & Statistics")
         .inner_size(1080.0, 680.0)
         .min_inner_size(820.0, 480.0)
