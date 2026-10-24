@@ -3,6 +3,7 @@ use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::Region;
 use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::types::{BucketLocationConstraint, CreateBucketConfiguration};
 use aws_sdk_s3::Client;
 use serde::Serialize;
 use std::path::Path;
@@ -96,6 +97,33 @@ pub async fn list_buckets(account: &Account, secret: &str) -> Result<Vec<BucketI
             })
         })
         .collect())
+}
+
+pub async fn create_bucket(account: &Account, secret: &str, bucket: &str) -> Result<(), String> {
+    if bucket.trim().is_empty() {
+        return Err("A bucket name is required.".to_string());
+    }
+    let client = client_for(account, secret).await;
+    let mut request = client.create_bucket().bucket(bucket);
+    if account.region != "us-east-1" {
+        let configuration = CreateBucketConfiguration::builder()
+            .location_constraint(BucketLocationConstraint::from(account.region.as_str()))
+            .build();
+        request = request.create_bucket_configuration(configuration);
+    }
+    request.send().await.map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub async fn delete_bucket(account: &Account, secret: &str, bucket: &str) -> Result<(), String> {
+    let client = client_for(account, secret).await;
+    client
+        .delete_bucket()
+        .bucket(bucket)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 pub async fn list_objects(

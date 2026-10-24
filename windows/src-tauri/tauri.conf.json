@@ -13,10 +13,12 @@
     "windows": [
       {
         "title": "Bucket Manager",
-        "width": 1200,
-        "height": 760,
+        "width": 1120,
+        "height": 650,
         "minWidth": 900,
         "minHeight": 560,
+        "center": true,
+        "visible": true,
         "resizable": true
       }
     ],

@@ -2,7 +2,10 @@ mod accounts;
 mod s3;
 
 use accounts::{Account, AccountInput, AccountStore};
-use tauri::State;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{Manager, State};
 
 pub struct AppState {
     pub store: AccountStore,
@@ -38,6 +41,28 @@ async fn list_buckets(
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
     s3::list_buckets(&account, &secret).await
+}
+
+#[tauri::command]
+async fn create_bucket(
+    state: State<'_, AppState>,
+    id: String,
+    bucket: String,
+) -> Result<(), String> {
+    let account = state.store.get(&id)?;
+    let secret = state.store.secret(&id)?;
+    s3::create_bucket(&account, &secret, &bucket).await
+}
+
+#[tauri::command]
+async fn delete_bucket(
+    state: State<'_, AppState>,
+    id: String,
+    bucket: String,
+) -> Result<(), String> {
+    let account = state.store.get(&id)?;
+    let secret = state.store.secret(&id)?;
+    s3::delete_bucket(&account, &secret, &bucket).await
 }
 
 #[tauri::command]
@@ -103,27 +128,79 @@ async fn create_folder(
     s3::create_folder(&account, &secret, &bucket, &key).await
 }
 
+fn startup_log(message: &str) {
+    let directory = dirs::data_local_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("BucketManager");
+    let _ = std::fs::create_dir_all(&directory);
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(directory.join("startup.log"))
+    {
+        let _ = writeln!(
+            file,
+            "{:?} {message}",
+            SystemTime::now().duration_since(UNIX_EPOCH)
+        );
+    }
+}
+
 pub fn run() {
+    std::panic::set_hook(Box::new(|panic| {
+        startup_log(&format!("panic: {panic}"));
+    }));
+    startup_log("run start");
+
     let store = AccountStore::load().unwrap_or_else(|error| {
-        eprintln!("Could not load accounts: {error}");
+        startup_log(&format!("could not load accounts: {error}"));
         AccountStore::empty()
     });
+    startup_log("account store loaded");
 
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState { store })
+        .setup(|app| {
+            startup_log("setup");
+            match app.get_webview_window("main") {
+                Some(window) => {
+                    startup_log("main window exists");
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                None => {
+                    startup_log("main window missing; creating it");
+                    tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+                        .title("Bucket Manager")
+                        .inner_size(1120.0, 650.0)
+                        .min_inner_size(900.0, 560.0)
+                        .build()?;
+                }
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             list_accounts,
             save_account,
             delete_account,
             test_connection,
             list_buckets,
+            create_bucket,
+            delete_bucket,
             list_objects,
             upload_object,
             download_object,
             delete_object,
             create_folder
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Bucket Manager");
+        .run(tauri::generate_context!());
+
+    match result {
+        Ok(()) => startup_log("run returned Ok"),
+        Err(error) => {
+            startup_log(&format!("run returned error: {error}"));
+            std::process::exit(1);
+        }
+    }
 }

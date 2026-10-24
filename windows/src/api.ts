@@ -7,6 +7,8 @@ export const api = {
   deleteAccount: (id: string) => invoke<void>("delete_account", { id }),
   testConnection: (id: string) => invoke<string>("test_connection", { id }),
   listBuckets: (id: string) => invoke<Bucket[]>("list_buckets", { id }),
+  createBucket: (id: string, bucket: string) => invoke<void>("create_bucket", { id, bucket }),
+  deleteBucket: (id: string, bucket: string) => invoke<void>("delete_bucket", { id, bucket }),
   listObjects: (id: string, bucket: string, prefix: string, continuationToken?: string) =>
     invoke<ListPage>("list_objects", {
       id,
