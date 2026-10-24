@@ -527,14 +527,13 @@ fn open_logs_window_impl(app: &AppHandle, state: &AppState, tab: &str) -> Result
         let _ = window.emit("logs-tab", tab);
         return Ok(());
     }
-    let window = tauri::WebviewWindowBuilder::new(app, "logs", tauri::WebviewUrl::App("index.html".into()))
-        .title("Logs & Statistics")
-        .inner_size(1080.0, 680.0)
-        .min_inner_size(820.0, 480.0)
-        .build()
-        .map_err(|error| error.to_string())?;
+    let window = app
+        .get_webview_window("logs")
+        .ok_or_else(|| "Logs window is unavailable.".to_string())?;
     let _ = window.show();
+    let _ = window.unminimize();
     let _ = window.set_focus();
+    let _ = window.emit("logs-tab", tab);
     Ok(())
 }
 

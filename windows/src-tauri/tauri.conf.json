@@ -19,7 +19,20 @@
         "minHeight": 560,
         "center": true,
         "visible": true,
-        "resizable": true
+        "resizable": true,
+        "label": "main"
+      },
+      {
+        "label": "logs",
+        "title": "Logs & Statistics",
+        "width": 1080,
+        "height": 680,
+        "minWidth": 820,
+        "minHeight": 480,
+        "center": true,
+        "visible": false,
+        "resizable": true,
+        "url": "index.html"
       }
     ],
     "security": {
@@ -28,7 +41,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "publisher": "Allen Benny",
     "shortDescription": "S3-compatible object storage browser",
     "longDescription": "Browse Amazon S3 and S3-compatible object storage from Windows.",
