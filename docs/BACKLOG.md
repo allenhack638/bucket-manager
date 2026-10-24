@@ -35,4 +35,13 @@ These commands were removed from the macOS menu because they were disabled place
 - Writable object tags, metadata, ACLs
 - Object version restore/delete
 - Full App Sandbox migration
-- Cross-platform Windows/Linux desktop application
+
+## Windows app parity
+
+- Multipart uploads and resumable transfers
+- Transfer queue with pause/resume and progress
+- Cross-account copy/move
+- Object inspector tabs and logs/statistics
+- Drag and drop
+- Installer code signing
+- Linux desktop application

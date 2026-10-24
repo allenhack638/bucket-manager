@@ -1,5 +1,13 @@
 # Changelog
 
+## Windows preview 0.1.0 — 2026-10-24
+
+- Add a Windows Tauri 2 application in `windows/` with a React UI and Rust S3 backend.
+- Support multiple accounts, Windows Credential Manager secrets, custom endpoints, regions, bucket-scoped credentials, and path-style addressing.
+- Add bucket and folder browsing, paginated listings, upload, download, create folder, and recursive folder delete.
+- Add Windows CI and a `windows-v*` release workflow for NSIS and MSI installers.
+- Document that multipart transfers, the transfer queue, cross-account copy/move, inspector tabs, logs/statistics, and drag and drop remain future parity work.
+
 ## 1.0.0 — 2026-10-24
 
 - Add queued cross-account copy and move with a destination account/bucket picker.

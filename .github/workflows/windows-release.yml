@@ -1,0 +1,58 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - "windows-v*"
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: windows
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: windows/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows/src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci --include=dev
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Test Rust backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build Windows installers
+        run: npm run tauri -- build
+
+      - name: Publish Windows release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = $env:GITHUB_REF_NAME -replace '^windows-v', ''
+          $assets = Get-ChildItem "src-tauri/target/release/bundle" -Recurse -File |
+            Where-Object { $_.Extension -in ".exe", ".msi" } |
+            ForEach-Object { $_.FullName }
+          if (-not $assets) { throw "No Windows installers were produced." }
+          gh release create "$env:GITHUB_REF_NAME" $assets `
+            --title "Bucket Manager for Windows $version" `
+            --notes-file "RELEASE_NOTES.md" `
+            --latest=false
