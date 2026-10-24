@@ -14,6 +14,7 @@ Windows preview with the macOS layout, appearance switching, and a transfer queu
 - Add a persisted **View → Appearance** menu with **System**, **Light**, and **Dark**, matching the macOS appearance behavior.
 - Add a persistent transfer queue with live progress, pause/resume/cancel/retry, and a Tasks inspector tab.
 - Add multipart uploads above 16 MiB with 8 MiB parts, scoped aborts, and full-size verification.
+- Verified 21 MiB multipart upload/download against fake S3 and real MEGA S4 in both test buckets, with byte-identical SHA-256 downloads.
 
 ## Known limitations
 

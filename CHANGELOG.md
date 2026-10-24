@@ -6,7 +6,8 @@
 - Add multipart uploads above 16 MiB with 8 MiB parts, per-part progress, completion, and scoped abort on failure/cancel.
 - Add streamed downloads with byte progress and atomic temporary-file replacement.
 - Add the Tasks inspector table and active transfer controls to the Windows UI.
-- Verified a 21 MiB multipart upload/download against fake S3 with byte-identical SHA-256 hashes, plus pause/cancel/resume and relaunch persistence.
+- Verified a 21 MiB multipart upload/download against fake S3 and real MEGA S4 (`test-bucket` and `test-bucket-2`) with byte-identical SHA-256 hashes.
+- Verified pause/cancel/resume and queue persistence across relaunch against fake S3.
 
 ## Windows preview 0.1.2 — 2026-10-24
 

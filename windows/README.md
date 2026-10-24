@@ -19,7 +19,7 @@ separate Rust + React implementation.
 - Upload, download, create folder, and delete objects or folders.
 - Paginated listings.
 - Persistent transfer queue with live progress, pause/resume/cancel/retry.
-- Multipart uploads above 16 MiB with 8 MiB parts.
+- Multipart uploads above 16 MiB with 8 MiB parts, verified against fake S3 and real MEGA S4 in both test buckets.
 - System/Light/Dark appearance menu.
 - macOS-matching layout: 321 px sidebar, 24 px path bar, 24 px header, 18 px rows, 30 px action bar, 28 px tabs, 40 px transfer footer.
 
