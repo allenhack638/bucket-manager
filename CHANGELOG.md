@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Quarantine downloaded objects so Gatekeeper checks them before they can open.
+- Remove the pre-rebrand data import and unused SmithyStreams and futures-util dependencies.
+- Label the admin passcode Keychain item and document how to reset a forgotten passcode.
+
 ## Windows preview 0.1.4 — 2026-10-24
 
 - Add queued cross-account copy and move.

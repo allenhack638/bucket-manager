@@ -554,6 +554,18 @@ actor S3Service {
             .appendingPathComponent(".\(destination.lastPathComponent).bmdownload")
     }
 
+    /// Tags a downloaded object like a browser download, so Gatekeeper checks it before
+    /// it can launch. Bucket contents are untrusted.
+    nonisolated static func markQuarantined(_ url: URL) {
+        var values = URLResourceValues()
+        values.quarantineProperties = [
+            kLSQuarantineTypeKey as String: kLSQuarantineTypeOtherDownload as String,
+            kLSQuarantineAgentNameKey as String: "Bucket Manager"
+        ]
+        var target = url
+        try? target.setResourceValues(values)
+    }
+
     nonisolated static func copyTemporaryURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("BucketManager-Copy-\(UUID().uuidString).tmp")
@@ -668,6 +680,7 @@ actor S3Service {
                     try fileManager.moveItem(at: temporaryURL, to: url)
                 }
                 try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                Self.markQuarantined(url)
                 let finalSize = totalSize ?? (offset + received)
                 recordRequest(
                     "GetObject", account: account, bucket: bucket, key: key,

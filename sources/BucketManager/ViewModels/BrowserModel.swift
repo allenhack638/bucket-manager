@@ -106,9 +106,6 @@ final class BrowserModel {
         let defaults = UserDefaults.standard
         if let current = defaults.object(forKey: "BucketManagerCalculateFolderSizes") as? Bool {
             self.calculateFolderSizes = current
-        } else if let legacy = defaults.object(forKey: "\(LegacyImport.defaultsPrefix)CalculateFolderSizes") as? Bool {
-            self.calculateFolderSizes = legacy
-            defaults.set(legacy, forKey: "BucketManagerCalculateFolderSizes")
         } else {
             self.calculateFolderSizes = true
         }

@@ -12,10 +12,15 @@ struct PasscodeCredential: Codable, Sendable {
 enum PasscodeHasher {
     static let defaultIterations = 100_000
 
-    static func make(password: String, iterations: Int = defaultIterations) -> PasscodeCredential {
+    static func make(password: String, iterations: Int = defaultIterations) throws -> PasscodeCredential {
         var salt = Data(count: 16)
-        _ = salt.withUnsafeMutableBytes {
+        let status = salt.withUnsafeMutableBytes {
             SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!)
+        }
+        guard status == errSecSuccess else {
+            throw NSError(domain: "BucketManager.AdminPasscode", code: Int(status), userInfo: [
+                NSLocalizedDescriptionKey: "Could not generate a random salt."
+            ])
         }
         return PasscodeCredential(
             salt: salt,
@@ -57,6 +62,8 @@ final class AdminPasscodeStore: @unchecked Sendable {
 
     private let service = "com.bucketmanager.admin"
     private let account = "passcode"
+    /// Shown in Keychain Access; the passcode prompts tell users to delete this item to reset.
+    private let label = "Bucket Manager Admin Passcode"
     private let lock = NSLock()
 
     var hasPasscode: Bool {
@@ -66,7 +73,7 @@ final class AdminPasscodeStore: @unchecked Sendable {
     }
 
     func setPasscode(_ password: String) throws {
-        let credential = PasscodeHasher.make(password: password)
+        let credential = try PasscodeHasher.make(password: password)
         lock.lock()
         defer { lock.unlock() }
         try writeCredential(credential)
@@ -117,12 +124,16 @@ final class AdminPasscodeStore: @unchecked Sendable {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
-        let updateAttributes: [String: Any] = [kSecValueData as String: data]
+        let updateAttributes: [String: Any] = [
+            kSecValueData as String: data,
+            kSecAttrLabel as String: label
+        ]
         let updateStatus = SecItemUpdate(query as CFDictionary, updateAttributes as CFDictionary)
         if updateStatus == errSecSuccess { return }
         guard updateStatus == errSecItemNotFound else { throw keychainError(updateStatus) }
         var add = query
         add[kSecValueData as String] = data
+        add[kSecAttrLabel as String] = label
         add[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         add[kSecAttrSynchronizable as String] = false
         let addStatus = SecItemAdd(add as CFDictionary, nil)

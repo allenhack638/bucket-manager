@@ -381,16 +381,28 @@ enum UITest {
                   "inspector tab strip exposes the tab-group role")
 
             let passcodePassword = UUID().uuidString
-            let passcode = PasscodeHasher.make(password: passcodePassword)
-            check(passcode.salt.count == 16 && passcode.hash.count == 32,
-                  "admin passcode uses a salted 256-bit verifier")
-            check(PasscodeHasher.verify(passcodePassword, against: passcode),
-                  "admin passcode verifier accepts the correct passphrase")
-            check(!PasscodeHasher.verify(UUID().uuidString, against: passcode),
-                  "admin passcode verifier rejects a wrong passphrase")
-            let secondPasscode = PasscodeHasher.make(password: passcodePassword, iterations: 10)
-            check(passcode.hash != secondPasscode.hash,
-                  "admin passcode verifiers are salted per creation")
+            if let passcode = try? PasscodeHasher.make(password: passcodePassword),
+               let secondPasscode = try? PasscodeHasher.make(password: passcodePassword, iterations: 10) {
+                check(passcode.salt.count == 16 && passcode.hash.count == 32,
+                      "admin passcode uses a salted 256-bit verifier")
+                check(PasscodeHasher.verify(passcodePassword, against: passcode),
+                      "admin passcode verifier accepts the correct passphrase")
+                check(!PasscodeHasher.verify(UUID().uuidString, against: passcode),
+                      "admin passcode verifier rejects a wrong passphrase")
+                check(passcode.hash != secondPasscode.hash,
+                      "admin passcode verifiers are salted per creation")
+            } else {
+                check(false, "admin passcode salt generation succeeds")
+            }
+            let quarantineProbe = FileManager.default.temporaryDirectory
+                .appendingPathComponent("s3c-quarantine-\(UUID().uuidString).terminal")
+            FileManager.default.createFile(atPath: quarantineProbe.path, contents: Data())
+            S3Service.markQuarantined(quarantineProbe)
+            let quarantine = try? quarantineProbe.resourceValues(forKeys: [.quarantinePropertiesKey])
+            check(quarantine?.quarantineProperties?[kLSQuarantineAgentNameKey as String] as? String == "Bucket Manager",
+                  "downloaded objects are quarantined before they can be opened")
+            try? FileManager.default.removeItem(at: quarantineProbe)
+
             AdminAuthSession.shared.lock()
             check(!AdminAuthSession.shared.isUnlocked, "admin authorization starts locked")
             AdminAuthSession.shared.unlock()
