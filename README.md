@@ -160,8 +160,11 @@ Version **0.1.3** includes:
 - Persistent transfer queue with live progress, pause/resume/cancel/retry
 - Multipart uploads above 16 MiB with 8 MiB parts
 - System/Light/Dark appearance menu and the macOS-matching layout
+- Logs & Statistics window with audit records, request metrics, and logging settings
 
 ![Bucket Manager for Windows](docs/screenshots/windows-browser.png)
+
+![Logs & Statistics](docs/screenshots/windows-logs.png)
 
 Install the latest preview from [Windows releases](https://github.com/allenhack638/bucket-manager/releases?q=windows-v):
 download the NSIS setup or MSI, then launch from the Start menu.

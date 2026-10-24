@@ -8,6 +8,8 @@ separate Rust + React implementation.
 
 ![Bucket Manager for Windows](../docs/screenshots/windows-browser.png)
 
+![Logs & Statistics](../docs/screenshots/windows-logs.png)
+
 ## Current features
 
 - Multiple S3 and S3-compatible accounts.
@@ -21,15 +23,17 @@ separate Rust + React implementation.
 - Persistent transfer queue with live progress, pause/resume/cancel/retry.
 - Multipart uploads above 16 MiB with 8 MiB parts, verified against fake S3 and real MEGA S4 in both test buckets.
 - System/Light/Dark appearance menu.
+- Logs & Statistics window with audit records, request metrics, and logging settings.
 - macOS-matching layout: 321 px sidebar, 24 px path bar, 24 px header, 18 px rows, 30 px action bar, 28 px tabs, 40 px transfer footer.
 
 ## Not in the preview yet
 
 - Cross-account copy/move.
-- Full inspector tabs and logs/statistics.
+- Full object inspector tabs.
 - Drag and drop and folder upload.
 - Copy resume across relaunch; paused queue tasks restart from the beginning.
 - Code signing; the installer is unsigned and may trigger SmartScreen.
+- Admin passcode protection for logs/settings; the macOS passcode gate is not ported yet.
 - Automatic updates.
 
 ## Development
@@ -66,8 +70,8 @@ Artifacts:
 Push a tag matching `windows-v*`:
 
 ```bash
-git tag -a windows-v0.1.3 -m "Bucket Manager for Windows 0.1.3"
-git push origin windows-v0.1.3
+git tag -a windows-v0.1.4 -m "Bucket Manager for Windows 0.1.3"
+git push origin windows-v0.1.4
 ```
 
 Download version 0.1.3 from [Windows releases](https://github.com/allenhack638/bucket-manager/releases?q=windows-v).

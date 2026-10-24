@@ -114,6 +114,7 @@ export default function LogsApp() {
   }
 
   useEffect(() => {
+    document.title = "Logs & Statistics";
     void initAppearance();
     let active = true;
     let unlistenTheme: (() => void) | undefined;
@@ -516,7 +517,7 @@ export default function LogsApp() {
             </button>
             <button className="button" onClick={() => void api.revealLogs()}>Reveal Logs</button>
           </div>
-          <p className="settings-status">{settingsStatus || "Unsaved changes."}</p>
+          <p className="settings-status">{settingsStatus}</p>
         </section>
       )}
 
