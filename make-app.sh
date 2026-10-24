@@ -7,7 +7,7 @@ CONFIG="${1:-release}"
 APP_NAME="BucketManager"
 APP_BUNDLE_NAME="Bucket Manager"
 BUNDLE_ID="com.bucketmanager.app"
-VERSION="${VERSION:-0.1.0}"
+VERSION="${VERSION:-1.0.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.0.0 — 2026-10-24
+
+- Add queued cross-account copy and move with a destination account/bucket picker.
+- Expand selected folders recursively and preserve relative paths.
+- Preserve content type and user metadata through the relay path.
+- Verify the destination size before deleting a move source; keep the source on verification, transport, cancellation, or source-mutation failures.
+- Refuse self-moves, duplicate destination keys, and existing destination objects with a best-effort preflight check.
+- Add cross-account clipboard paste with the same conflict and self-move protections.
+- Scope multipart aborts to the copy's own destination upload and reclaim paused copy uploads during orphan cleanup.
+- Persist copy metadata across relaunch and register copy staging files for orphan cleanup.
+- Add a second fake S3 endpoint and exhaustive cross-account E2E coverage for copy, move, folders, clipboard, failures, cancellation, multipart aborts, and credential redaction.
+- Extend real-provider acceptance with two-bucket copy/move and a 20 MiB cross-account multipart copy.
+- Remove disabled bucket-administration menu placeholders and track them in `docs/BACKLOG.md`.
+- Document cross-account behavior, safety rules, limitations, and test coverage.
+
 ## 0.2.1 — 2026-10-23
 
 - Add light and dark README screenshots for the browser, Logs & Statistics, and edit-account sheet.

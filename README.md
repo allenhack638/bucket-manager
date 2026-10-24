@@ -140,7 +140,7 @@ iconset with `swift scripts/make-icon.swift`.
 For a Developer ID-signed build, pass the identity:
 
 ```bash
-VERSION=0.2.1 BUILD_NUMBER=42 \
+VERSION=1.0.0 BUILD_NUMBER=60 \
 CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 ./make-app.sh release
 ```

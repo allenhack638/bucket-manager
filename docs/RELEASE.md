@@ -16,7 +16,7 @@ xcrun notarytool store-credentials "bucket-manager-notary" \
 ## Build and sign
 
 ```bash
-VERSION=0.2.1 BUILD_NUMBER=42 \
+VERSION=1.0.0 BUILD_NUMBER=60 \
 CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 ./make-app.sh release
 ```
@@ -51,5 +51,5 @@ To create the same artifact locally:
 
 ```bash
 ./make-app.sh release
-./scripts/make-dmg.sh "build/Bucket Manager.app" "build/BucketManager-0.2.1-$(uname -m).dmg"
+./scripts/make-dmg.sh "build/Bucket Manager.app" "build/BucketManager-1.0.0-$(uname -m).dmg"
 ```
