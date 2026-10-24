@@ -13,7 +13,8 @@ use std::io::Write;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::menu::{
-    CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder,
+    CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, PredefinedMenuItem,
+    SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
 use transfer::{TransferManager, TransferTask};
@@ -899,6 +900,16 @@ pub fn run() {
             let appearance_menu = SubmenuBuilder::new(app, "Appearance")
                 .items(&[&system, &light, &dark])
                 .build()?;
+            let undo = PredefinedMenuItem::undo(app, None)?;
+            let redo = PredefinedMenuItem::redo(app, None)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let cut = PredefinedMenuItem::cut(app, None)?;
+            let copy = PredefinedMenuItem::copy(app, None)?;
+            let paste = PredefinedMenuItem::paste(app, None)?;
+            let select_all = PredefinedMenuItem::select_all(app, None)?;
+            let edit_menu = SubmenuBuilder::new(app, "Edit")
+                .items(&[&undo, &redo, &separator, &cut, &copy, &paste, &select_all])
+                .build()?;
             let view_menu = SubmenuBuilder::new(app, "View")
                 .items(&[&appearance_menu])
                 .build()?;
@@ -912,7 +923,7 @@ pub fn run() {
                 .items(&[&logs_item, &settings_item])
                 .build()?;
             let menu = MenuBuilder::new(app)
-                .items(&[&view_menu, &window_menu])
+                .items(&[&edit_menu, &view_menu, &window_menu])
                 .build()?;
             app.set_menu(menu)?;
             *state
