@@ -197,8 +197,8 @@ svg {
 }
 
 .sidebar-action svg {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar-action.with-label {
@@ -904,8 +904,8 @@ button.header-cell:hover {
 }
 
 .transfer-actions svg {
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
 }
 
 .sheet-backdrop {
@@ -950,6 +950,14 @@ button.header-cell:hover {
 .sheet-cloud svg {
   width: 24px;
   height: 24px;
+}
+
+.sheet-logo {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: 9px;
+  object-fit: cover;
 }
 
 .sheet-title h2 {

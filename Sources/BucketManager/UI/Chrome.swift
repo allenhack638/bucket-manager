@@ -9,7 +9,6 @@ final class TitleBarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.titleBar.resolved(for: self).cgColor
         needsDisplay = true
 
         iconView.image = NSApp.applicationIconImage
@@ -36,7 +35,6 @@ final class TitleBarView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = Theme.Colors.titleBar.resolved(for: self).cgColor
         needsDisplay = true
     }
 
@@ -64,7 +62,6 @@ final class AppMenuBarView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.menuBar.resolved(for: self).cgColor
         needsDisplay = true
         setAccessibilityElement(true)
         setAccessibilityRole(.menuBar)
@@ -106,7 +103,6 @@ final class AppMenuBarView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = Theme.Colors.menuBar.resolved(for: self).cgColor
         needsDisplay = true
     }
 

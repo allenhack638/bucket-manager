@@ -135,8 +135,8 @@ final class AddAccountWindowController: NSWindowController {
         header.translatesAutoresizingMaskIntoConstraints = false
 
         let icon = NSImageView()
-        icon.image = Theme.Icon.image("cloud.fill", style: Theme.Icon.header)?
-            .tinted(Theme.Colors.accent)
+        icon.image = NSApp.applicationIconImage
+        icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
 
         let title = Labels.label(existing == nil ? "Add New Account" : "Edit Account", font: .systemFont(ofSize: 20, weight: .semibold))
@@ -156,8 +156,8 @@ final class AddAccountWindowController: NSWindowController {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: formInset),
             icon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: Theme.Icon.header.size),
-            icon.heightAnchor.constraint(equalToConstant: Theme.Icon.header.size),
+            icon.widthAnchor.constraint(equalToConstant: Theme.Metrics.brandIconSize),
+            icon.heightAnchor.constraint(equalToConstant: Theme.Metrics.brandIconSize),
             headerText.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
             headerText.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             headerText.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -formInset)
@@ -669,8 +669,8 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
         header.translatesAutoresizingMaskIntoConstraints = false
 
         let icon = NSImageView()
-        icon.image = Theme.Icon.image("cloud", style: Theme.Icon.header)?
-            .tinted(Theme.Colors.accent)
+        icon.image = NSApp.applicationIconImage
+        icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
 
         let title = Labels.label("Storage Accounts", font: .systemFont(ofSize: 20, weight: .semibold))
@@ -686,8 +686,8 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: header.leadingAnchor, constant: 24),
             icon.centerYAnchor.constraint(equalTo: header.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: Theme.Icon.header.size),
-            icon.heightAnchor.constraint(equalToConstant: Theme.Icon.header.size),
+            icon.widthAnchor.constraint(equalToConstant: Theme.Metrics.brandIconSize),
+            icon.heightAnchor.constraint(equalToConstant: Theme.Metrics.brandIconSize),
             headerText.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
             headerText.centerYAnchor.constraint(equalTo: header.centerYAnchor),
             headerText.trailingAnchor.constraint(lessThanOrEqualTo: header.trailingAnchor, constant: -24)

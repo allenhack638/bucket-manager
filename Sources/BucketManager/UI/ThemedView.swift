@@ -13,6 +13,11 @@ final class ThemedView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        applyThemeColor()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyThemeColor()

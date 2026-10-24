@@ -25,6 +25,7 @@ enum Theme {
         static let transferFooterHeight: CGFloat = 40
 
         static let initialBrowserHeight: CGFloat = 335
+        static let brandIconSize: CGFloat = 38
     }
 
     enum Colors {
@@ -78,7 +79,6 @@ enum Theme {
         static let sortIndicator = Style(size: 8, weight: .semibold, scale: .small)
         static let emptyState = Style(size: 32, weight: .light, scale: .medium)
         static let row = Style(size: 16, weight: .regular, scale: .medium)
-        static let header = Style(size: 28, weight: .regular, scale: .medium)
         static let status = Style(size: 12, weight: .regular, scale: .medium)
         static let strokeWidth: CGFloat = 1.5
 

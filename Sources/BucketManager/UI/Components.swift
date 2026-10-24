@@ -701,7 +701,6 @@ final class TabStripView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.chrome.cgColor
         setAccessibilityElement(true)
         setAccessibilityRole(.tabGroup)
         setAccessibilityLabel("Inspector tabs")
@@ -745,7 +744,6 @@ final class TabStripView: NSView {
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = Theme.Colors.chrome.resolved(for: self).cgColor
         needsDisplay = true
     }
 
@@ -766,7 +764,6 @@ final class InfoTextView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.content.cgColor
 
         textView.isEditable = false
         textView.isSelectable = true
@@ -800,9 +797,13 @@ final class InfoTextView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.Colors.content.setFill()
+        bounds.fill()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = Theme.Colors.content.resolved(for: self).cgColor
         textView.textColor = Theme.Colors.text
         needsDisplay = true
     }
@@ -853,8 +854,6 @@ final class EmptyStateView: NSView {
         self.action = action
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-        wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.content.cgColor
         icon.image = Theme.Icon.image(iconName, style: Theme.Icon.emptyState)?
             .tinted(Theme.Colors.secondaryText)
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -906,9 +905,13 @@ final class EmptyStateView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.Colors.content.setFill()
+        bounds.fill()
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        layer?.backgroundColor = Theme.Colors.content.resolved(for: self).cgColor
         icon.image = Theme.Icon.image(iconName, style: Theme.Icon.emptyState)?
             .tinted(Theme.Colors.secondaryText)
         needsDisplay = true

@@ -270,8 +270,8 @@ enum UITest {
         check(Theme.Icon.action.size == 14, "action icon token follows the standard 14 pt size")
         check(Theme.Icon.row.size == 16 && Theme.Icon.status.size == 12,
               "table and status icon tokens follow their standard sizes")
-        check(Theme.Icon.emptyState.size == 32 && Theme.Icon.header.size == 28,
-              "empty-state and sheet-header icon tokens are not over-scaled")
+        check(Theme.Icon.emptyState.size == 32 && Theme.Metrics.brandIconSize == 38,
+              "empty-state and account-brand icons use their standard sizes")
         check(Theme.Icon.sortIndicator.weight == .semibold,
               "sort indicator weight is formalized")
 

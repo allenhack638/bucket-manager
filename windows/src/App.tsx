@@ -9,6 +9,7 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import appIcon from "./assets/app-icon.png";
 import { api } from "./api";
 import { applyAppearance, initAppearance, type Appearance } from "./theme";
 import type { Account, AccountInput, Bucket, ListPage, ObjectEntry, TransferTask } from "./types";
@@ -228,11 +229,9 @@ function AccountDialog({
     <div className="sheet-backdrop" role="presentation" onMouseDown={onClose}>
       <form className="account-sheet" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
         <div className="sheet-title">
-          <div className="sheet-cloud">
-            <Icon name="bucket" />
-          </div>
+          <img className="sheet-logo" src={appIcon} alt="" />
           <div>
-            <h2>{account ? "Edit Account" : "Add Account"}</h2>
+            <h2>{account ? "Edit Account" : "Add New Account"}</h2>
             <p>Enter the account details and click Save changes.</p>
           </div>
         </div>
