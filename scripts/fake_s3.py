@@ -39,6 +39,45 @@ RESUME_DATA = bytes(i % 251 for i in range(2 * 1024 * 1024))
 RESUME_ETAG = '"etag-resume"'
 
 
+def decode_aws_chunked(body):
+    """Decode the aws-chunked request body used by the AWS SDKs.
+
+    Real S3 decodes this framing before storing the object. The fixture has to
+    do the same or download tests see chunk signatures and trailers.
+    """
+    if not body:
+        return body
+    decoded = bytearray()
+    position = 0
+    try:
+        while True:
+            line_end = body.index(b"\r\n", position)
+            size_line = body[position:line_end].split(b";", 1)[0]
+            size = int(size_line, 16)
+            position = line_end + 2
+            if size == 0:
+                return bytes(decoded)
+            if position + size > len(body):
+                return body
+            decoded.extend(body[position:position + size])
+            position += size
+            if body[position:position + 2] != b"\r\n":
+                return body
+            position += 2
+    except (ValueError, IndexError):
+        return body
+
+
+def read_request_body(handler):
+    length = int(handler.headers.get("Content-Length", "0") or 0)
+    body = handler.rfile.read(length) if length else b""
+    content_sha = (handler.headers.get("x-amz-content-sha256") or "").upper()
+    content_encoding = (handler.headers.get("Content-Encoding") or "").lower()
+    if content_sha.startswith("STREAMING-") or "aws-chunked" in content_encoding:
+        return decode_aws_chunked(body)
+    return body
+
+
 def bump(name):
     with LOCK:
         STATS[name] = STATS.get(name, 0) + 1
@@ -280,8 +319,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if bucket == "denied":
             bump("deniedPut")
             return error_response(self, "AccessDenied", "Access Denied", 403)
-        length = int(self.headers.get("Content-Length", "0") or 0)
-        body = self.rfile.read(length) if length else b""
+        body = read_request_body(self)
         upload_id = query.get("uploadId", [None])[0]
         part_number = query.get("partNumber", [None])[0]
         if upload_id and part_number:
@@ -351,8 +389,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             )
         upload_id = query.get("uploadId", [None])[0]
         if upload_id:
-            length = int(self.headers.get("Content-Length", "0") or 0)
-            body = self.rfile.read(length) if length else b""
+            body = read_request_body(self)
             with LOCK:
                 upload = MULTIPART.get(upload_id)
             if upload is None:
