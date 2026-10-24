@@ -1,6 +1,6 @@
 [package]
 name = "bucket-manager-windows"
-version = "0.1.0"
+version = "0.1.1"
 description = "Bucket Manager for Windows"
 authors = ["Allen Benny"]
 edition = "2021"

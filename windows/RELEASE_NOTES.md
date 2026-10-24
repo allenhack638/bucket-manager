@@ -1,6 +1,6 @@
-# Bucket Manager for Windows 0.1.0
+# Bucket Manager for Windows 0.1.1
 
-First Windows preview of Bucket Manager.
+Second Windows preview of Bucket Manager, with the macOS layout.
 
 ## Included
 
@@ -10,6 +10,7 @@ First Windows preview of Bucket Manager.
 - Custom endpoints, regions, bucket-scoped credentials, and path-style addressing.
 - Bucket browser, folder navigation, upload, download, create folder, and recursive folder delete.
 - Paginated object listings.
+- The browser now mirrors the macOS layout and proportions: 321 px sidebar, 24 px path bar, 24 px header, 18 px rows, 30 px action bar, 28 px inspector tabs, and 40 px transfer footer.
 
 ## Known limitations
 
@@ -21,8 +22,8 @@ First Windows preview of Bucket Manager.
 
 Download either:
 
-- `Bucket.Manager_0.1.0_x64-setup.exe` (NSIS)
-- `Bucket.Manager_0.1.0_x64_en-US.msi` (MSI)
+- `Bucket.Manager_0.1.1_x64-setup.exe` (NSIS)
+- `Bucket.Manager_0.1.1_x64_en-US.msi` (MSI)
 
 Run the installer and launch Bucket Manager from the Start menu.
 

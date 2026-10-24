@@ -1,5 +1,13 @@
 # Changelog
 
+## Windows preview 0.1.1 — 2026-10-24
+
+- Match the macOS browser layout and spacing in the Windows app.
+- Use the same 321 px sidebar, 24 px path bar, 24 px table header, 18 px rows, 30 px action bar, 28 px inspector tabs, and 40 px transfer footer.
+- Add account, breadcrumb, empty-state, table, action-bar, inspector-tab, and transfer-footer styling from the macOS reference.
+- Scale the window to the macOS logical size on high-DPI displays.
+- Add create-bucket support and verify account creation, Credential Manager storage, bucket listing, and object browsing on Windows.
+
 ## Windows preview 0.1.0 — 2026-10-24
 
 - Add a Windows Tauri 2 application in `windows/` with a React UI and Rust S3 backend.
