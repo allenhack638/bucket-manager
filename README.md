@@ -5,7 +5,7 @@
 A native macOS client for S3-compatible object storage, built with AppKit and the
 AWS SDK for Swift. Bucket Manager gives you an account picker and bucket sidebar, an
 object browser, a transfer queue, and property, permissions, tag, version, and
-event-log inspectors in one focused desktop app. A Windows preview now lives in
+event-log inspectors in one focused desktop app. A Windows app lives in
 [`windows/`](windows/README.md), built with Tauri and Rust.
 
 Bucket Manager is open source under the MIT License. Repository: https://github.com/allenhack638/bucket-manager
@@ -149,22 +149,35 @@ CODESIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 See [docs/RELEASE.md](docs/RELEASE.md) for signing, notarization, unsigned DMG
 creation, and verification.
 
-### Windows preview
+### Windows app
 
 The Windows app is a separate Tauri 2 + Rust implementation in [`windows/`](windows/README.md).
-It currently covers accounts, bucket browsing, upload/download, folders, and delete.
-The first preview does not yet include multipart transfers, the transfer queue,
-cross-account copy/move, inspector tabs, logs/statistics, or drag and drop.
+Version **0.1.3** includes:
+
+- Multiple S3/S3-compatible accounts and Windows Credential Manager secrets
+- Custom endpoints, regions, bucket-scoped credentials, and path-style addressing
+- Bucket/folder browsing, paginated listings, upload/download/delete, folders
+- Persistent transfer queue with live progress, pause/resume/cancel/retry
+- Multipart uploads above 16 MiB with 8 MiB parts
+- System/Light/Dark appearance menu and the macOS-matching layout
+
+![Bucket Manager for Windows](docs/screenshots/windows-browser.png)
+
+Install the latest preview from [Windows releases](https://github.com/allenhack638/bucket-manager/releases?q=windows-v):
+download the NSIS setup or MSI, then launch from the Start menu.
+
+**The Windows installer is not code-signed yet.** Windows SmartScreen may warn on
+first launch. The app is a preview and still lacks cross-account copy/move, the
+full inspector, logs/statistics, drag-and-drop, and folder upload.
 
 Build it on Windows with Node.js 22+ and Rust stable:
 
 ```powershell
 cd windows
 npm ci --include=dev
+cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri build
 ```
-
-The preview installer is unsigned; Windows SmartScreen may warn on first launch.
 
 The first launch auto-opens **Add New Account** if no account exists. Enter:
 

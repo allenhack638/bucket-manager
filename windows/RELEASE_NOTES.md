@@ -17,7 +17,8 @@ Windows preview with the macOS layout, appearance switching, and a transfer queu
 
 ## Known limitations
 
-- This is a preview; it does not yet have multipart uploads, resumable transfers, the transfer queue, cross-account copy/move, inspector tabs, logs/statistics, or drag and drop.
+- This is a preview; it does not yet have cross-account copy/move, the full inspector, logs/statistics, drag and drop, folder upload, or automatic updates.
+- Paused/queued transfers restart from the beginning after relaunch.
 - The installer is **unsigned**, so Windows SmartScreen may block or warn on first launch. Choose **More info → Run anyway** only if you trust the download.
 - No automatic updates.
 

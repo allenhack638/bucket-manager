@@ -2,9 +2,11 @@
 
 A Tauri 2 desktop client for S3-compatible object storage on Windows.
 
-This is the first Windows preview. It shares the repository, fake-S3 fixtures,
-and acceptance expectations with the macOS app, but the UI and S3 layer are a
+This is the Windows preview. It shares the repository, fake-S3 fixtures, and
+acceptance expectations with the macOS app, but the UI and S3 layer are a
 separate Rust + React implementation.
+
+![Bucket Manager for Windows](../docs/screenshots/windows-browser.png)
 
 ## Current features
 
@@ -16,16 +18,19 @@ separate Rust + React implementation.
 - Bucket sidebar and folder/object browser with breadcrumbs.
 - Upload, download, create folder, and delete objects or folders.
 - Paginated listings.
+- Persistent transfer queue with live progress, pause/resume/cancel/retry.
+- Multipart uploads above 16 MiB with 8 MiB parts.
+- System/Light/Dark appearance menu.
+- macOS-matching layout: 321 px sidebar, 24 px path bar, 24 px header, 18 px rows, 30 px action bar, 28 px tabs, 40 px transfer footer.
 
 ## Not in the preview yet
 
-- Multipart uploads and resumable transfers.
-- The macOS transfer queue, progress UI, and pause/resume.
 - Cross-account copy/move.
-- Object inspector tabs and logs/statistics.
-- Drag and drop.
-- Code signing and notarization equivalent; the installer is unsigned and may
-  trigger SmartScreen.
+- Full inspector tabs and logs/statistics.
+- Drag and drop and folder upload.
+- Copy resume across relaunch; paused queue tasks restart from the beginning.
+- Code signing; the installer is unsigned and may trigger SmartScreen.
+- Automatic updates.
 
 ## Development
 
@@ -61,9 +66,10 @@ Artifacts:
 Push a tag matching `windows-v*`:
 
 ```bash
-git tag -a windows-v0.1.0 -m "Bucket Manager for Windows 0.1.0"
-git push origin windows-v0.1.0
+git tag -a windows-v0.1.3 -m "Bucket Manager for Windows 0.1.3"
+git push origin windows-v0.1.3
 ```
 
-The `Windows release` workflow builds and publishes both installers. The
-installer is not code-signed yet, so Windows SmartScreen may warn on first run.
+Download version 0.1.3 from [Windows releases](https://github.com/allenhack638/bucket-manager/releases?q=windows-v).
+The `Windows release` workflow builds and publishes both installers. The installer
+is not code-signed yet, so Windows SmartScreen may warn on first run.
