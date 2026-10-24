@@ -1,11 +1,13 @@
 use crate::accounts::Account;
+use crate::logging::{LogFields, LogStore};
+use crate::metrics::MetricsStore;
 use crate::s3;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 use uuid::Uuid;
@@ -267,8 +269,11 @@ pub async fn run_upload(
     account: Account,
     secret: String,
     id: String,
+    logs: Arc<LogStore>,
+    metrics: Arc<MetricsStore>,
 ) {
     let Some(task) = manager.get(&id) else { return };
+    let started = Instant::now();
     if manager.is_cancelled(&id) {
         manager.set_status(&app, &id, "cancelled", None);
         return;
@@ -279,6 +284,38 @@ pub async fn run_upload(
     } else {
         simple_upload(&app, &manager, &account, &secret, &task).await
     };
+    let success = result.is_ok();
+    let error = result.as_ref().err().cloned();
+    metrics.record(
+        &account.id,
+        &account.name,
+        &task.bucket,
+        "PutObject",
+        started.elapsed().as_millis() as u64,
+        if success { task.size } else { task.transferred },
+        success,
+    );
+    logs.audit(
+        if success {
+            "object.uploaded"
+        } else {
+            "object.upload_failed"
+        },
+        if success {
+            "Object uploaded"
+        } else {
+            "Object upload failed"
+        },
+        LogFields {
+            account_id: Some(account.id.clone()),
+            account_name: Some(account.name.clone()),
+            operation: Some("PutObject".into()),
+            bucket: Some(task.bucket.clone()),
+            key: Some(task.key.clone()),
+            metadata: error.map(|error| serde_json::json!({ "error": error })),
+        },
+        Some(if success { "success" } else { "failure" }.into()),
+    );
     match result {
         Ok(()) => manager.update(&app, &id, |task| {
             task.transferred = task.size;
@@ -439,14 +476,49 @@ pub async fn run_download(
     account: Account,
     secret: String,
     id: String,
+    logs: Arc<LogStore>,
+    metrics: Arc<MetricsStore>,
 ) {
     let Some(task) = manager.get(&id) else { return };
+    let started = Instant::now();
     if manager.is_cancelled(&id) {
         manager.set_status(&app, &id, "cancelled", None);
         return;
     }
     manager.set_status(&app, &id, "running", None);
     let result = download(&app, &manager, &account, &secret, &task).await;
+    let success = result.is_ok();
+    let error = result.as_ref().err().cloned();
+    metrics.record(
+        &account.id,
+        &account.name,
+        &task.bucket,
+        "GetObject",
+        started.elapsed().as_millis() as u64,
+        if success { task.size } else { task.transferred },
+        success,
+    );
+    logs.audit(
+        if success {
+            "object.downloaded"
+        } else {
+            "object.download_failed"
+        },
+        if success {
+            "Object downloaded"
+        } else {
+            "Object download failed"
+        },
+        LogFields {
+            account_id: Some(account.id.clone()),
+            account_name: Some(account.name.clone()),
+            operation: Some("GetObject".into()),
+            bucket: Some(task.bucket.clone()),
+            key: Some(task.key.clone()),
+            metadata: error.map(|error| serde_json::json!({ "error": error })),
+        },
+        Some(if success { "success" } else { "failure" }.into()),
+    );
     match result {
         Ok(()) => manager.update(&app, &id, |task| {
             task.transferred = task.size;

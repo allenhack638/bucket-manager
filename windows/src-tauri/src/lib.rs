@@ -1,13 +1,19 @@
 mod accounts;
+mod logging;
+mod metrics;
 mod s3;
 mod transfer;
 
 use accounts::{Account, AccountInput, AccountStore};
+use logging::{LogFields, LogFilter, LogRecord, LogStore, LoggingSettings};
+use metrics::{MetricsStore, RequestMetric};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, SubmenuBuilder};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tauri::menu::{
+    CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder,
+};
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
 use transfer::{TransferManager, TransferTask};
 
@@ -46,8 +52,11 @@ struct AppearanceMenuItems {
 pub struct AppState {
     pub store: AccountStore,
     pub transfers: Arc<TransferManager>,
+    pub logs: Arc<LogStore>,
+    pub metrics: Arc<MetricsStore>,
     appearance: Mutex<AppearanceMode>,
     menu_items: Mutex<Option<AppearanceMenuItems>>,
+    logs_tab: Mutex<Option<String>>,
 }
 
 #[tauri::command]
@@ -61,13 +70,15 @@ fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Resu
     let manager = state.transfers.clone();
     let app = app.clone();
     let id = task.id.clone();
+    let logs = state.logs.clone();
+    let metrics = state.metrics.clone();
     if task.kind == "upload" {
         tauri::async_runtime::spawn(async move {
-            transfer::run_upload(app, manager, account, secret, id).await;
+            transfer::run_upload(app, manager, account, secret, id, logs, metrics).await;
         });
     } else {
         tauri::async_runtime::spawn(async move {
-            transfer::run_download(app, manager, account, secret, id).await;
+            transfer::run_download(app, manager, account, secret, id, logs, metrics).await;
         });
     }
     Ok(())
@@ -155,19 +166,63 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, String> {
 
 #[tauri::command]
 fn save_account(state: State<'_, AppState>, input: AccountInput) -> Result<Account, String> {
-    state.store.save(input)
+    let result = state.store.save(input);
+    if let Ok(account) = &result {
+        state.logs.audit(
+            "account.saved",
+            "Storage account saved",
+            LogFields {
+                account_id: Some(account.id.clone()),
+                account_name: Some(account.name.clone()),
+                operation: Some("SaveAccount".into()),
+                ..Default::default()
+            },
+            Some("success".into()),
+        );
+    }
+    result
 }
 
 #[tauri::command]
 fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    state.store.delete(&id)
+    let account = state.store.get(&id).ok();
+    let result = state.store.delete(&id);
+    if result.is_ok() {
+        state.logs.audit(
+            "account.deleted",
+            "Storage account deleted",
+            LogFields {
+                account_id: Some(id.clone()),
+                account_name: account.map(|account| account.name),
+                operation: Some("DeleteAccount".into()),
+                ..Default::default()
+            },
+            Some("success".into()),
+        );
+    }
+    result
 }
 
 #[tauri::command]
 async fn test_connection(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::test_connection(&account, &secret).await
+    let started = Instant::now();
+    let bucket = account.bucket.clone().unwrap_or_default();
+    let result = s3::test_connection(&account, &secret).await;
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "TestConnection",
+        "connection.tested",
+        "connection.failed",
+        None,
+        started,
+        0,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -177,7 +232,21 @@ async fn list_buckets(
 ) -> Result<Vec<s3::BucketInfo>, String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::list_buckets(&account, &secret).await
+    let started = Instant::now();
+    let result = s3::list_buckets(&account, &secret).await;
+    record_operation(
+        &state,
+        &account,
+        "",
+        "ListBuckets",
+        "buckets.listed",
+        "buckets.list_failed",
+        None,
+        started,
+        0,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -188,7 +257,21 @@ async fn create_bucket(
 ) -> Result<(), String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::create_bucket(&account, &secret, &bucket).await
+    let started = Instant::now();
+    let result = s3::create_bucket(&account, &secret, &bucket).await;
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "CreateBucket",
+        "bucket.created",
+        "bucket.create_failed",
+        None,
+        started,
+        0,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -199,7 +282,21 @@ async fn delete_bucket(
 ) -> Result<(), String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::delete_bucket(&account, &secret, &bucket).await
+    let started = Instant::now();
+    let result = s3::delete_bucket(&account, &secret, &bucket).await;
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "DeleteBucket",
+        "bucket.deleted",
+        "bucket.delete_failed",
+        None,
+        started,
+        0,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -212,7 +309,31 @@ async fn list_objects(
 ) -> Result<s3::ListPage, String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::list_objects(&account, &secret, &bucket, &prefix, continuation_token).await
+    let started = Instant::now();
+    let result = s3::list_objects(&account, &secret, &bucket, &prefix, continuation_token).await;
+    let bytes = result
+        .as_ref()
+        .map(|page| {
+            page.entries
+                .iter()
+                .filter_map(|entry| entry.size)
+                .map(|size| size.max(0) as u64)
+                .sum()
+        })
+        .unwrap_or(0);
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "ListObjectsV2",
+        "objects.listed",
+        "objects.list_failed",
+        None,
+        started,
+        bytes,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -225,7 +346,22 @@ async fn upload_object(
 ) -> Result<(), String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::upload_object(&account, &secret, &bucket, &key, &file_path).await
+    let started = Instant::now();
+    let bytes = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
+    let result = s3::upload_object(&account, &secret, &bucket, &key, &file_path).await;
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "PutObject",
+        "object.uploaded",
+        "object.upload_failed",
+        Some(&key),
+        started,
+        bytes,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -238,7 +374,24 @@ async fn download_object(
 ) -> Result<(), String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::download_object(&account, &secret, &bucket, &key, &destination).await
+    let started = Instant::now();
+    let result = s3::download_object(&account, &secret, &bucket, &key, &destination).await;
+    let bytes = std::fs::metadata(&destination)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "GetObject",
+        "object.downloaded",
+        "object.download_failed",
+        Some(&key),
+        started,
+        bytes,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -250,7 +403,21 @@ async fn delete_object(
 ) -> Result<(), String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::delete_object(&account, &secret, &bucket, &key).await
+    let started = Instant::now();
+    let result = s3::delete_object(&account, &secret, &bucket, &key).await;
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "DeleteObject",
+        "object.deleted",
+        "object.delete_failed",
+        Some(&key),
+        started,
+        0,
+        &result,
+    );
+    result
 }
 
 #[tauri::command]
@@ -262,7 +429,161 @@ async fn create_folder(
 ) -> Result<(), String> {
     let account = state.store.get(&id)?;
     let secret = state.store.secret(&id)?;
-    s3::create_folder(&account, &secret, &bucket, &key).await
+    let started = Instant::now();
+    let result = s3::create_folder(&account, &secret, &bucket, &key).await;
+    record_operation(
+        &state,
+        &account,
+        &bucket,
+        "PutObject",
+        "folder.created",
+        "folder.create_failed",
+        Some(&key),
+        started,
+        0,
+        &result,
+    );
+    result
+}
+
+#[tauri::command]
+fn get_logs(state: State<'_, AppState>, filter: LogFilter) -> Vec<LogRecord> {
+    state.logs.recent(filter)
+}
+
+#[tauri::command]
+fn get_logging_settings(state: State<'_, AppState>) -> LoggingSettings {
+    state.logs.settings()
+}
+
+#[tauri::command]
+fn save_logging_settings(
+    state: State<'_, AppState>,
+    settings: LoggingSettings,
+) -> Result<(), String> {
+    state.logs.update_settings(settings)
+}
+
+#[tauri::command]
+fn clear_diagnostics(state: State<'_, AppState>) -> Result<usize, String> {
+    state.logs.clear_diagnostics()
+}
+
+#[tauri::command]
+fn export_logs(
+    state: State<'_, AppState>,
+    destination: String,
+    filter: LogFilter,
+) -> Result<usize, String> {
+    state.logs.export(&destination, filter)
+}
+
+#[tauri::command]
+fn reveal_logs(state: State<'_, AppState>) -> Result<(), String> {
+    state.logs.reveal()
+}
+
+#[tauri::command]
+fn get_statistics(state: State<'_, AppState>) -> Vec<RequestMetric> {
+    state.metrics.snapshot()
+}
+
+#[tauri::command]
+fn clear_statistics(state: State<'_, AppState>) {
+    state.metrics.clear();
+    state.logs.audit(
+        "metrics.cleared",
+        "Request statistics cleared",
+        LogFields {
+            operation: Some("ClearStatistics".into()),
+            ..Default::default()
+        },
+        Some("success".into()),
+    );
+}
+
+#[tauri::command]
+fn take_logs_tab(state: State<'_, AppState>) -> Option<String> {
+    state.logs_tab.lock().ok().and_then(|mut tab| tab.take())
+}
+
+#[tauri::command]
+fn open_logs_window(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    tab: Option<String>,
+) -> Result<(), String> {
+    open_logs_window_impl(&app, &state, tab.as_deref().unwrap_or("logs"))
+}
+
+fn open_logs_window_impl(app: &AppHandle, state: &AppState, tab: &str) -> Result<(), String> {
+    if let Ok(mut pending) = state.logs_tab.lock() {
+        *pending = Some(tab.to_string());
+    }
+    if let Some(window) = app.get_webview_window("logs") {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        let _ = window.emit("logs-tab", tab);
+        return Ok(());
+    }
+    let window = tauri::WebviewWindowBuilder::new(app, "logs", tauri::WebviewUrl::default())
+        .title("Logs & Statistics")
+        .inner_size(1080.0, 680.0)
+        .min_inner_size(820.0, 480.0)
+        .build()
+        .map_err(|error| error.to_string())?;
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+fn record_operation(
+    state: &AppState,
+    account: &Account,
+    bucket: &str,
+    operation: &str,
+    event_success: &str,
+    event_failure: &str,
+    key: Option<&str>,
+    started: Instant,
+    bytes: u64,
+    result: &Result<impl Sized, String>,
+) {
+    let elapsed = started.elapsed().as_millis() as u64;
+    let success = result.is_ok();
+    state.metrics.record(
+        &account.id,
+        &account.name,
+        bucket,
+        operation,
+        elapsed,
+        bytes,
+        success,
+    );
+    let error = result.as_ref().err().cloned();
+    let message = if success {
+        format!("{operation} completed")
+    } else {
+        format!("{operation} failed")
+    };
+    state.logs.audit(
+        if success {
+            event_success
+        } else {
+            event_failure
+        },
+        &message,
+        LogFields {
+            account_id: Some(account.id.clone()),
+            account_name: Some(account.name.clone()),
+            operation: Some(operation.to_string()),
+            bucket: (!bucket.is_empty()).then(|| bucket.to_string()),
+            key: key.map(str::to_string),
+            metadata: error.map(|error| serde_json::json!({ "error": error })),
+        },
+        Some(if success { "success" } else { "failure" }.to_string()),
+    );
 }
 
 fn appearance_path() -> Option<std::path::PathBuf> {
@@ -349,13 +670,27 @@ pub fn run() {
 
     let appearance = load_appearance();
     let transfers = Arc::new(TransferManager::load());
+    let logs = Arc::new(LogStore::new());
+    let metrics = Arc::new(MetricsStore::new());
+    logs.audit(
+        "app.started",
+        "Bucket Manager started",
+        LogFields {
+            operation: Some("Startup".into()),
+            ..Default::default()
+        },
+        Some("success".into()),
+    );
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             store,
             transfers,
+            logs,
+            metrics,
             appearance: Mutex::new(appearance),
             menu_items: Mutex::new(None),
+            logs_tab: Mutex::new(None),
         })
         .setup(move |app| {
             startup_log("setup");
@@ -376,7 +711,18 @@ pub fn run() {
             let view_menu = SubmenuBuilder::new(app, "View")
                 .items(&[&appearance_menu])
                 .build()?;
-            let menu = MenuBuilder::new(app).items(&[&view_menu]).build()?;
+            let logs_item = MenuItemBuilder::with_id("window:logs", "Logs & Statistics…")
+                .accelerator("Ctrl+Alt+L")
+                .build(app)?;
+            let settings_item = MenuItemBuilder::with_id("window:settings", "Settings…")
+                .accelerator("Ctrl+Alt+S")
+                .build(app)?;
+            let window_menu = SubmenuBuilder::new(app, "Window")
+                .items(&[&logs_item, &settings_item])
+                .build()?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&view_menu, &window_menu])
+                .build()?;
             app.set_menu(menu)?;
             *state
                 .menu_items
@@ -422,6 +768,12 @@ pub fn run() {
                         startup_log(&format!("appearance change failed: {error}"));
                     }
                 }
+            } else if let Some(tab) = id.strip_prefix("window:") {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Err(error) = open_logs_window_impl(app, &state, tab) {
+                        startup_log(&format!("open logs window failed: {error}"));
+                    }
+                }
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -434,6 +786,16 @@ pub fn run() {
             retry_transfer,
             get_appearance,
             set_appearance,
+            get_logs,
+            get_logging_settings,
+            save_logging_settings,
+            clear_diagnostics,
+            export_logs,
+            reveal_logs,
+            get_statistics,
+            clear_statistics,
+            open_logs_window,
+            take_logs_tab,
             list_accounts,
             save_account,
             delete_account,

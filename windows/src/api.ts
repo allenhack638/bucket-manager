@@ -1,5 +1,15 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Account, AccountInput, Bucket, ListPage, TransferTask } from "./types";
+import type {
+  Account,
+  AccountInput,
+  Bucket,
+  ListPage,
+  LogFilter,
+  LogRecord,
+  LoggingSettings,
+  RequestMetric,
+  TransferTask,
+} from "./types";
 
 export const api = {
   listAccounts: () => invoke<Account[]>("list_accounts"),
@@ -25,6 +35,19 @@ export const api = {
   createFolder: (id: string, bucket: string, key: string) =>
     invoke<void>("create_folder", { id, bucket, key }),
   listTransfers: () => invoke<TransferTask[]>("list_transfers"),
+  getLogs: (filter: LogFilter) => invoke<LogRecord[]>("get_logs", { filter }),
+  getLoggingSettings: () => invoke<LoggingSettings>("get_logging_settings"),
+  saveLoggingSettings: (settings: LoggingSettings) =>
+    invoke<void>("save_logging_settings", { settings }),
+  clearDiagnostics: () => invoke<number>("clear_diagnostics"),
+  exportLogs: (destination: string, filter: LogFilter) =>
+    invoke<number>("export_logs", { destination, filter }),
+  revealLogs: () => invoke<void>("reveal_logs"),
+  getStatistics: () => invoke<RequestMetric[]>("get_statistics"),
+  clearStatistics: () => invoke<void>("clear_statistics"),
+  openLogsWindow: (tab: "logs" | "statistics" | "settings" = "logs") =>
+    invoke<void>("open_logs_window", { tab }),
+  takeLogsTab: () => invoke<string | null>("take_logs_tab"),
   enqueueUpload: (id: string, bucket: string, key: string, filePath: string) =>
     invoke<TransferTask>("enqueue_upload", { id, bucket, key, filePath }),
   enqueueDownload: (id: string, bucket: string, key: string, destination: string, size: number) =>

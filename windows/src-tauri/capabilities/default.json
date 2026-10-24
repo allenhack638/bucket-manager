@@ -1,6 +1,6 @@
 {
   "identifier": "default",
   "description": "Default permissions for the Bucket Manager window",
-  "windows": ["main"],
+  "windows": ["main", "logs"],
   "permissions": ["core:default", "dialog:default"]
 }

@@ -55,3 +55,50 @@ export type TransferTask = {
   multipart: boolean;
   createdAt: number;
 };
+
+export type LogLevel = "trace" | "debug" | "info" | "warning" | "error";
+
+export type LogRecord = {
+  timestamp: string;
+  level: LogLevel;
+  category: string;
+  event: string;
+  message: string;
+  outcome?: string | null;
+  accountId?: string | null;
+  accountName?: string | null;
+  operation?: string | null;
+  bucket?: string | null;
+  key?: string | null;
+  metadata?: unknown;
+};
+
+export type LogFilter = {
+  limit?: number;
+  level?: string;
+  category?: string;
+  accountId?: string;
+  query?: string;
+};
+
+export type LoggingSettings = {
+  diagnosticsEnabled: boolean;
+  minimumLevel: string;
+  enabledCategories: string[];
+  diagnosticRetentionDays: number;
+  auditRetentionDays: number;
+  includeObjectKeys: boolean;
+};
+
+export type RequestMetric = {
+  accountId: string;
+  accountName: string;
+  bucket: string;
+  operation: string;
+  requests: number;
+  failures: number;
+  totalMs: number;
+  bytes: number;
+  lastUsed: string;
+  sessionRequests: number;
+};
