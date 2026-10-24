@@ -3,6 +3,7 @@ import type {
   Account,
   AccountInput,
   Bucket,
+  CopyItem,
   ListPage,
   LogFilter,
   LogRecord,
@@ -52,6 +53,16 @@ export const api = {
     invoke<TransferTask>("enqueue_upload", { id, bucket, key, filePath }),
   enqueueDownload: (id: string, bucket: string, key: string, destination: string, size: number) =>
     invoke<TransferTask>("enqueue_download", { id, bucket, key, destination, size }),
+  startCrossAccountTransfer: (input: {
+    sourceAccountId: string;
+    sourceBucket: string;
+    sourcePrefix: string;
+    destinationAccountId: string;
+    destinationBucket: string;
+    destinationPrefix: string;
+    items: CopyItem[];
+    moveSource: boolean;
+  }) => invoke<TransferTask[]>("start_cross_account_transfer", input),
   pauseTransfer: (id: string) => invoke<void>("pause_transfer", { id }),
   resumeTransfer: (id: string) => invoke<void>("resume_transfer", { id }),
   cancelTransfer: (id: string) => invoke<void>("cancel_transfer", { id }),

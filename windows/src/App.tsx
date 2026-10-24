@@ -135,6 +135,18 @@ function Icon({ name }: { name: string }) {
     play: <path d="m8 5 10 7-10 7z" />,
     stop: <rect x="6" y="6" width="12" height="12" rx="1" />,
     cancel: <path d="M6 6l12 12M18 6 6 18" />,
+    copy: (
+      <>
+        <rect x="8" y="8" width="11" height="11" rx="1" />
+        <path d="M16 8V5H5v11h3" />
+      </>
+    ),
+    move: (
+      <>
+        <path d="M4 7h11m0 0-3-3m3 3-3 3" />
+        <path d="M20 17H9m0 0 3-3m-3 3 3 3" />
+      </>
+    ),
   };
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -361,6 +373,191 @@ function AccountDialog({
   );
 }
 
+function CrossAccountDialog({
+  sourceAccount,
+  sourceBucket,
+  sourcePrefix,
+  selected,
+  accounts,
+  mode,
+  onClose,
+  onQueued,
+}: {
+  sourceAccount: Account;
+  sourceBucket: string;
+  sourcePrefix: string;
+  selected: ObjectEntry[];
+  accounts: Account[];
+  mode: "copy" | "move";
+  onClose: () => void;
+  onQueued: (tasks: TransferTask[]) => void;
+}) {
+  const possibilities = accounts.filter((account) => account.id !== sourceAccount.id);
+  const [destinationAccountId, setDestinationAccountId] = useState(
+    possibilities[0]?.id ?? sourceAccount.id,
+  );
+  const [buckets, setBuckets] = useState<Bucket[]>([]);
+  const [destinationBucket, setDestinationBucket] = useState("");
+  const [destinationPrefix, setDestinationPrefix] = useState("");
+  const [loadingBuckets, setLoadingBuckets] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const destinationAccount = accounts.find((account) => account.id === destinationAccountId);
+
+  useEffect(() => {
+    if (!destinationAccountId) return;
+    let cancelled = false;
+    setLoadingBuckets(true);
+    setBuckets([]);
+    setDestinationBucket("");
+    api
+      .listBuckets(destinationAccountId)
+      .then((next) => {
+        if (cancelled) return;
+        setBuckets(next);
+        setDestinationBucket(
+          destinationAccount?.bucket &&
+            next.some((bucket) => bucket.name === destinationAccount.bucket)
+            ? destinationAccount.bucket
+            : (next[0]?.name ?? ""),
+        );
+      })
+      .catch((nextError) => {
+        if (!cancelled) setError(errorMessage(nextError));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingBuckets(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [destinationAccountId]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!destinationAccountId || !destinationBucket) {
+      setError("Choose a destination account and bucket.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const queued = await api.startCrossAccountTransfer({
+        sourceAccountId: sourceAccount.id,
+        sourceBucket,
+        sourcePrefix,
+        destinationAccountId,
+        destinationBucket,
+        destinationPrefix,
+        items: selected.map((entry) => ({
+          key: entry.key,
+          name: entry.name,
+          kind: entry.kind,
+          size: entry.size,
+          eTag: entry.eTag,
+        })),
+        moveSource: mode === "move",
+      });
+      onQueued(queued);
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="sheet-backdrop" role="presentation" onMouseDown={onClose}>
+      <form
+        className="account-sheet cross-sheet"
+        onSubmit={(event) => void submit(event)}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="sheet-title">
+          <div className="sheet-cloud">
+            <Icon name={mode === "move" ? "move" : "copy"} />
+          </div>
+          <div>
+            <h2>{mode === "move" ? "Move to Account" : "Copy to Account"}</h2>
+            <p>
+              {selected.length} item{selected.length === 1 ? "" : "s"} from{" "}
+              {sourceAccount.name}/{sourceBucket}
+            </p>
+          </div>
+        </div>
+
+        <div className="sheet-fields">
+          <div className="sheet-field">
+            <label htmlFor="destination-account">Destination account:</label>
+            <select
+              id="destination-account"
+              value={destinationAccountId}
+              onChange={(event) => setDestinationAccountId(event.target.value)}
+              disabled={busy}
+            >
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                  {account.id === sourceAccount.id ? " (same account)" : ""}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="sheet-field">
+            <label htmlFor="destination-bucket">Destination bucket:</label>
+            <select
+              id="destination-bucket"
+              value={destinationBucket}
+              onChange={(event) => setDestinationBucket(event.target.value)}
+              disabled={busy || loadingBuckets || buckets.length === 0}
+            >
+              {loadingBuckets && <option value="">Loading buckets…</option>}
+              {!loadingBuckets && buckets.length === 0 && <option value="">No buckets available</option>}
+              {buckets.map((item) => (
+                <option key={item.name} value={item.name}>
+                  {item.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="sheet-field">
+            <label htmlFor="destination-prefix">Destination folder:</label>
+            <div>
+              <input
+                id="destination-prefix"
+                value={destinationPrefix}
+                onChange={(event) => setDestinationPrefix(event.target.value)}
+                placeholder="Optional prefix, for example incoming/"
+                disabled={busy}
+              />
+              <small>Leave empty to place objects at the bucket root.</small>
+            </div>
+          </div>
+        </div>
+
+        {error && <div className="sheet-error" role="alert">{error}</div>}
+        <div className="cross-summary">
+          <span>
+            {mode === "move" ? "Move" : "Copy"} {selected.length} item
+            {selected.length === 1 ? "" : "s"}
+          </span>
+          <span>Conflicts are checked before anything is queued.</span>
+        </div>
+        <div className="sheet-actions">
+          <button className="button secondary" type="button" onClick={onClose} disabled={busy}>
+            Cancel
+          </button>
+          <div className="sheet-actions-right">
+            <button className="button primary" type="submit" disabled={busy || !destinationBucket}>
+              {busy ? "Preparing…" : `${mode === "move" ? "Move" : "Copy"} ${selected.length} item${selected.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [accountId, setAccountId] = useState("");
@@ -381,6 +578,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
   const [dialog, setDialog] = useState<{ account?: Account } | null>(null);
+  const [transferDialog, setTransferDialog] = useState<"copy" | "move" | null>(null);
   const [transfers, setTransfers] = useState<TransferTask[]>([]);
 
   const activeAccount = useMemo(
@@ -436,7 +634,7 @@ export default function App() {
     });
     void listen<TransferTask>("transfer-updated", (event) => {
       upsert(event.payload);
-      if (event.payload.kind === "upload" && event.payload.status === "completed") {
+      if (["upload", "copy"].includes(event.payload.kind) && event.payload.status === "completed") {
         setRefreshTick((value) => value + 1);
       }
     }).then((stop) => {
@@ -1067,6 +1265,24 @@ export default function App() {
                 Download
               </button>
               <button
+                className="action-button copy"
+                type="button"
+                onClick={() => setTransferDialog("copy")}
+                disabled={!selectedEntries.length || !activeAccount || busy}
+              >
+                <Icon name="copy" />
+                Copy to…
+              </button>
+              <button
+                className="action-button move"
+                type="button"
+                onClick={() => setTransferDialog("move")}
+                disabled={!selectedEntries.length || !activeAccount || busy}
+              >
+                <Icon name="move" />
+                Move to…
+              </button>
+              <button
                 className="action-button open"
                 type="button"
                 onClick={() => selectedEntry && openEntry(selectedEntry)}
@@ -1127,10 +1343,25 @@ export default function App() {
                       const active = ["queued", "running", "paused"].includes(task.status);
                       return (
                         <div className="transfer-row" key={task.id}>
-                          <span className="transfer-name" title={`${task.localPath} → ${task.bucket}/${task.key}`}>
-                            <Icon name={task.kind === "upload" ? "upload" : "download"} />
-                            {task.kind === "upload" ? "Upload" : "Download"} {task.key.split("/").pop()}
-                            <small>{task.multipart ? "multipart" : "single"}</small>
+                          <span
+                            className="transfer-name"
+                            title={
+                              task.kind === "copy"
+                                ? `${task.bucket}/${task.key} → ${task.destinationBucket}/${task.destinationKey}`
+                                : `${task.localPath} → ${task.bucket}/${task.key}`
+                            }
+                          >
+                            <Icon name={task.kind === "copy" ? "copy" : task.kind === "upload" ? "upload" : "download"} />
+                            {task.kind === "copy"
+                              ? `${task.moveSource ? "Move" : "Copy"} ${task.key.split("/").pop()}`
+                              : `${task.kind === "upload" ? "Upload" : "Download"} ${task.key.split("/").pop()}`}
+                            <small>
+                              {task.kind === "copy"
+                                ? `${task.phase ?? "queued"}${task.multipart ? " · multipart" : ""}`
+                                : task.multipart
+                                  ? "multipart"
+                                  : "single"}
+                            </small>
                           </span>
                           <span>{formatSize(task.size)}</span>
                           <span>{percent}%</span>
@@ -1248,6 +1479,26 @@ export default function App() {
           onSaved={(saved) => {
             setDialog(null);
             void loadAccounts().then(() => setAccountId(saved.id));
+          }}
+        />
+      )}
+      {transferDialog && activeAccount && bucket && (
+        <CrossAccountDialog
+          sourceAccount={activeAccount}
+          sourceBucket={bucket}
+          sourcePrefix={prefix}
+          selected={selectedEntries}
+          accounts={accounts}
+          mode={transferDialog}
+          onClose={() => setTransferDialog(null)}
+          onQueued={(tasks) => {
+            setTransferDialog(null);
+            setSelectedKeys(new Set());
+            setTransfers((current) => {
+              const next = current.filter((task) => !tasks.some((queued) => queued.id === task.id));
+              return [...next, ...tasks].sort((left, right) => right.createdAt - left.createdAt);
+            });
+            setTab("tasks");
           }}
         />
       )}

@@ -41,9 +41,11 @@ export type ListPage = {
   nextToken: string | null;
 };
 
+export type TransferKind = "upload" | "download" | "copy";
+
 export type TransferTask = {
   id: string;
-  kind: "upload" | "download";
+  kind: TransferKind;
   accountId: string;
   bucket: string;
   key: string;
@@ -54,6 +56,21 @@ export type TransferTask = {
   error: string | null;
   multipart: boolean;
   createdAt: number;
+  destinationAccountId?: string | null;
+  destinationBucket?: string | null;
+  destinationKey?: string | null;
+  moveSource?: boolean;
+  sourceETag?: string | null;
+  phase?: string | null;
+  contentType?: string | null;
+};
+
+export type CopyItem = {
+  key: string;
+  name: string;
+  kind: "object" | "folder";
+  size?: number | null;
+  eTag?: string | null;
 };
 
 export type LogLevel = "trace" | "debug" | "info" | "warning" | "error";

@@ -30,6 +30,20 @@ pub struct TransferTask {
     pub error: Option<String>,
     pub multipart: bool,
     pub created_at: u64,
+    #[serde(default)]
+    pub destination_account_id: Option<String>,
+    #[serde(default)]
+    pub destination_bucket: Option<String>,
+    #[serde(default)]
+    pub destination_key: Option<String>,
+    #[serde(default)]
+    pub move_source: bool,
+    #[serde(default)]
+    pub source_e_tag: Option<String>,
+    #[serde(default)]
+    pub phase: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
 }
 
 pub struct TransferControl {
@@ -119,6 +133,13 @@ impl TransferManager {
             error: None,
             multipart: metadata.len() > MULTIPART_THRESHOLD,
             created_at: now(),
+            destination_account_id: None,
+            destination_bucket: None,
+            destination_key: None,
+            move_source: false,
+            source_e_tag: None,
+            phase: None,
+            content_type: None,
         };
         self.push(app, task.clone());
         Ok(task)
@@ -146,6 +167,53 @@ impl TransferManager {
             error: None,
             multipart: false,
             created_at: now(),
+            destination_account_id: None,
+            destination_bucket: None,
+            destination_key: None,
+            move_source: false,
+            source_e_tag: None,
+            phase: None,
+            content_type: None,
+        };
+        self.push(app, task.clone());
+        task
+    }
+
+    pub fn add_copy(
+        &self,
+        app: &AppHandle,
+        source_account_id: &str,
+        source_bucket: &str,
+        source_key: &str,
+        source_size: u64,
+        source_e_tag: Option<String>,
+        destination_account_id: &str,
+        destination_bucket: &str,
+        destination_key: &str,
+        move_source: bool,
+    ) -> TransferTask {
+        let id = Uuid::new_v4().to_string();
+        let temporary = std::env::temp_dir().join(format!("bucket-manager-copy-{id}.part"));
+        let task = TransferTask {
+            id,
+            kind: "copy".to_string(),
+            account_id: source_account_id.to_string(),
+            bucket: source_bucket.to_string(),
+            key: source_key.to_string(),
+            local_path: temporary.to_string_lossy().to_string(),
+            size: source_size,
+            transferred: 0,
+            status: "queued".to_string(),
+            error: None,
+            multipart: source_size > MULTIPART_THRESHOLD,
+            created_at: now(),
+            destination_account_id: Some(destination_account_id.to_string()),
+            destination_bucket: Some(destination_bucket.to_string()),
+            destination_key: Some(destination_key.to_string()),
+            move_source,
+            source_e_tag,
+            phase: Some("download".to_string()),
+            content_type: None,
         };
         self.push(app, task.clone());
         task
@@ -349,9 +417,11 @@ async fn simple_upload(
         return Err("Transfer cancelled.".to_string());
     }
     let client = s3::client_for(account, secret).await;
-    let content_type = mime_guess::from_path(&task.local_path)
-        .first_or_octet_stream()
-        .to_string();
+    let content_type = task.content_type.clone().unwrap_or_else(|| {
+        mime_guess::from_path(&task.local_path)
+            .first_or_octet_stream()
+            .to_string()
+    });
     let body = aws_sdk_s3::primitives::ByteStream::from_path(Path::new(&task.local_path))
         .await
         .map_err(|error| error.to_string())?;
@@ -381,6 +451,11 @@ async fn multipart_upload(
         .create_multipart_upload()
         .bucket(&task.bucket)
         .key(&task.key)
+        .content_type(task.content_type.clone().unwrap_or_else(|| {
+            mime_guess::from_path(&task.local_path)
+                .first_or_octet_stream()
+                .to_string()
+        }))
         .send()
         .await
         .map_err(|error| error.to_string())?;
@@ -468,6 +543,262 @@ async fn multipart_upload(
             Err(error)
         }
     }
+}
+
+pub async fn run_copy(
+    app: AppHandle,
+    manager: Arc<TransferManager>,
+    source_account: Account,
+    source_secret: String,
+    destination_account: Account,
+    destination_secret: String,
+    id: String,
+    logs: Arc<LogStore>,
+    metrics: Arc<MetricsStore>,
+) {
+    let Some(task) = manager.get(&id) else { return };
+    let started = Instant::now();
+    if manager.is_cancelled(&id) {
+        manager.set_status(&app, &id, "cancelled", None);
+        return;
+    }
+    let Some(destination_bucket) = task.destination_bucket.clone() else {
+        manager.set_status(
+            &app,
+            &id,
+            "failed",
+            Some("Destination bucket missing.".into()),
+        );
+        return;
+    };
+    let Some(destination_key) = task.destination_key.clone() else {
+        manager.set_status(&app, &id, "failed", Some("Destination key missing.".into()));
+        return;
+    };
+    let temporary = PathBuf::from(&task.local_path);
+    let download_temporary = temporary.with_extension("bucket-manager-part");
+    let _ = tokio::fs::remove_file(&temporary).await;
+    let _ = tokio::fs::remove_file(&download_temporary).await;
+
+    manager.update(&app, &id, |task| {
+        task.status = "running".into();
+        task.phase = Some("download".into());
+        task.transferred = 0;
+        task.error = None;
+    });
+
+    let result = copy_between_accounts(
+        &app,
+        &manager,
+        &source_account,
+        &source_secret,
+        &destination_account,
+        &destination_secret,
+        &task,
+        &destination_bucket,
+        &destination_key,
+    )
+    .await;
+
+    let _ = tokio::fs::remove_file(&temporary).await;
+    let _ = tokio::fs::remove_file(&download_temporary).await;
+
+    let success = result.is_ok();
+    let error = result.as_ref().err().cloned();
+    metrics.record(
+        &source_account.id,
+        &source_account.name,
+        &task.bucket,
+        if task.move_source {
+            "MoveObject"
+        } else {
+            "CopyObject"
+        },
+        started.elapsed().as_millis() as u64,
+        if success { task.size } else { task.transferred },
+        success,
+    );
+    logs.audit(
+        if success {
+            if task.move_source {
+                "object.moved"
+            } else {
+                "object.copied"
+            }
+        } else if task.move_source {
+            "object.move_failed"
+        } else {
+            "object.copy_failed"
+        },
+        if success {
+            if task.move_source {
+                "Object moved between accounts"
+            } else {
+                "Object copied between accounts"
+            }
+        } else if task.move_source {
+            "Cross-account move failed"
+        } else {
+            "Cross-account copy failed"
+        },
+        LogFields {
+            account_id: Some(source_account.id.clone()),
+            account_name: Some(source_account.name.clone()),
+            operation: Some(
+                if task.move_source {
+                    "MoveObject"
+                } else {
+                    "CopyObject"
+                }
+                .into(),
+            ),
+            bucket: Some(task.bucket.clone()),
+            key: Some(task.key.clone()),
+            metadata: Some(serde_json::json!({
+                "destinationAccount": destination_account.name,
+                "destinationAccountID": destination_account.id,
+                "destinationBucket": destination_bucket,
+                "destinationKey": destination_key,
+                "error": error,
+            })),
+        },
+        Some(if success { "success" } else { "failure" }.into()),
+    );
+
+    match result {
+        Ok(()) => manager.update(&app, &id, |task| {
+            task.transferred = task.size;
+            task.status = "completed".into();
+            task.phase = Some("complete".into());
+            task.error = None;
+        }),
+        Err(error) => {
+            let status = if manager.is_cancelled(&id) {
+                "cancelled"
+            } else if manager.is_paused(&id) {
+                "paused"
+            } else {
+                "failed"
+            };
+            manager.set_status(&app, &id, status, Some(error));
+        }
+    }
+}
+
+async fn copy_between_accounts(
+    app: &AppHandle,
+    manager: &TransferManager,
+    source_account: &Account,
+    source_secret: &str,
+    destination_account: &Account,
+    destination_secret: &str,
+    task: &TransferTask,
+    destination_bucket: &str,
+    destination_key: &str,
+) -> Result<(), String> {
+    if source_account.id == destination_account.id
+        && task.bucket == destination_bucket
+        && task.key == destination_key
+    {
+        return Err("The source and destination resolve to the same object.".into());
+    }
+
+    let source_details =
+        s3::object_details(source_account, source_secret, &task.bucket, &task.key).await?;
+    let expected_size = source_details.size;
+    let expected_etag = source_details
+        .e_tag
+        .clone()
+        .or_else(|| task.source_e_tag.clone());
+    manager.update(app, &task.id, |current| {
+        current.size = expected_size;
+        current.source_e_tag = expected_etag.clone();
+        current.content_type = source_details.content_type.clone();
+        current.multipart = expected_size > MULTIPART_THRESHOLD;
+        current.phase = Some("download".into());
+    });
+
+    let download_task = TransferTask {
+        bucket: task.bucket.clone(),
+        key: task.key.clone(),
+        local_path: task.local_path.clone(),
+        size: expected_size,
+        ..task.clone()
+    };
+    download(app, manager, source_account, source_secret, &download_task).await?;
+
+    let after_download =
+        s3::object_details(source_account, source_secret, &task.bucket, &task.key).await?;
+    if after_download.size != expected_size
+        || (expected_etag.is_some()
+            && after_download.e_tag.as_deref().map(normalize_etag)
+                != expected_etag.as_deref().map(normalize_etag))
+    {
+        return Err("The source object changed during the copy.".into());
+    }
+
+    manager.update(app, &task.id, |current| {
+        current.phase = Some("upload".into());
+        current.transferred = 0;
+        current.status = "running".into();
+    });
+    let upload_task = TransferTask {
+        bucket: destination_bucket.to_string(),
+        key: destination_key.to_string(),
+        local_path: task.local_path.clone(),
+        size: expected_size,
+        content_type: source_details.content_type.clone(),
+        ..task.clone()
+    };
+    if upload_task.multipart {
+        multipart_upload(
+            app,
+            manager,
+            destination_account,
+            destination_secret,
+            &upload_task,
+        )
+        .await?;
+    } else {
+        simple_upload(
+            app,
+            manager,
+            destination_account,
+            destination_secret,
+            &upload_task,
+        )
+        .await?;
+    }
+
+    let destination = s3::object_details(
+        destination_account,
+        destination_secret,
+        destination_bucket,
+        destination_key,
+    )
+    .await
+    .map_err(|_| "Destination verification failed.".to_string())?;
+    if destination.size != expected_size {
+        return Err("Destination verification failed: size mismatch.".into());
+    }
+
+    if task.move_source {
+        let current =
+            s3::object_details(source_account, source_secret, &task.bucket, &task.key).await?;
+        if current.size != expected_size
+            || (expected_etag.is_some()
+                && current.e_tag.as_deref().map(normalize_etag)
+                    != expected_etag.as_deref().map(normalize_etag))
+        {
+            return Err("The source object changed during the move.".into());
+        }
+        s3::delete_object(source_account, source_secret, &task.bucket, &task.key).await?;
+    }
+    Ok(())
+}
+
+fn normalize_etag(etag: &str) -> String {
+    etag.trim_matches('"').to_ascii_lowercase()
 }
 
 pub async fn run_download(

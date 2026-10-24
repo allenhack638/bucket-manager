@@ -232,6 +232,101 @@ pub async fn test_connection(account: &Account, secret: &str) -> Result<String, 
     ))
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectDetails {
+    pub size: u64,
+    pub e_tag: Option<String>,
+    pub content_type: Option<String>,
+}
+
+pub async fn object_details(
+    account: &Account,
+    secret: &str,
+    bucket: &str,
+    key: &str,
+) -> Result<ObjectDetails, String> {
+    let client = client_for(account, secret).await;
+    let response = client
+        .head_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(ObjectDetails {
+        size: response.content_length().unwrap_or_default().max(0) as u64,
+        e_tag: response.e_tag().map(str::to_string),
+        content_type: response.content_type().map(str::to_string),
+    })
+}
+
+pub async fn object_exists(
+    account: &Account,
+    secret: &str,
+    bucket: &str,
+    key: &str,
+) -> Result<bool, String> {
+    match object_details(account, secret, bucket, key).await {
+        Ok(_) => Ok(true),
+        Err(error) if is_not_found(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+pub async fn list_all_objects(
+    account: &Account,
+    secret: &str,
+    bucket: &str,
+    prefix: &str,
+) -> Result<Vec<ObjectEntry>, String> {
+    let client = client_for(account, secret).await;
+    let mut token: Option<String> = None;
+    let mut objects = Vec::new();
+    loop {
+        let mut request = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(prefix)
+            .max_keys(1000);
+        if let Some(current) = token.as_deref() {
+            request = request.continuation_token(current);
+        }
+        let response = request.send().await.map_err(|error| error.to_string())?;
+        for object in response.contents() {
+            if let Some(key) = object.key() {
+                if key == prefix {
+                    continue;
+                }
+                objects.push(ObjectEntry {
+                    key: key.to_string(),
+                    name: display_name(key, prefix),
+                    kind: "object".to_string(),
+                    size: object.size(),
+                    last_modified: object.last_modified().map(ToString::to_string),
+                    storage_class: object
+                        .storage_class()
+                        .map(|storage_class| storage_class.as_str().to_string()),
+                    e_tag: object.e_tag().map(str::to_string),
+                });
+            }
+        }
+        token = response.next_continuation_token().map(str::to_string);
+        if token.is_none() {
+            break;
+        }
+    }
+    Ok(objects)
+}
+
+fn is_not_found(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("notfound")
+        || lower.contains("not found")
+        || lower.contains("status code: 404")
+        || lower.contains("404")
+}
+
 pub async fn upload_object(
     account: &Account,
     secret: &str,

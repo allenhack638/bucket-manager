@@ -7,6 +7,7 @@ mod transfer;
 use accounts::{Account, AccountInput, AccountStore};
 use logging::{LogFields, LogFilter, LogRecord, LogStore, LoggingSettings};
 use metrics::{MetricsStore, RequestMetric};
+use serde::Deserialize;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -72,7 +73,28 @@ fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Resu
     let id = task.id.clone();
     let logs = state.logs.clone();
     let metrics = state.metrics.clone();
-    if task.kind == "upload" {
+    if task.kind == "copy" {
+        let destination_id = task
+            .destination_account_id
+            .clone()
+            .ok_or_else(|| "Destination account missing.".to_string())?;
+        let destination_account = state.store.get(&destination_id)?;
+        let destination_secret = state.store.secret(&destination_id)?;
+        tauri::async_runtime::spawn(async move {
+            transfer::run_copy(
+                app,
+                manager,
+                account,
+                secret,
+                destination_account,
+                destination_secret,
+                id,
+                logs,
+                metrics,
+            )
+            .await;
+        });
+    } else if task.kind == "upload" {
         tauri::async_runtime::spawn(async move {
             transfer::run_upload(app, manager, account, secret, id, logs, metrics).await;
         });
@@ -585,6 +607,176 @@ fn record_operation(
     );
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CopyItem {
+    key: String,
+    name: String,
+    kind: String,
+    size: Option<i64>,
+    e_tag: Option<String>,
+}
+
+fn same_storage(left: &Account, right: &Account) -> bool {
+    left.region == right.region
+        && left.access_key_id == right.access_key_id
+        && left
+            .endpoint
+            .as_deref()
+            .map(|value| value.trim_end_matches('/').to_lowercase())
+            == right
+                .endpoint
+                .as_deref()
+                .map(|value| value.trim_end_matches('/').to_lowercase())
+}
+
+#[tauri::command]
+async fn start_cross_account_transfer(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    source_account_id: String,
+    source_bucket: String,
+    source_prefix: String,
+    destination_account_id: String,
+    destination_bucket: String,
+    destination_prefix: String,
+    items: Vec<CopyItem>,
+    move_source: bool,
+) -> Result<Vec<TransferTask>, String> {
+    let source_account = state.store.get(&source_account_id)?;
+    let source_secret = state.store.secret(&source_account_id)?;
+    let destination_account = state.store.get(&destination_account_id)?;
+    let destination_secret = state.store.secret(&destination_account_id)?;
+    if destination_bucket.trim().is_empty() {
+        return Err("Choose a destination bucket.".into());
+    }
+    if items.is_empty() {
+        return Err("Select at least one item to transfer.".into());
+    }
+    let prefix = if destination_prefix.trim().is_empty() {
+        String::new()
+    } else {
+        let trimmed = destination_prefix.trim_start_matches('/');
+        if trimmed.ends_with('/') {
+            trimmed.to_string()
+        } else {
+            format!("{trimmed}/")
+        }
+    };
+    let mut entries: Vec<(String, String, u64, Option<String>)> = Vec::new();
+    for item in items {
+        if item.kind == "folder" {
+            let objects =
+                s3::list_all_objects(&source_account, &source_secret, &source_bucket, &item.key)
+                    .await?;
+            for object in objects {
+                let relative = object.key.strip_prefix(&item.key).unwrap_or(&object.key);
+                if relative.is_empty() {
+                    continue;
+                }
+                let destination_key = format!("{prefix}{}/{relative}", item.name);
+                entries.push((
+                    object.key.clone(),
+                    destination_key,
+                    object.size.unwrap_or_default().max(0) as u64,
+                    object.e_tag.clone(),
+                ));
+            }
+        } else {
+            entries.push((
+                item.key,
+                format!("{prefix}{}", item.name),
+                item.size.unwrap_or_default().max(0) as u64,
+                item.e_tag,
+            ));
+        }
+    }
+    if entries.is_empty() {
+        return Err("No objects to transfer.".into());
+    }
+    let mut destination_keys = std::collections::HashSet::new();
+    for (source_key, destination_key, _, _) in &entries {
+        if !destination_keys.insert(destination_key.clone()) {
+            return Err("Multiple selected objects map to the same destination key.".into());
+        }
+        if (source_account.id == destination_account.id
+            || same_storage(&source_account, &destination_account))
+            && source_bucket == destination_bucket
+            && source_key == destination_key
+        {
+            return Err("The source and destination resolve to the same object.".into());
+        }
+    }
+    let mut conflicts = Vec::new();
+    for (_, destination_key, _, _) in &entries {
+        if s3::object_exists(
+            &destination_account,
+            &destination_secret,
+            &destination_bucket,
+            destination_key,
+        )
+        .await?
+        {
+            conflicts.push(destination_key.clone());
+        }
+    }
+    if !conflicts.is_empty() {
+        return Err(format!(
+            "Destination already contains {} object(s); choose an empty prefix.",
+            conflicts.len()
+        ));
+    }
+
+    let mut queued = Vec::new();
+    for (source_key, destination_key, size, e_tag) in &entries {
+        let task = state.transfers.add_copy(
+            &app,
+            &source_account.id,
+            &source_bucket,
+            source_key,
+            *size,
+            e_tag.clone(),
+            &destination_account.id,
+            &destination_bucket,
+            destination_key,
+            move_source,
+        );
+        spawn_transfer(&app, &state, task.clone())?;
+        queued.push(task);
+    }
+    state.logs.audit(
+        if move_source {
+            "objects.move.queued"
+        } else {
+            "objects.copy.queued"
+        },
+        "Cross-account transfer queued",
+        LogFields {
+            account_id: Some(source_account.id.clone()),
+            account_name: Some(source_account.name.clone()),
+            operation: Some(
+                if move_source {
+                    "MoveObject"
+                } else {
+                    "CopyObject"
+                }
+                .into(),
+            ),
+            bucket: Some(source_bucket.clone()),
+            key: (!source_prefix.is_empty()).then_some(source_prefix),
+            metadata: Some(serde_json::json!({
+                "count": entries.len(),
+                "destinationAccount": destination_account.name,
+                "destinationAccountID": destination_account.id,
+                "destinationBucket": destination_bucket,
+                "destinationPrefix": prefix,
+            })),
+        },
+        Some("success".into()),
+    );
+    Ok(queued)
+}
+
 fn appearance_path() -> Option<std::path::PathBuf> {
     dirs::config_dir().map(|directory| directory.join("BucketManager").join("appearance.txt"))
 }
@@ -806,7 +998,8 @@ pub fn run() {
             upload_object,
             download_object,
             delete_object,
-            create_folder
+            create_folder,
+            start_cross_account_transfer
         ])
         .run(tauri::generate_context!());
 
