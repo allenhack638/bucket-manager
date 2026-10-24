@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "macos-v*"
 
 permissions:
   contents: write
@@ -25,11 +25,11 @@ jobs:
           VERSION: ${{ github.ref_name }}
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
-          VERSION="${VERSION#v}" ./make-app.sh release
+          VERSION="${VERSION#macos-v}" ./make-app.sh release
 
       - name: Create DMG
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${GITHUB_REF_NAME#macos-v}"
           ARCH="$(uname -m)"
           ./scripts/make-dmg.sh \
             "build/Bucket Manager.app" \
@@ -40,7 +40,7 @@ jobs:
       - name: Write release notes
         run: |
           cat > build/release-notes.md <<EOF
-          ## Bucket Manager ${VERSION}
+          ## Bucket Manager for macOS ${VERSION}
 
           Native macOS S3-compatible storage browser. This build targets
           **${ARCH}**. Intel Macs can build from source.
@@ -85,5 +85,5 @@ jobs:
           gh release create "$TAG" \
             "build/BucketManager-${VERSION}-${ARCH}.dmg" \
             "build/BucketManager-${VERSION}-${ARCH}.dmg.sha256" \
-            --title "Bucket Manager ${VERSION}" \
+            --title "Bucket Manager for macOS ${VERSION}" \
             --notes-file build/release-notes.md
