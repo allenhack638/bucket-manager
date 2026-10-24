@@ -7,8 +7,10 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { api } from "./api";
+import { applyAppearance, initAppearance, type Appearance } from "./theme";
 import type { Account, AccountInput, Bucket, ListPage, ObjectEntry } from "./types";
 
 type SortKey = "name" | "size" | "modified" | "storage";
@@ -402,6 +404,22 @@ export default function App() {
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
+
+  useEffect(() => {
+    void initAppearance();
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listen<Appearance>("appearance-changed", (event) => {
+      applyAppearance(event.payload);
+    }).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

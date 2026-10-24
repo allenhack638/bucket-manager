@@ -1,5 +1,11 @@
 # Changelog
 
+## Windows preview 0.1.2 — 2026-10-24
+
+- Add a persisted Windows-native **View → Appearance** menu with System, Light, and Dark modes matching the macOS app.
+- Apply appearance changes immediately, persist the selection in `%APPDATA%\BucketManager\appearance.txt`, and initialize the UI from the saved mode.
+- Keep the Windows content layout and proportions from 0.1.1.
+
 ## Windows preview 0.1.1 — 2026-10-24
 
 - Match the macOS browser layout and spacing in the Windows app.
