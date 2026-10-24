@@ -21,10 +21,12 @@ First Windows preview of Bucket Manager.
 
 Download either:
 
-- `Bucket Manager_0.1.0_x64-setup.exe` (NSIS)
-- `Bucket Manager_0.1.0_x64_en-US.msi` (MSI)
+- `Bucket.Manager_0.1.0_x64-setup.exe` (NSIS)
+- `Bucket.Manager_0.1.0_x64_en-US.msi` (MSI)
 
 Run the installer and launch Bucket Manager from the Start menu.
+
+`SHA256SUMS.txt` contains the SHA-256 digest for each installer.
 
 ## Build from source
 

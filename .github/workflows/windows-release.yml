@@ -42,6 +42,17 @@ jobs:
       - name: Build Windows installers
         run: npm run tauri -- build
 
+      - name: Write installer checksums
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "src-tauri/target/release/bundle" -Recurse -File |
+            Where-Object { $_.Extension -in ".exe", ".msi" }
+          if (-not $files) { throw "No Windows installers were produced." }
+          $lines = $files | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
+          }
+          Set-Content "src-tauri/target/release/bundle/SHA256SUMS.txt" $lines
+
       - name: Publish Windows release
         shell: pwsh
         env:
@@ -49,10 +60,11 @@ jobs:
         run: |
           $version = $env:GITHUB_REF_NAME -replace '^windows-v', ''
           $assets = Get-ChildItem "src-tauri/target/release/bundle" -Recurse -File |
-            Where-Object { $_.Extension -in ".exe", ".msi" } |
+            Where-Object { $_.Extension -in ".exe", ".msi", ".txt" } |
             ForEach-Object { $_.FullName }
           if (-not $assets) { throw "No Windows installers were produced." }
           gh release create "$env:GITHUB_REF_NAME" $assets `
             --title "Bucket Manager for Windows $version" `
             --notes-file "RELEASE_NOTES.md" `
+            --prerelease `
             --latest=false
