@@ -2,6 +2,7 @@ use crate::accounts::Account;
 use aws_config::BehaviorVersion;
 use aws_credential_types::Credentials;
 use aws_sdk_s3::config::Region;
+use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{BucketLocationConstraint, CreateBucketConfiguration};
 use aws_sdk_s3::Client;
@@ -85,7 +86,7 @@ pub async fn list_buckets(account: &Account, secret: &str) -> Result<Vec<BucketI
         .list_buckets()
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
 
     Ok(response
         .buckets()
@@ -122,7 +123,7 @@ pub async fn delete_bucket(account: &Account, secret: &str, bucket: &str) -> Res
         .bucket(bucket)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
     Ok(())
 }
 
@@ -217,7 +218,7 @@ pub async fn test_connection(account: &Account, secret: &str) -> Result<String, 
             .max_keys(1)
             .send()
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| s3_error(&error))?;
         return Ok(format!("Connected to bucket {bucket}."));
     }
 
@@ -225,7 +226,7 @@ pub async fn test_connection(account: &Account, secret: &str) -> Result<String, 
         .list_buckets()
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
     Ok(format!(
         "Connected. {} bucket(s) visible.",
         response.buckets().len()
@@ -253,7 +254,7 @@ pub async fn object_details(
         .key(key)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
     Ok(ObjectDetails {
         size: response.content_length().unwrap_or_default().max(0) as u64,
         e_tag: response.e_tag().map(str::to_string),
@@ -362,7 +363,7 @@ pub async fn upload_object(
         .body(body)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
 
     Ok(())
 }
@@ -385,7 +386,7 @@ pub async fn download_object(
         .key(key)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
     let bytes = response
         .body
         .collect()
@@ -438,7 +439,7 @@ pub async fn delete_object(
                         .key(object_key)
                         .send()
                         .await
-                        .map_err(|error| error.to_string())?;
+                        .map_err(|error| s3_error(&error))?;
                 }
             }
 
@@ -456,7 +457,7 @@ pub async fn delete_object(
         .key(key)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
     Ok(())
 }
 
@@ -479,7 +480,7 @@ pub async fn create_folder(
         .body(ByteStream::from(Vec::new()))
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3_error(&error))?;
     Ok(())
 }
 
@@ -516,5 +517,25 @@ mod tests {
     fn strips_the_current_prefix_from_display_names() {
         assert_eq!(display_name("photos/2024/a.jpg", "photos/2024/"), "a.jpg");
         assert_eq!(display_name("photos/2024/", ""), "photos/2024");
+    }
+}
+fn s3_error<E>(error: &SdkError<E>) -> String
+where
+    E: ProvideErrorMetadata + std::fmt::Debug,
+{
+    let status = error.raw_response().map(|response| response.status().as_u16());
+    if let Some(service_error) = error.as_service_error() {
+        let code = service_error.code().unwrap_or("S3 error");
+        let message = service_error.message().unwrap_or_default();
+        return match (status, message.is_empty()) {
+            (Some(status), true) => format!("{code} (HTTP {status})"),
+            (Some(status), false) => format!("{code} (HTTP {status}): {message}"),
+            (None, true) => code.to_string(),
+            (None, false) => format!("{code}: {message}"),
+        };
+    }
+    match status {
+        Some(status) => format!("{} (HTTP {status})", error),
+        None => error.to_string(),
     }
 }
