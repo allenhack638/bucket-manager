@@ -165,9 +165,16 @@ pub fn run() {
             startup_log("setup");
             match app.get_webview_window("main") {
                 Some(window) => {
-                    startup_log("main window exists");
-                    let _ = window
-                        .set_size(tauri::Size::Logical(tauri::LogicalSize::new(1120.0, 650.0)));
+                    let scale = window.scale_factor().unwrap_or(1.0);
+                    let before = window.inner_size();
+                    let _ = window.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+                        (1120.0 * scale).round() as u32,
+                        (650.0 * scale).round() as u32,
+                    )));
+                    let after = window.inner_size();
+                    startup_log(&format!(
+                        "main window exists; scale={scale}; inner {before:?} -> {after:?}"
+                    ));
                     let _ = window.show();
                     let _ = window.set_focus();
                 }
