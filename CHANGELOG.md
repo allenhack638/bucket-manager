@@ -1,5 +1,13 @@
 # Changelog
 
+## Windows preview 0.1.3 — 2026-10-24
+
+- Add a persistent Windows transfer queue with live progress events, pause/resume/cancel/retry, and task persistence across relaunch.
+- Add multipart uploads above 16 MiB with 8 MiB parts, per-part progress, completion, and scoped abort on failure/cancel.
+- Add streamed downloads with byte progress and atomic temporary-file replacement.
+- Add the Tasks inspector table and active transfer controls to the Windows UI.
+- Verified a 21 MiB multipart upload/download against fake S3 with byte-identical SHA-256 hashes, plus pause/cancel/resume and relaunch persistence.
+
 ## Windows preview 0.1.2 — 2026-10-24
 
 - Add a persisted Windows-native **View → Appearance** menu with System, Light, and Dark modes matching the macOS app.
