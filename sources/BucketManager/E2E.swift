@@ -595,6 +595,9 @@ enum E2E {
                           "downloaded bytes match the server")
                     check((try? String(contentsOf: target, encoding: .utf8))?.contains("stale destination") == false,
                           "download atomically replaces an existing destination")
+                    let quarantine = try? target.resourceValues(forKeys: [.quarantinePropertiesKey])
+                    check(quarantine?.quarantineProperties?[kLSQuarantineAgentNameKey as String] as? String == "Bucket Manager",
+                          "downloaded objects carry the Gatekeeper quarantine flag")
                 }
                 try? FileManager.default.removeItem(at: directory)
             }

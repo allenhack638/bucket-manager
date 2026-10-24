@@ -694,7 +694,6 @@ dependencies = [
  "aws-sdk-s3",
  "chrono",
  "dirs 6.0.0",
- "futures-util",
  "keyring",
  "mime_guess",
  "serde",

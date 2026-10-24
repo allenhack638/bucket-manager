@@ -1,6 +1,6 @@
 # Bucket Manager
 
-[![CI](https://github.com/allenhack638/bucket-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/allenhack638/bucket-manager/actions/workflows/ci.yml) [![Latest release](https://img.shields.io/github/v/release/allenhack638/bucket-manager?sort=semver)](https://github.com/allenhack638/bucket-manager/releases) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/allenhack638/bucket-manager/actions/workflows/ci.yml/badge.svg)](https://github.com/allenhack638/bucket-manager/actions/workflows/ci.yml) [![macOS](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fallenhack638%2Fbucket-manager%2Freleases%2Flatest&search=%22tag_name%22%3A%22macos-(v%5B0-9.%5D%2B)%22&replace=%241&label=macOS)](https://github.com/allenhack638/bucket-manager/releases/latest) [![Windows](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fapi.github.com%2Frepos%2Fallenhack638%2Fbucket-manager%2Freleases&search=%22tag_name%22%3A%22windows-(v%5B0-9.%5D%2B)%22&replace=%241&label=Windows)](https://github.com/allenhack638/bucket-manager/releases?q=windows-v) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A native macOS client for S3-compatible object storage, built with AppKit and the
 AWS SDK for Swift. Bucket Manager gives you an account picker and bucket sidebar, an
@@ -20,6 +20,14 @@ These captures use the built-in demo account only; no real credentials or bucket
 | Browser — Light | Browser — Dark |
 | --- | --- |
 | ![Bucket browser in light mode](docs/screenshots/browser-light.png) | ![Bucket browser in dark mode](docs/screenshots/browser-dark.png) |
+
+| Logs & Statistics — Light | Logs & Statistics — Dark |
+| --- | --- |
+| ![Logs and statistics in light mode](docs/screenshots/logs-statistics.png) | ![Logs and statistics in dark mode](docs/screenshots/logs-statistics-dark.png) |
+
+| Edit Account — Light | Edit Account — Dark |
+| --- | --- |
+| ![Edit account sheet in light mode](docs/screenshots/edit-account.png) | ![Edit account sheet in dark mode](docs/screenshots/edit-account-dark.png) |
 
 ## What works
 
@@ -67,7 +75,10 @@ These captures use the built-in demo account only; no real credentials or bucket
   headers, and signatures are never logged. An admin passcode is created on first access
   and stored in Keychain; opening logs/statistics, the Event Log tab, exporting, clearing,
   and changing settings require authentication. Clearing, exporting, and settings changes
-  require a fresh passcode prompt even within an unlocked session.
+  require a fresh passcode prompt even within an unlocked session. The passcode cannot
+  be recovered; to reset it, delete the **Bucket Manager Admin Passcode** item in
+  Keychain Access, or run
+  `security delete-generic-password -s com.bucketmanager.admin -a passcode`.
 - **Appearance** — native macOS **View → Appearance** with System, Light, and Dark
   modes. The custom chrome, tables, inspector, transfer footer, and menus all follow
   the selected appearance.

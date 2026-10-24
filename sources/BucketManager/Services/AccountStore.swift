@@ -23,7 +23,6 @@ final class AccountStore {
             self.secretCache = secrets
             return
         }
-        LegacyImport.migrateSupportFilesIfNeeded()
         let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("BucketManager", isDirectory: true)

@@ -569,9 +569,7 @@ final class MainWindowController: NSWindowController {
 
     private func loadBookmarks() {
         let defaults = UserDefaults.standard
-        let legacyKey = "\(LegacyImport.defaultsPrefix)Bookmarks"
-        guard let data = defaults.data(forKey: "BucketManagerBookmarks")
-                ?? defaults.data(forKey: legacyKey) else { return }
+        guard let data = defaults.data(forKey: "BucketManagerBookmarks") else { return }
         do {
             bookmarks = try JSONDecoder().decode([Bookmark].self, from: data)
         } catch {
