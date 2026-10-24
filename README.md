@@ -303,10 +303,15 @@ S3C_ENDPOINT=... S3C_REGION=... S3C_ACCESS_KEY=... S3C_SECRET=... \
 # Real S3-protocol acceptance: local rclone SigV4 server by default
 ./scripts/run-acceptance.sh
 
-# Point the same harness at a disposable external bucket/prefix
+# Point the same harness at a disposable external bucket/prefix.
+# Add BM_ACCEPT_BUCKET_2 to exercise cross-account copy/move between two buckets.
 BM_ACCEPT_ENDPOINT=https://... BM_ACCEPT_REGION=... \
 BM_ACCEPT_ACCESS_KEY=... BM_ACCEPT_SECRET=... \
-BM_ACCEPT_BUCKET=disposable-bucket ./scripts/run-acceptance.sh
+BM_ACCEPT_BUCKET=disposable-bucket \
+BM_ACCEPT_BUCKET_2=second-disposable-bucket ./scripts/run-acceptance.sh
+
+# Interactive credential setup, including the optional second bucket
+./scripts/setup-acceptance-env.sh
 
 # Real-account startup check (debug builds only)
 .build/debug/BucketManager --verify-startup

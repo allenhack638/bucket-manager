@@ -41,6 +41,9 @@ enum Acceptance {
         let suppliedBucket = env["BM_ACCEPT_BUCKET"]?.trimmingCharacters(in: .whitespacesAndNewlines)
         let bucket = suppliedBucket.flatMap { $0.isEmpty ? nil : $0 }
             ?? "bm-accept-\(String(UUID().uuidString.lowercased().prefix(12)))"
+        let suppliedDestinationBucket = env["BM_ACCEPT_BUCKET_2"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let destinationBucket = suppliedDestinationBucket.flatMap { $0.isEmpty ? nil : $0 }
         let createdBucket = suppliedBucket?.isEmpty != false
         let prefix = "acceptance-\(String(UUID().uuidString.lowercased().prefix(12)))/"
         let useSSL = endpoint.lowercased().hasPrefix("https://")
@@ -56,7 +59,28 @@ enum Acceptance {
             usePathStyle: pathStyle,
             useSSL: useSSL
         )
-        let store = AccountStore(inMemoryAccounts: [account], secrets: [account.id: secret])
+        let destinationAccount = destinationBucket.map { destinationBucket in
+            Account(
+                displayName: "Acceptance Destination",
+                accessKeyID: accessKey,
+                kind: .compatible,
+                region: region,
+                endpoint: endpoint,
+                bucket: destinationBucket,
+                usePathStyle: pathStyle,
+                useSSL: useSSL
+            )
+        }
+        var inMemoryAccounts = [account]
+        var inMemorySecrets = [account.id: secret]
+        if let destinationAccount {
+            inMemoryAccounts.append(destinationAccount)
+            inMemorySecrets[destinationAccount.id] = secret
+        }
+        let store = AccountStore(
+            inMemoryAccounts: inMemoryAccounts,
+            secrets: inMemorySecrets
+        )
         let model = BrowserModel(
             accounts: store,
             folderStatsCache: FolderStatsCache(fileURL: nil)
@@ -68,13 +92,21 @@ enum Acceptance {
             for url in localURLs {
                 try? FileManager.default.removeItem(at: url)
             }
-            guard let objects = try? await service.listAllObjects(
-                account: account, secret: secret, bucket: bucket, prefix: prefix
-            ) else { return }
-            for object in objects where object.kind == .object {
-                try? await service.delete(
-                    account: account, secret: secret, bucket: bucket, key: object.key
-                )
+            var cleanupTargets = [(account, bucket)]
+            if let destinationAccount, let destinationBucket {
+                cleanupTargets.append((destinationAccount, destinationBucket))
+            }
+            for (cleanupAccount, cleanupBucket) in cleanupTargets where !cleanupBucket.isEmpty {
+                guard let objects = try? await service.listAllObjects(
+                    account: cleanupAccount, secret: secret,
+                    bucket: cleanupBucket, prefix: prefix
+                ) else { continue }
+                for object in objects where object.kind == .object {
+                    try? await service.delete(
+                        account: cleanupAccount, secret: secret,
+                        bucket: cleanupBucket, key: object.key
+                    )
+                }
             }
             if createdBucket {
                 try? await service.deleteBucket(account: account, secret: secret, name: bucket)
@@ -220,6 +252,11 @@ enum Acceptance {
                 account: account, secret: secret, bucket: bucket, key: largeKey
             )
             check(largeDetails.contentLength == Int64(largeSize), "multipart object has the full size")
+            let largeItem = S3Item.listed(
+                key: largeKey, size: largeDetails.contentLength,
+                lastModified: largeDetails.lastModified,
+                storageClass: largeDetails.storageClass, eTag: largeDetails.eTag
+            )
 
             let largeDownloadURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("acceptance-large-download-\(UUID().uuidString).bin")
@@ -317,6 +354,111 @@ enum Acceptance {
                 account: account, secret: secret, bucket: bucket, prefix: prefix + "nested/"
             )
             check(remaining.isEmpty, "recursive delete removes nested objects")
+
+            if let destinationAccount, let destinationBucket {
+                let crossPrefix = prefix + "cross/"
+                let copiedKey = crossPrefix + item.displayName
+                await model.copy(
+                    items: [item],
+                    toBucket: destinationBucket,
+                    toPrefix: crossPrefix,
+                    move: false,
+                    toAccount: destinationAccount
+                )
+                let copied = await waitUntil(timeout: 60) {
+                    model.transfers.tasks.contains {
+                        $0.destinationKey == copiedKey && $0.status == .completed
+                    }
+                }
+                check(copied, "cross-account copy completes")
+                if copied {
+                    let destinationDetails = try await service.objectDetails(
+                        account: destinationAccount, secret: secret,
+                        bucket: destinationBucket, key: copiedKey
+                    )
+                    check(destinationDetails.contentLength == item.size,
+                          "cross-account copy preserves content")
+                }
+
+                let moveKey = prefix + "cross-move.txt"
+                let moveURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("acceptance-cross-move-\(UUID().uuidString).txt")
+                localURLs.append(moveURL)
+                let moveBody = "cross-account move"
+                try moveBody.write(to: moveURL, atomically: true, encoding: .utf8)
+                try await service.upload(
+                    account: account, secret: secret, bucket: bucket,
+                    key: moveKey, from: moveURL, progress: { _ in }
+                )
+                let moveItem = S3Item.listed(
+                    key: moveKey, size: Int64(moveBody.utf8.count),
+                    lastModified: nil, storageClass: nil, eTag: nil
+                )
+                let movedKey = crossPrefix + "cross-move.txt"
+                await model.copy(
+                    items: [moveItem],
+                    toBucket: destinationBucket,
+                    toPrefix: crossPrefix,
+                    move: true,
+                    toAccount: destinationAccount
+                )
+                let moved = await waitUntil(timeout: 60) {
+                    model.transfers.tasks.contains {
+                        $0.destinationKey == movedKey && $0.status == .completed
+                    }
+                }
+                check(moved, "cross-account move completes")
+                if moved {
+                    do {
+                        _ = try await service.objectDetails(
+                            account: account, secret: secret, bucket: bucket, key: moveKey
+                        )
+                        check(false, "cross-account move removes the source")
+                    } catch {
+                        check(true, "cross-account move removes the source")
+                    }
+                }
+
+                let largeDestinationKey = crossPrefix + largeURL.lastPathComponent
+                await model.copy(
+                    items: [largeItem],
+                    toBucket: destinationBucket,
+                    toPrefix: crossPrefix,
+                    move: false,
+                    toAccount: destinationAccount
+                )
+                let largeCopied = await waitUntil(timeout: 180) {
+                    model.transfers.tasks.contains {
+                        $0.destinationKey == largeDestinationKey && $0.status == .completed
+                    }
+                }
+                check(largeCopied, "cross-account multipart copy completes")
+                if largeCopied {
+                    let largeDestination = try await service.objectDetails(
+                        account: destinationAccount, secret: secret,
+                        bucket: destinationBucket, key: largeDestinationKey
+                    )
+                    check(largeDestination.contentLength == Int64(largeSize),
+                          "cross-account multipart copy preserves the full size")
+                }
+
+                if let movedObjects = try? await service.listAllObjects(
+                    account: destinationAccount, secret: secret,
+                    bucket: destinationBucket, prefix: crossPrefix
+                ) {
+                    for object in movedObjects where object.kind == .object {
+                        try? await service.delete(
+                            account: destinationAccount, secret: secret,
+                            bucket: destinationBucket, key: object.key
+                        )
+                    }
+                }
+                let crossLeftovers = try await service.listAllObjects(
+                    account: destinationAccount, secret: secret,
+                    bucket: destinationBucket, prefix: crossPrefix
+                )
+                check(crossLeftovers.isEmpty, "cross-account cleanup leaves the destination empty")
+            }
 
             try await service.delete(
                 account: account, secret: secret, bucket: bucket, key: item.key
