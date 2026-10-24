@@ -573,7 +573,13 @@ export default function App() {
 
   const uploadFiles = async () => {
     if (!accountId || !bucket || busy) return;
-    const picked = await open({ multiple: true, title: "Upload files" });
+    let picked: string | string[] | null;
+    try {
+      picked = await open({ multiple: true, title: "Upload files" });
+    } catch (nextError) {
+      setError(`File dialog failed: ${errorMessage(nextError)}`);
+      return;
+    }
     const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
     if (!paths.length) return;
 
@@ -601,7 +607,13 @@ export default function App() {
     setError("");
     try {
       for (const entry of files) {
-        const destination = await save({ title: "Download object", defaultPath: entry.name });
+        let destination: string | null;
+        try {
+          destination = await save({ title: "Download object", defaultPath: entry.name });
+        } catch (nextError) {
+          setError(`Save dialog failed: ${errorMessage(nextError)}`);
+          break;
+        }
         if (!destination) break;
         await api.downloadObject(accountId, bucket, entry.key, destination);
       }
