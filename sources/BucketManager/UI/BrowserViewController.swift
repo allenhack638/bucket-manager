@@ -32,7 +32,10 @@ final class FileCellView: NSTableCellView {
         label.stringValue = item.displayName
         icon.image = item.icon
         icon.contentTintColor = selected ? Theme.Colors.selectionText : item.iconTint
-        label.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.text
+        label.textColor = selected ? Theme.Colors.selectionText
+            : (item.isDeleted ? Theme.Colors.secondaryText : Theme.Colors.text)
+        if item.isDeleted, !selected { icon.contentTintColor = Theme.Colors.disabledText }
+        setAccessibilityLabel(item.isDeleted ? "\(item.displayName), deleted" : nil)
     }
 
 }
@@ -638,7 +641,8 @@ final class BrowserViewController: NSViewController {
         let visible = model.visibleItems
         for row in 0..<table.numberOfRows {
             let selected = table.selectedRowIndexes.contains(row)
-            let color = selected ? Theme.Colors.selectionText : Theme.Colors.text
+            let deleted = row < visible.count && visible[row].isDeleted
+            let color = selected ? Theme.Colors.selectionText : (deleted ? Theme.Colors.secondaryText : Theme.Colors.text)
             if let cell = table.view(atColumn: 1, row: row, makeIfNecessary: false) as? FileCellView,
                row < visible.count {
                 cell.configure(item: visible[row], selected: selected)
@@ -653,7 +657,7 @@ final class BrowserViewController: NSViewController {
     // MARK: - Folder stats
 
     func refreshFolderStatsForListing() {
-        model.requestFolderStats(for: model.visibleItems)
+        model.requestFolderStats(for: model.visibleItems.filter { !$0.isDeleted })
     }
 
     func updateFolderMetric(_ key: String) {
@@ -685,7 +689,7 @@ final class BrowserViewController: NSViewController {
         let item = visible[row]
         if item.kind == .folder {
             Task { await model.open(item) }
-        } else {
+        } else if !item.isDeleted {
             openObject(item)
         }
     }
@@ -835,6 +839,12 @@ final class BrowserViewController: NSViewController {
         }
     }
 
+    @objc func undeleteSelected() {
+        let deleted = model.selectedItems.filter { $0.isDeleted && $0.kind == .object }
+        guard !deleted.isEmpty else { return }
+        Task { await model.undelete(items: deleted) }
+    }
+
     @objc func copySelected() {
         model.copySelectionToClipboard(cut: false)
     }
@@ -941,6 +951,7 @@ final class BrowserViewController: NSViewController {
         menu.addItem(withTitle: "Move to…", action: #selector(moveTo), keyEquivalent: "")
         menu.addItem(withTitle: "Rename…", action: #selector(renameSelected), keyEquivalent: "")
         menu.addItem(withTitle: "Delete", action: #selector(deleteSelected), keyEquivalent: "")
+        menu.addItem(withTitle: "Undelete", action: #selector(undeleteSelected), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "New Folder…", action: #selector(newFolder), keyEquivalent: "")
         menu.addItem(withTitle: "Upload file(s)…", action: #selector(uploadFiles), keyEquivalent: "")
@@ -1045,26 +1056,30 @@ extension BrowserViewController: NSTableViewDataSource, NSTableViewDelegate {
         case "size":
             let cell = textCell(tableView, id: "sizecell", alignment: .left)
             cell.textField?.stringValue = model.sizeText(for: item)
-            cell.textField?.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.text
+            cell.textField?.textColor = selected ? Theme.Colors.selectionText
+                : (item.isDeleted ? Theme.Colors.secondaryText : Theme.Colors.text)
             cell.toolTip = model.folderTooltip(for: item)
             return cell
 
         case "type":
             let cell = textCell(tableView, id: "typecell")
-            cell.textField?.stringValue = item.kind == .folder ? "Folder" : item.typeDescription
+            cell.textField?.stringValue = item.isDeleted
+                ? (item.kind == .folder ? "Deleted folder" : "Deleted")
+                : (item.kind == .folder ? "Folder" : item.typeDescription)
             cell.textField?.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.secondaryText
             return cell
 
         case "modified":
             let cell = textCell(tableView, id: "modifiedcell")
             cell.textField?.stringValue = model.modifiedText(for: item)
-            cell.textField?.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.text
+            cell.textField?.textColor = selected ? Theme.Colors.selectionText
+                : (item.isDeleted ? Theme.Colors.secondaryText : Theme.Colors.text)
             cell.toolTip = model.folderTooltip(for: item)
             return cell
 
         case "storage":
             let cell = textCell(tableView, id: "storagecell")
-            cell.textField?.stringValue = item.storageClass ?? (item.kind == .folder ? "" : "STANDARD")
+            cell.textField?.stringValue = item.isDeleted ? "" : item.storageClass ?? (item.kind == .folder ? "" : "STANDARD")
             cell.textField?.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.secondaryText
             return cell
 
@@ -1131,4 +1146,24 @@ extension BrowserViewController: NSSearchFieldDelegate {
 
 extension Optional where Wrapped == String {
     var orEmpty: String { self ?? "" }
+}
+
+extension BrowserViewController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        let selected = model.selectedItems
+        let live = selected.filter { !$0.isDeleted }
+        switch menuItem.action {
+        case #selector(undeleteSelected):
+            return selected.contains { $0.isDeleted && $0.kind == .object }
+        case #selector(openSelected):
+            return model.selectedItem.map { $0.kind == .folder || !$0.isDeleted } ?? false
+        case #selector(shareSelected), #selector(renameSelected):
+            return model.selectedItem.map { !$0.isDeleted } ?? false
+        case #selector(downloadSelected), #selector(deleteSelected), #selector(copySelected),
+             #selector(cutSelected), #selector(copyTo), #selector(moveTo), #selector(showProperties):
+            return !live.isEmpty
+        default:
+            return true
+        }
+    }
 }

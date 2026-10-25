@@ -26,6 +26,7 @@ ACTIVE_LIST = 0
 MAX_ACTIVE_LIST = 0
 MULTIPART = {}
 OBJECTS = {}
+HISTORY = {"gone_restored": False}
 FAILED_PARTS = set()
 NEXT_UPLOAD = 0
 MULTIPART_DELAY = float(os.environ.get("FAKE_MULTIPART_DELAY", "0"))
@@ -175,6 +176,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 MAX_ACTIVE_LIST = 0
                 MULTIPART.clear()
                 OBJECTS.clear()
+                HISTORY["gone_restored"] = False
                 FAILED_PARTS.clear()
             return xml_response(self, "{}", content_type="application/json")
         if bucket == "__last_put":
@@ -448,6 +450,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         version_id = query.get("versionId", [None])[0]
         if version_id:
             bump(f"deleteVersion:{version_id}")
+            if bucket == "history" and key == "gone.txt" and version_id == "dm-gone":
+                HISTORY["gone_restored"] = True
             self.send_response(204)
             self.send_header("Content-Length", "0")
             self.end_headers()
@@ -506,6 +510,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 rows, prefixes = self.alpha_recursive(prefix)
         elif bucket == "alpha":
             rows, prefixes = self.alpha_direct(prefix)
+        elif bucket == "history":
+            rows, prefixes = ([("kept.txt", 4)], []) if prefix == "" else ([], [])
+            if prefix == "" and HISTORY["gone_restored"]:
+                rows.append(("gone.txt", 5))
         else:
             rows, prefixes = [], []
 
@@ -583,8 +591,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return [(k, n) for k, n in data if k.startswith(prefix)], []
         return [], []
 
+    def history_versions(self, query):
+        prefix = query.get("prefix", [""])[0]
+        delimited = "delimiter" in query
+        restored = HISTORY["gone_restored"]
+
+        def version(key, vid, latest, size):
+            return (f"<Version><Key>{key}</Key><VersionId>{vid}</VersionId>"
+                    f"<IsLatest>{str(latest).lower()}</IsLatest><LastModified>{DATE}</LastModified>"
+                    f"<ETag>&quot;{vid}&quot;</ETag><Size>{size}</Size><StorageClass>STANDARD</StorageClass></Version>")
+
+        def marker(key, vid):
+            return (f"<DeleteMarker><Key>{key}</Key><VersionId>{vid}</VersionId>"
+                    f"<IsLatest>true</IsLatest><LastModified>{DATE}</LastModified></DeleteMarker>")
+
+        entries, prefixes = [], []
+        if delimited and prefix == "":
+            entries.append(version("kept.txt", "v-kept", True, 4))
+            entries.append(version("gone.txt", "v-gone", restored, 5))
+            if not restored:
+                entries.append(marker("gone.txt", "dm-gone"))
+            prefixes.append("gone-folder/")
+        elif delimited and prefix == "gone-folder/":
+            entries.append(version("gone-folder/old.txt", "v-old", False, 3))
+            entries.append(marker("gone-folder/old.txt", "dm-old"))
+        elif prefix == "gone.txt":
+            entries.append(version("gone.txt", "v-gone", restored, 5))
+            if not restored:
+                entries.append(marker("gone.txt", "dm-gone"))
+        common = "".join(f"<CommonPrefixes><Prefix>{p}</Prefix></CommonPrefixes>" for p in prefixes)
+        body = (
+            f'<?xml version="1.0" encoding="UTF-8"?><ListVersionsResult xmlns="{XMLNS}">'
+            f"<Name>history</Name><Prefix>{prefix}</Prefix><KeyMarker></KeyMarker>"
+            "<VersionIdMarker></VersionIdMarker><MaxKeys>1000</MaxKeys><IsTruncated>false</IsTruncated>"
+            f"{''.join(entries)}{common}</ListVersionsResult>"
+        )
+        return xml_response(self, body)
+
     def list_versions(self, bucket, key, query):
         bump("versions")
+        if bucket == "history":
+            return self.history_versions(query)
         prefix = query.get("prefix", ["readme.txt"])[0]
         body = (
             f'<?xml version="1.0" encoding="UTF-8"?><ListVersionsResult xmlns="{XMLNS}">'

@@ -68,7 +68,7 @@ These captures use the built-in demo account only; no real credentials or bucket
   bombard the endpoint.
 - **Bookmarks** and **Generate Web URL** (copies a URL to the clipboard).
 - **Time-limited share links** (presigned URLs, up to 7 days).
-- **Version history** — restore a previous version, delete a version, or remove a delete marker from the Versions tab.
+- **Version history** — restore a previous version, delete a version, or show deleted objects and undelete them.
 - **Logs & Statistics** — diagnostic logging is off by default; enabling it records
   structured request/UI events by level and category. Audit logging is always on for
   account, bucket, object, transfer, and settings changes. A dedicated window provides
@@ -286,6 +286,7 @@ no credentials, authorization headers, or signatures. Both use `0600` files insi
 | ⇧⌘N | Create folder |
 | ⌘I | Properties |
 | ⇧⌘V | Versions |
+| ⌥⌘D | Show deleted objects |
 | ⌥⌘N / ⌥⌘M | Add / Manage accounts |
 | ⌥⌘L | Open Logs & Statistics |
 | F2 | Rename |
@@ -435,7 +436,7 @@ headers, never the secret).
 - Advanced bucket administration (ACL, policy, lifecycle, CORS, website, replication)
   is not implemented and is tracked in [docs/BACKLOG.md](docs/BACKLOG.md).
 - Preview renders common image formats and UTF-8 text; other binary objects show a size summary.
-- Tags, metadata, and ACLs are read-only. Deleted objects are hidden from the listing, so undeleting one isn't possible from the app yet.
+- Tags, metadata, and ACLs are read-only. Show Deleted Objects scans up to 10,000 versions per folder.
 - Diagnostic logs default off and are pruned after 14 days; audit logs are always on
   and retained for 90 days. Request counters persist across launches; session and
   all-time totals are shown in Statistics.

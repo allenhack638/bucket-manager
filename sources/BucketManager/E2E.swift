@@ -639,6 +639,39 @@ enum E2E {
                 let versionEvents = Set(logs.recent(limit: 2_000).filter { $0.category == .audit }.map(\.event))
                 check(versionEvents.isSuperset(of: ["object.version.restored", "object.version.deleted"]),
                       "version restore and delete are audited")
+
+                model.openLocation(accountID: account.id, bucket: "history", prefix: "")
+                _ = await waitUntil { !model.isBusy }
+                check(model.items.map(\.key) == ["kept.txt"], "deleted objects stay hidden by default")
+                await model.setShowDeletedObjects(true)
+                _ = await waitUntil { !model.isBusy }
+                let gone = model.items.first { $0.key == "gone.txt" }
+                check(gone?.isDeleted == true, "show deleted lists objects whose latest version is a delete marker")
+                check(model.items.first { $0.key == "gone-folder/" }.map { $0.isDeleted && $0.kind == .folder } == true,
+                      "show deleted lists folders that only hold deleted objects")
+                check(model.items.first { $0.key == "kept.txt" }?.isDeleted == false,
+                      "live objects are not marked deleted")
+                check(model.statusText.contains("2 deleted"), "status bar counts deleted rows")
+                if let gone {
+                    check(await model.shareLink(for: gone, expiresIn: 3600) == nil,
+                          "deleted objects cannot be shared")
+                    model.setSelection([gone.key])
+                    await model.undelete(items: [gone])
+                    _ = await waitUntil { !model.isBusy }
+                    check((await stats())["deleteVersion:dm-gone"] == 1, "undelete removes the latest delete marker")
+                    check(model.items.first { $0.key == "gone.txt" }?.isDeleted == false,
+                          "undeleted object is listed as live again")
+                    check(logs.recent(limit: 2_000).contains { $0.event == "object.undeleted" && $0.category == .audit },
+                          "undelete is audited")
+                }
+                await model.navigate(toPrefix: "gone-folder/")
+                _ = await waitUntil { !model.isBusy }
+                check(model.items.map(\.key) == ["gone-folder/old.txt"] && model.items.allSatisfy(\.isDeleted),
+                      "deleted folders can be opened to reach their objects")
+                await model.setShowDeletedObjects(false)
+                check(model.items.isEmpty, "hiding deleted objects removes their rows")
+                model.openLocation(accountID: account.id, bucket: "alpha", prefix: "")
+                _ = await waitUntil { !model.isBusy }
                 try? FileManager.default.removeItem(at: directory)
             }
 

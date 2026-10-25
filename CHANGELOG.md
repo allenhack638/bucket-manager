@@ -9,6 +9,7 @@
 - Share links sign the endpoint's port, so links work on self-hosted servers such as MinIO on :9000.
 - The Versions tab lists an object's history as a table; restore any previous version, permanently delete a version, or remove a delete marker to undelete the object.
 - Disabled link-style buttons now draw gray text and icons instead of looking clickable.
+- Files → Show Deleted Objects (⌥⌘D) lists objects hidden by a delete marker as dimmed rows, and Undelete brings them back by removing the marker.
 
 ## Windows preview 0.1.4 — 2026-10-24
 

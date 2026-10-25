@@ -627,8 +627,16 @@ final class TransfersViewController: NSViewController {
             infoView.setPlaceholder("Select a file to see its \(tabDisplayName(tab)).")
             return
         }
+        if item.isDeleted, item.kind == .folder {
+            infoView.setPlaceholder("This folder only holds deleted objects. Open it to undelete them.")
+            return
+        }
         guard item.kind == .object else {
             infoView.setPlaceholder("Folders do not have \(tabDisplayName(tab)).")
+            return
+        }
+        if item.isDeleted, tab != "versions" {
+            infoView.setPlaceholder("\(item.displayName) is deleted. Use Undelete, or restore a version from the Versions tab.")
             return
         }
 

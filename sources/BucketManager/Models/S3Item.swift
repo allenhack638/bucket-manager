@@ -14,6 +14,9 @@ struct S3Item: Identifiable, Hashable, Sendable {
     var eTag: String?
     var contentType: String?
     var metadata: [String: String] = [:]
+    /// The latest version is a delete marker (or, for folders, every key below
+    /// is). Only listed when the browser shows deleted objects.
+    var isDeleted = false
 
     var displayName: String {
         if kind == .folder {
