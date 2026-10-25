@@ -435,7 +435,7 @@ headers, never the secret).
 - Advanced bucket administration (ACL, policy, lifecycle, CORS, website, replication)
   is not implemented and is tracked in [docs/BACKLOG.md](docs/BACKLOG.md).
 - Preview renders common image formats and UTF-8 text; other binary objects show a size summary.
-- Tags, metadata, and ACLs are read-only. Versions can be restored or deleted, but deleted objects only reappear in the listing after their delete marker is removed from the Versions tab of an object that is still listed.
+- Tags, metadata, and ACLs are read-only. Deleted objects are hidden from the listing, so undeleting one isn't possible from the app yet.
 - Diagnostic logs default off and are pruned after 14 days; audit logs are always on
   and retained for 90 days. Request counters persist across launches; session and
   all-time totals are shown in Statistics.
