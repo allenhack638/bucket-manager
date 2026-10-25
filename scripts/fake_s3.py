@@ -352,6 +352,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
+        copy_source = urllib.parse.unquote(self.headers.get("x-amz-copy-source", ""))
+        if "?versionId=" in copy_source:
+            source, version_id = copy_source.split("?versionId=", 1)
+            if source.lstrip("/") == f"{bucket}/{key}":
+                bump(f"restoreVersion:{version_id}")
+            return xml_response(
+                self,
+                f'<?xml version="1.0" encoding="UTF-8"?><CopyObjectResult xmlns="{XMLNS}">'
+                f'<LastModified>{DATE}</LastModified><ETag>&quot;etag-restored&quot;</ETag></CopyObjectResult>',
+            )
         with LOCK:
             LAST_PUT.update(key=key, size=len(body))
             OBJECTS[key] = {
@@ -431,6 +441,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if upload is None:
                 return error_response(self, "NoSuchUpload", "The upload does not exist", 404)
             bump("abortMultipart")
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        version_id = query.get("versionId", [None])[0]
+        if version_id:
+            bump(f"deleteVersion:{version_id}")
             self.send_response(204)
             self.send_header("Content-Length", "0")
             self.end_headers()

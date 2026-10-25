@@ -1924,6 +1924,61 @@ final class BrowserModel {
         }
     }
 
+    enum VersionAction {
+        case restore
+        case delete
+
+        var event: String { self == .restore ? "object.version.restored" : "object.version.deleted" }
+        var message: String { self == .restore ? "Object version restored" : "Object version deleted" }
+    }
+
+    /// Restore copies a version over the key; delete removes it permanently.
+    /// Both refresh the listing and the version history afterwards.
+    @discardableResult
+    func apply(_ action: VersionAction, to version: ObjectVersion, of item: S3Item) async -> Bool {
+        guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return false }
+        if action == .restore, version.isDeleteMarker || version.isLatest { return false }
+        if isDemoData {
+            appendLog("Demo data is read-only")
+            return false
+        }
+        guard let secret = try? accounts.secret(for: account) else {
+            setError(S3ServiceError.missingCredentials)
+            return false
+        }
+        let metadata = ["versionId": version.versionID, "deleteMarker": String(version.isDeleteMarker)]
+        do {
+            switch action {
+            case .restore:
+                try await service.restoreVersion(
+                    account: account, secret: secret, bucket: bucket, key: item.key, versionID: version.versionID
+                )
+                appendLog("Restored \(item.key) to version \(version.versionID)")
+            case .delete:
+                try await service.deleteVersion(
+                    account: account, secret: secret, bucket: bucket, key: item.key, versionID: version.versionID
+                )
+                appendLog("Deleted version \(version.versionID) of \(item.key)")
+            }
+            auditOperation(
+                event: action.event, message: action.message,
+                account: account, bucket: bucket, key: item.key, metadata: metadata
+            )
+            detailsCache[metadataKey(account, bucket, item.key)] = nil
+            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: item.key))
+            await reload(useCache: false)
+            await loadVersions(for: item, force: true)
+            return true
+        } catch {
+            auditOperation(
+                event: action.event + ".failed", message: action.message + " failed",
+                account: account, bucket: bucket, key: item.key, outcome: "failure", metadata: metadata
+            )
+            setError(error)
+            return false
+        }
+    }
+
     func loadACL(for item: S3Item, force: Bool = false) async {
         guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
         if isDemoData {

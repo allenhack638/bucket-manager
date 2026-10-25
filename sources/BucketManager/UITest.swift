@@ -216,6 +216,28 @@ enum UITest {
             demoModel.loadDemoDetails()
             check(demoModel.inspectorLoaded("properties", for: demoItem), "properties cache is keyed to the selected object")
             check(demoModel.inspectorLoaded("tags", for: demoItem), "tags cache is keyed to the selected object")
+
+            let panel = VersionsPanel(frame: NSRect(x: 0, y: 0, width: 600, height: 200))
+            panel.update(demoModel.versions)
+            check(!panel.restoreButton.isEnabled && !panel.deleteButton.isEnabled,
+                  "version actions are disabled until a version is selected")
+            let rows: [(Int, Bool, String)] = demoModel.versions.enumerated().map { index, version in
+                (index, !version.isLatest && !version.isDeleteMarker, VersionsPanel.stateTitle(version))
+            }
+            for (row, canRestore, title) in rows {
+                panel.select(row: row)
+                check(panel.restoreButton.isEnabled == canRestore && panel.deleteButton.isEnabled,
+                      "\(title) version: restore \(canRestore ? "enabled" : "disabled"), delete enabled")
+            }
+            var restored: ObjectVersion?
+            panel.onRestore = { restored = $0 }
+            if let previous = demoModel.versions.firstIndex(where: { !$0.isLatest && !$0.isDeleteMarker }) {
+                panel.select(row: previous)
+                panel.restoreButton.onClick?()
+                check(restored?.id == demoModel.versions[previous].id, "restore passes the selected version")
+            }
+            panel.update(demoModel.versions)
+            check(panel.selectedVersion?.id == restored?.id, "refreshing the history keeps the selection")
         }
 
         check(demoModel.buckets.count == 16, "account buckets are exposed for the sidebar")

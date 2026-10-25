@@ -253,6 +253,67 @@ enum Acceptance {
                 check(status == 200 && String(data: body, encoding: .utf8) == uploadBody, name, "status \(status)")
             }
 
+            // Version history only exists when the bucket has versioning enabled.
+            let versionedURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("acceptance-versioned-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: versionedURL, withIntermediateDirectories: true)
+            localURLs.append(versionedURL)
+            let versionedFile = versionedURL.appendingPathComponent("versioned.txt")
+            let versionedKey = prefix + "versioned.txt"
+            for body in ["version one", "version two"] {
+                try body.write(to: versionedFile, atomically: true, encoding: .utf8)
+                model.transfers.clearFinished()
+                model.upload(urls: [versionedFile])
+                _ = await waitUntil {
+                    model.transfers.tasks.contains { $0.key == versionedKey && $0.status == TransferTask.Status.completed }
+                }
+            }
+            func versionedBody() async -> String? {
+                guard let data = try? await service.previewData(
+                    account: account, secret: secret, bucket: bucket, key: versionedKey
+                ) else { return nil }
+                return String(data: data, encoding: .utf8)
+            }
+            let history = try await service.versions(account: account, secret: secret, bucket: bucket, key: versionedKey)
+            if history.filter({ !$0.isDeleteMarker }).count >= 2,
+               let first = history.last(where: { !$0.isDeleteMarker && !$0.isLatest }) {
+                let versionedItem = S3Item(key: versionedKey, kind: .object)
+                check(await model.apply(.restore, to: first, of: versionedItem), "version restore succeeds")
+                check(await versionedBody() == "version one", "restore makes the old content current")
+                let afterRestore = try await service.versions(
+                    account: account, secret: secret, bucket: bucket, key: versionedKey
+                )
+                check(afterRestore.count == history.count + 1, "restore keeps the replaced version in history")
+
+                check(await model.apply(.delete, to: first, of: versionedItem), "version delete succeeds")
+                let afterDelete = try await service.versions(
+                    account: account, secret: secret, bucket: bucket, key: versionedKey
+                )
+                check(!afterDelete.contains { $0.versionID == first.versionID } && afterDelete.count == history.count,
+                      "deleted version leaves the history")
+
+                try await service.delete(account: account, secret: secret, bucket: bucket, key: versionedKey)
+                let withMarker = try await service.versions(
+                    account: account, secret: secret, bucket: bucket, key: versionedKey
+                )
+                if let marker = withMarker.first(where: { $0.isDeleteMarker && $0.isLatest }) {
+                    check(await model.apply(.delete, to: marker, of: versionedItem), "delete marker removal succeeds")
+                    check(await versionedBody() == "version one", "removing the delete marker undeletes the object")
+                } else {
+                    check(false, "plain delete creates a delete marker on a versioned bucket")
+                }
+                for version in try await service.versions(
+                    account: account, secret: secret, bucket: bucket, key: versionedKey
+                ) {
+                    try? await service.deleteVersion(
+                        account: account, secret: secret, bucket: bucket, key: versionedKey, versionID: version.versionID
+                    )
+                }
+            } else {
+                info("version restore checks skipped: bucket versioning is not enabled")
+                try? await service.delete(account: account, secret: secret, bucket: bucket, key: versionedKey)
+            }
+
             let details = try await service.objectDetails(
                 account: account, secret: secret, bucket: bucket, key: item.key
             )
