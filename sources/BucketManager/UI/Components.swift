@@ -22,7 +22,7 @@ extension NSImage {
         let rect = NSRect(origin: .zero, size: size)
         draw(in: rect)
         color.set()
-        rect.fill(using: .sourceAtop)
+        rect.fill(using: .sourceIn)
         image.unlockFocus()
         image.isTemplate = false
         return image
@@ -106,6 +106,7 @@ final class FlatButton: NSControl {
     var accessibilityTitle: String? { didSet { needsDisplay = true } }
     var accessibilityHelpText: String?
     var isIconOnly = false { didSet { needsDisplay = true; invalidateIntrinsicContentSize() } }
+    override var isEnabled: Bool { didSet { needsDisplay = true } }
     var style: Style = .toolbar {
         didSet {
             needsDisplay = true
@@ -240,7 +241,7 @@ final class FlatButton: NSControl {
             fill = pressed ? Theme.Colors.accentPressed : (hovering ? Theme.Colors.accentHover : Theme.Colors.accent)
             textColor = .white
         case .link:
-            textColor = isSelectedState ? Theme.Colors.accent : Theme.Colors.link
+            if isEnabled { textColor = isSelectedState ? Theme.Colors.accent : Theme.Colors.link }
             if isSelectedState { fill = Theme.Colors.hover }
         }
 

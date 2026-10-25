@@ -32,7 +32,6 @@ These commands were removed from the macOS menu because they were disabled place
 - Copy resume across app restarts (copies restart from the beginning today)
 - Temporary credential/session-token support
 - Writable object tags, metadata, ACLs
-- Object version restore/delete
 - Full App Sandbox migration
 
 ## Windows app parity

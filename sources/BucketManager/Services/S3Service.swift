@@ -1205,6 +1205,38 @@ actor S3Service {
         invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
     }
 
+    /// Makes an older version current by copying it over the key. S3 keeps the
+    /// replaced version, so restoring is itself undoable from the history.
+    func restoreVersion(account: Account, secret: String, bucket: String, key: String, versionID: String) async throws {
+        let client = try await client(for: account, secret: secret)
+        let encodedSource = (("/\(bucket)/\(key)")
+            .addingPercentEncoding(withAllowedCharacters: S3Key.copySourceAllowed) ?? "/\(bucket)/\(key)")
+            + "?versionId=" + (versionID.addingPercentEncoding(withAllowedCharacters: S3Key.queryValueAllowed) ?? versionID)
+        _ = try await measured("CopyObject", account: account, bucket: bucket, key: key) {
+            try await throttle.run {
+                try await client.copyObject(input: CopyObjectInput(
+                    bucket: bucket,
+                    copySource: encodedSource,
+                    key: key,
+                    metadataDirective: .copy
+                ))
+            }
+        }
+        invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
+    }
+
+    /// Permanently removes one version. Removing the latest delete marker
+    /// undeletes the object; removing a data version cannot be undone.
+    func deleteVersion(account: Account, secret: String, bucket: String, key: String, versionID: String) async throws {
+        let client = try await client(for: account, secret: secret)
+        _ = try await measured("DeleteObject", account: account, bucket: bucket, key: key) {
+            try await throttle.run {
+                try await client.deleteObject(input: DeleteObjectInput(bucket: bucket, key: key, versionId: versionID))
+            }
+        }
+        invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
+    }
+
     func createFolder(account: Account, secret: String, bucket: String, prefix: String, name: String) async throws {
         let client = try await client(for: account, secret: secret)
         let base = prefix.isEmpty || prefix.hasSuffix("/") ? prefix : prefix + "/"

@@ -96,6 +96,7 @@ final class TransfersViewController: NSViewController {
     private let footer = ThemedView()
     private let infoView = InfoTextView()
     private let previewImageView = NSImageView()
+    let versionsPanel = VersionsPanel()
 
     private let sizeWidth: CGFloat = 78
     private let percentWidth: CGFloat = 56
@@ -151,6 +152,12 @@ final class TransfersViewController: NSViewController {
         content.addSubview(infoView)
         content.addSubview(previewImageView)
         content.addSubview(logEmptyView)
+        content.addSubview(versionsPanel)
+        versionsPanel.translatesAutoresizingMaskIntoConstraints = false
+        versionsPanel.pinEdges(to: content)
+        versionsPanel.isHidden = true
+        versionsPanel.onRestore = { [weak self] version in self?.confirmVersion(.restore, version) }
+        versionsPanel.onDelete = { [weak self] version in self?.confirmVersion(.delete, version) }
         tasksContainer.translatesAutoresizingMaskIntoConstraints = false
         infoView.translatesAutoresizingMaskIntoConstraints = false
         previewImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -478,6 +485,7 @@ final class TransfersViewController: NSViewController {
         let tasksVisible = id == "tasks"
         tasksContainer.isHidden = !tasksVisible
         infoView.isHidden = tasksVisible
+        versionsPanel.isHidden = true
         previewImageView.isHidden = true
         logEmptyView.isHidden = true
         filterButtons.forEach { $0.isHidden = !tasksVisible }
@@ -589,6 +597,7 @@ final class TransfersViewController: NSViewController {
         let tab = selectedTab
         let item = model.selectedItem
         previewImageView.isHidden = true
+        versionsPanel.isHidden = true
 
         if tab == "tasks" {
             logEmptyView.isHidden = true
@@ -701,13 +710,9 @@ final class TransfersViewController: NSViewController {
             } else if model.versions.isEmpty {
                 infoView.setPlaceholder("No versions returned. Bucket versioning may be disabled.")
             } else {
-                let lines = model.versions.map { version -> String in
-                    let kind = version.isDeleteMarker ? "delete marker" : (version.isLatest ? "latest" : "previous")
-                    let when = version.lastModified?.s3ListString ?? "—"
-                    let size = version.size?.byteString ?? "—"
-                    return "[\(kind)]  \(when)  \(size)  \(version.versionID)"
-                }
-                infoView.setText(lines.joined(separator: "\n"))
+                versionsPanel.update(model.versions)
+                versionsPanel.isHidden = false
+                infoView.isHidden = true
             }
 
         case "preview":
@@ -724,6 +729,38 @@ final class TransfersViewController: NSViewController {
 
         default:
             infoView.setPlaceholder("")
+        }
+    }
+
+    private func confirmVersion(_ action: BrowserModel.VersionAction, _ version: ObjectVersion) {
+        guard let item = model.selectedItem, let window = view.window else { return }
+        let alert = NSAlert()
+        let when = version.lastModified?.s3ListString ?? version.versionID
+        switch action {
+        case .restore:
+            alert.messageText = "Restore this version?"
+            alert.informativeText = "\(item.displayName) from \(when) becomes the current version. "
+                + "The version it replaces stays in the history."
+            alert.addButton(withTitle: "Restore")
+        case .delete:
+            alert.alertStyle = .warning
+            if version.isDeleteMarker {
+                alert.messageText = "Remove this delete marker?"
+                alert.informativeText = version.isLatest
+                    ? "\(item.displayName) reappears with its most recent version."
+                    : "This old marker is removed from the history."
+            } else {
+                alert.messageText = "Permanently delete this version?"
+                alert.informativeText = "The \(when) version of \(item.displayName) is removed for good. "
+                    + "This cannot be undone."
+            }
+            alert.addButton(withTitle: version.isDeleteMarker ? "Remove Marker" : "Delete Version")
+            alert.buttons.first?.hasDestructiveAction = !version.isDeleteMarker
+        }
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            Task { await self.model.apply(action, to: version, of: item) }
         }
     }
 

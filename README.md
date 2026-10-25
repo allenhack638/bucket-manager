@@ -68,6 +68,7 @@ These captures use the built-in demo account only; no real credentials or bucket
   bombard the endpoint.
 - **Bookmarks** and **Generate Web URL** (copies a URL to the clipboard).
 - **Time-limited share links** (presigned URLs, up to 7 days).
+- **Version history** — restore a previous version, delete a version, or remove a delete marker from the Versions tab.
 - **Logs & Statistics** — diagnostic logging is off by default; enabling it records
   structured request/UI events by level and category. Audit logging is always on for
   account, bucket, object, transfer, and settings changes. A dedicated window provides
@@ -434,7 +435,7 @@ headers, never the secret).
 - Advanced bucket administration (ACL, policy, lifecycle, CORS, website, replication)
   is not implemented and is tracked in [docs/BACKLOG.md](docs/BACKLOG.md).
 - Preview renders common image formats and UTF-8 text; other binary objects show a size summary.
-- Versioning, tags, metadata, and ACLs are read-only.
+- Tags, metadata, and ACLs are read-only. Versions can be restored or deleted, but deleted objects only reappear in the listing after their delete marker is removed from the Versions tab of an object that is still listed.
 - Diagnostic logs default off and are pruned after 14 days; audit logs are always on
   and retained for 90 days. Request counters persist across launches; session and
   all-time totals are shown in Statistics.

@@ -618,6 +618,27 @@ enum E2E {
                 let clampedExpiry = clamped.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems }?
                     .first { $0.name == "X-Amz-Expires" }?.value
                 check(clampedExpiry == "604800", "share link lifetime is capped at seven days")
+
+                let older = ObjectVersion(
+                    versionID: "v0+/=", isLatest: false, isDeleteMarker: false,
+                    size: 12, lastModified: nil, eTag: nil, storageClass: nil
+                )
+                let current = ObjectVersion(
+                    versionID: "v1", isLatest: true, isDeleteMarker: false,
+                    size: 12, lastModified: nil, eTag: nil, storageClass: nil
+                )
+                check(await model.apply(.restore, to: older, of: readme), "restoring a version succeeds")
+                check((await stats())["restoreVersion:v0+/="] == 1,
+                      "restore copies the exact version over the same key")
+                check(await model.apply(.restore, to: current, of: readme) == false,
+                      "restoring the current version is refused")
+                check(await model.apply(.delete, to: older, of: readme), "deleting a version succeeds")
+                check((await stats())["deleteVersion:v0+/="] == 1, "delete targets the exact version ID")
+                check(model.items.contains { $0.key == "readme.txt" },
+                      "deleting an old version keeps the object")
+                let versionEvents = Set(logs.recent(limit: 2_000).filter { $0.category == .audit }.map(\.event))
+                check(versionEvents.isSuperset(of: ["object.version.restored", "object.version.deleted"]),
+                      "version restore and delete are audited")
                 try? FileManager.default.removeItem(at: directory)
             }
 
