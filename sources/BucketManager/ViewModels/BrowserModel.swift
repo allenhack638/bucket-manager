@@ -20,6 +20,7 @@ final class BrowserModel {
     let transfers: TransferQueue
     let folderStats: FolderStatsCoordinator
     private(set) var isDemoData = false
+    private(set) var showDeletedObjects = false
     private let service = S3Service.shared
 
     var onTreeChange: (() -> Void)?
@@ -191,17 +192,19 @@ final class BrowserModel {
     }
 
     func sizeText(for item: S3Item) -> String {
+        if item.isDeleted { return "—" }
         if item.kind == .object { return item.size?.byteString ?? "" }
         return folderSnapshot(for: item.key)?.sizeText ?? ""
     }
 
     func modifiedText(for item: S3Item) -> String {
+        if item.isDeleted { return item.lastModified?.s3ListString ?? "" }
         if item.kind == .object { return item.lastModified?.s3ListString ?? "" }
         return folderSnapshot(for: item.key)?.modifiedText ?? ""
     }
 
     func folderTooltip(for item: S3Item) -> String? {
-        guard item.kind == .folder else { return nil }
+        guard item.kind == .folder, !item.isDeleted else { return nil }
         return folderSnapshot(for: item.key)?.tooltip
     }
 
@@ -218,6 +221,8 @@ final class BrowserModel {
         } else {
             text = "\(count) \(noun) (\(total.byteString))"
         }
+        let deleted = visible.filter(\.isDeleted).count
+        if deleted > 0 { text += ", \(deleted) deleted" }
         if !selection.isEmpty {
             text += ", \(selection.count) file\(selection.count == 1 ? "" : "s") selected"
         }
@@ -689,9 +694,22 @@ final class BrowserModel {
             items = page.items
             nextToken = page.nextToken
             isTruncated = page.isTruncated
+            var deletedNote: String?
+            if showDeletedObjects {
+                do {
+                    let deleted = try await service.deletedItems(
+                        account: account, secret: secret, bucket: bucket,
+                        prefix: targetPrefix, live: Set(page.items.map(\.key))
+                    )
+                    guard requestID == listingRequestID, prefix == targetPrefix else { return }
+                    items += deleted
+                } catch {
+                    deletedNote = "Deleted objects unavailable: \(S3ErrorPresenter.message(for: error))"
+                }
+            }
             sortItems()
             lastUpdated = Date()
-            status = "Ready"
+            status = deletedNote ?? "Ready"
             pruneSelection()
         } catch {
             guard requestID == listingRequestID,
@@ -955,6 +973,7 @@ final class BrowserModel {
     }
 
     func download(items selected: [S3Item], to directory: URL) async {
+        let selected = selected.filter { !$0.isDeleted }
         guard let account = selectedAccount, let bucket = selectedBucket, !selected.isEmpty else { return }
         guard let secret = try? accounts.secret(for: account) else {
             setError(S3ServiceError.missingCredentials)
@@ -1004,6 +1023,7 @@ final class BrowserModel {
     }
 
     func delete(items selected: [S3Item]) async {
+        let selected = selected.filter { !$0.isDeleted }
         guard let account = selectedAccount, let bucket = selectedBucket, !selected.isEmpty else { return }
         guard let secret = try? accounts.secret(for: account) else {
             setError(S3ServiceError.missingCredentials)
@@ -1150,7 +1170,7 @@ final class BrowserModel {
     }
 
     func rename(_ item: S3Item, to newName: String) async {
-        guard let account = selectedAccount, let bucket = selectedBucket else { return }
+        guard !item.isDeleted, let account = selectedAccount, let bucket = selectedBucket else { return }
         guard let secret = try? accounts.secret(for: account) else {
             setError(S3ServiceError.missingCredentials)
             return
@@ -1198,7 +1218,8 @@ final class BrowserModel {
     /// Presigns a time-limited GET link. The URL embeds a signature, so it is
     /// never written to logs; only the key and lifetime are audited.
     func shareLink(for item: S3Item, expiresIn: TimeInterval) async -> URL? {
-        guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return nil }
+        guard item.kind == .object, !item.isDeleted,
+              let account = selectedAccount, let bucket = selectedBucket else { return nil }
         if isDemoData {
             return URL(string: "https://demo-bucket.example.com/\(item.key)?X-Amz-Expires=\(Int(expiresIn))")
         }
@@ -1241,7 +1262,8 @@ final class BrowserModel {
         move: Bool,
         toAccount: Account? = nil
     ) async {
-        guard let account = selectedAccount, let bucket = selectedBucket else { return }
+        let selected = selected.filter { !$0.isDeleted }
+        guard let account = selectedAccount, let bucket = selectedBucket, !selected.isEmpty else { return }
         guard let secret = try? accounts.secret(for: account) else {
             setError(S3ServiceError.missingCredentials)
             return
@@ -1528,7 +1550,7 @@ final class BrowserModel {
 
     func copySelectionToClipboard(cut: Bool) {
         guard let account = selectedAccount, let bucket = selectedBucket else { return }
-        clipboard = selectedItems.map {
+        clipboard = selectedItems.filter { !$0.isDeleted }.map {
             ClipboardItem(
                 accountID: account.id,
                 bucket: bucket,
@@ -1799,7 +1821,7 @@ final class BrowserModel {
     }
 
     func loadDetails(for item: S3Item, force: Bool = false) async {
-        guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
+        guard item.kind == .object, !item.isDeleted, let account = selectedAccount, let bucket = selectedBucket else { return }
         if isDemoData {
             details = ObjectDetails(
                 contentType: item.fileExtension == "png" ? "image/png" : "application/octet-stream",
@@ -1849,7 +1871,7 @@ final class BrowserModel {
     }
 
     func loadTags(for item: S3Item, force: Bool = false) async {
-        guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
+        guard item.kind == .object, !item.isDeleted, let account = selectedAccount, let bucket = selectedBucket else { return }
         if isDemoData {
             tags = ["team": "design", "environment": "demo"]
             tagsKey = item.key
@@ -1979,8 +2001,73 @@ final class BrowserModel {
         }
     }
 
+    func setShowDeletedObjects(_ show: Bool) async {
+        guard show != showDeletedObjects else { return }
+        applyShowDeleted(show)
+        if show, !isDemoData { await reload(useCache: true) }
+    }
+
+    /// Updates the flag and the rows already on screen; live listings then
+    /// reload to fetch delete markers, while demo data adds a sample row.
+    func applyShowDeleted(_ show: Bool) {
+        showDeletedObjects = show
+        if !show { items.removeAll(where: \.isDeleted) }
+        if show, isDemoData {
+            items.append(S3Item(
+                key: prefix + "IMG_7070.JPG", kind: .object,
+                lastModified: Date().addingTimeInterval(-2 * 86_400), isDeleted: true
+            ))
+            sortItems()
+        }
+        pruneSelection()
+        onFilesChange?()
+        onChromeChange?()
+    }
+
+    /// Removes the delete marker that hides each object, so its most recent
+    /// data version becomes current again.
+    func undelete(items selected: [S3Item]) async {
+        let targets = selected.filter { $0.isDeleted && $0.kind == .object }
+        guard let account = selectedAccount, let bucket = selectedBucket, !targets.isEmpty else { return }
+        if isDemoData {
+            appendLog("Demo data is read-only")
+            return
+        }
+        guard let secret = try? accounts.secret(for: account) else {
+            setError(S3ServiceError.missingCredentials)
+            return
+        }
+        var restored = 0
+        for item in targets {
+            do {
+                let history = try await service.versions(
+                    account: account, secret: secret, bucket: bucket, key: item.key
+                )
+                guard let marker = history.first(where: { $0.isDeleteMarker && $0.isLatest }) else { continue }
+                try await service.deleteVersion(
+                    account: account, secret: secret, bucket: bucket, key: item.key, versionID: marker.versionID
+                )
+                restored += 1
+                auditOperation(
+                    event: "object.undeleted", message: "Object undeleted",
+                    account: account, bucket: bucket, key: item.key,
+                    metadata: ["versionId": marker.versionID]
+                )
+            } catch {
+                auditOperation(
+                    event: "object.undelete.failed", message: "Object undelete failed",
+                    account: account, bucket: bucket, key: item.key, outcome: "failure"
+                )
+                setError(error)
+            }
+        }
+        appendLog("Undeleted \(restored) of \(targets.count) object(s)")
+        folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
+        await reload(useCache: false)
+    }
+
     func loadACL(for item: S3Item, force: Bool = false) async {
-        guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
+        guard item.kind == .object, !item.isDeleted, let account = selectedAccount, let bucket = selectedBucket else { return }
         if isDemoData {
             acl = ["FULL_CONTROL — demo-owner", "READ — demo-reader"]
             aclKey = item.key
@@ -2011,7 +2098,7 @@ final class BrowserModel {
     }
 
     func loadPreview(for item: S3Item, force: Bool = false) async {
-        guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
+        guard item.kind == .object, !item.isDeleted, let account = selectedAccount, let bucket = selectedBucket else { return }
         if isDemoData {
             previewText = "[demo preview] \(item.displayName) — \((item.size ?? 0).byteString)"
             previewImage = nil

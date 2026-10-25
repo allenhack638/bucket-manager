@@ -302,6 +302,45 @@ enum Acceptance {
                 } else {
                     check(false, "plain delete creates a delete marker on a versioned bucket")
                 }
+
+                let nestedKey = prefix + "gone-folder/nested.txt"
+                _ = try await service.upload(
+                    account: account, secret: secret, bucket: bucket, key: nestedKey,
+                    from: versionedFile, progress: { _ in }
+                )
+                try await service.delete(account: account, secret: secret, bucket: bucket, key: nestedKey)
+                try await service.delete(account: account, secret: secret, bucket: bucket, key: versionedKey)
+                await model.navigate(toPrefix: prefix)
+                await model.setShowDeletedObjects(true)
+                _ = await waitUntil { !model.isBusy }
+                let deletedRow = model.items.first { $0.key == versionedKey }
+                check(deletedRow?.isDeleted == true, "show deleted lists a deleted object")
+                // AWS hides folders that only hold delete markers (so they are
+                // listed as deleted); MinIO keeps returning them as live folders.
+                let goneFolder = model.items.first { $0.key == prefix + "gone-folder/" && $0.kind == .folder }
+                check(goneFolder != nil, "a folder that only holds deleted objects stays reachable")
+                if goneFolder?.isDeleted == false { info("provider lists delete-marker-only folders as live") }
+                await model.navigate(toPrefix: prefix + "gone-folder/")
+                _ = await waitUntil { !model.isBusy }
+                check(model.items.contains { $0.key == nestedKey && $0.isDeleted },
+                      "opening that folder lists its deleted object")
+                await model.navigate(toPrefix: prefix)
+                _ = await waitUntil { !model.isBusy }
+                if let deletedRow {
+                    await model.undelete(items: [deletedRow])
+                    _ = await waitUntil { !model.isBusy }
+                    check(await versionedBody() == "version one", "undelete brings back the latest content")
+                    check(model.items.first { $0.key == versionedKey }?.isDeleted == false,
+                          "undeleted object is listed as live")
+                }
+                await model.setShowDeletedObjects(false)
+                for version in try await service.versions(
+                    account: account, secret: secret, bucket: bucket, key: nestedKey
+                ) {
+                    try? await service.deleteVersion(
+                        account: account, secret: secret, bucket: bucket, key: nestedKey, versionID: version.versionID
+                    )
+                }
                 for version in try await service.versions(
                     account: account, secret: secret, bucket: bucket, key: versionedKey
                 ) {

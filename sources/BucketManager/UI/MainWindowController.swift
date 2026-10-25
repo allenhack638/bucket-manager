@@ -316,6 +316,10 @@ final class MainWindowController: NSWindowController {
             case 46:
                 manageAccountsAction()
                 return true
+            case 2:
+                guard model.selectedBucket != nil else { return false }
+                toggleDeletedAction()
+                return true
             default:
                 return false
             }
@@ -398,6 +402,10 @@ final class MainWindowController: NSWindowController {
     @objc private func propertiesAction() { browser.showProperties() }
     @objc private func versionsAction() { browser.showVersions() }
     @objc private func shareLinkAction() { browser.shareSelected() }
+    @objc private func undeleteAction() { browser.undeleteSelected() }
+    @objc private func toggleDeletedAction() {
+        Task { await model.setShowDeletedObjects(!model.showDeletedObjects) }
+    }
 
     @objc func showEventLogAction() { transfers.selectTab("log") }
 
@@ -483,6 +491,7 @@ final class MainWindowController: NSWindowController {
         ⇧⌘C / ⇧⌘X  Copy to / Move to
         ⌘I  Properties
         ⇧⌘V Versions
+        ⌥⌘D Show deleted objects
         F2  Rename
         Delete  Delete selected
         Esc  Go to parent folder
@@ -665,6 +674,7 @@ final class MainWindowController: NSWindowController {
         _ = item(menu, "Move to…", #selector(moveToAction), key: "x", modifiers: [.command, .shift])
         _ = item(menu, "Rename…", #selector(renameAction))
         _ = item(menu, "Delete", #selector(deleteFilesAction))
+        _ = item(menu, "Undelete", #selector(undeleteAction))
         menu.addItem(.separator())
         _ = item(menu, "Create New Folder…", #selector(newFolderAction), key: "n", modifiers: [.command, .shift])
         menu.addItem(.separator())
@@ -673,6 +683,7 @@ final class MainWindowController: NSWindowController {
         menu.addItem(.separator())
         _ = item(menu, "Select All", #selector(selectAllAction), key: "a")
         _ = item(menu, "Filter Objects…", #selector(filterAction), key: "f")
+        _ = item(menu, "Show Deleted Objects", #selector(toggleDeletedAction), key: "d", modifiers: [.command, .option])
         _ = item(menu, "Refresh", #selector(refreshAction), key: "r")
         return menu
     }
@@ -738,7 +749,12 @@ extension MainWindowController: NSMenuItemValidation {
              #selector(propertiesAction), #selector(versionsAction), #selector(generateWebURL):
             return model.selectedItem != nil
         case #selector(shareLinkAction):
-            return model.selectedItem?.kind == .object
+            return model.selectedItem.map { $0.kind == .object && !$0.isDeleted } ?? false
+        case #selector(undeleteAction):
+            return model.selectedItems.contains { $0.isDeleted && $0.kind == .object }
+        case #selector(toggleDeletedAction):
+            menuItem.state = model.showDeletedObjects ? .on : .off
+            return model.selectedBucket != nil
         case #selector(copyAction), #selector(cutAction):
             return !model.selection.isEmpty
         case #selector(pasteAction):

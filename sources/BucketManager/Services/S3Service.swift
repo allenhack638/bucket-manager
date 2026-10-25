@@ -372,6 +372,51 @@ actor S3Service {
         return page
     }
 
+    nonisolated static let deletedScanPageLimit = 10
+
+    /// Keys and folders directly under `prefix` that exist only as history:
+    /// objects whose latest version is a delete marker, and folders that
+    /// ListObjectsV2 no longer returns. `live` holds the keys already listed.
+    func deletedItems(
+        account: Account,
+        secret: String,
+        bucket: String,
+        prefix: String,
+        live: Set<String>
+    ) async throws -> [S3Item] {
+        let client = try await client(for: account, secret: secret)
+        var keyMarker: String?
+        var versionMarker: String?
+        var markers: [String: Date?] = [:]
+        var folders = Set<String>()
+        for _ in 0..<Self.deletedScanPageLimit {
+            let input = ListObjectVersionsInput(
+                bucket: bucket, delimiter: "/", keyMarker: keyMarker,
+                maxKeys: 1000, prefix: prefix, versionIdMarker: versionMarker
+            )
+            let output: ListObjectVersionsOutput = try await measured(
+                "ListObjectVersions", account: account, bucket: bucket, key: prefix
+            ) {
+                try await throttle.run { try await client.listObjectVersions(input: input) }
+            }
+            for marker in output.deleteMarkers ?? [] where marker.isLatest == true {
+                guard let key = marker.key, key != prefix, !key.hasSuffix("/") else { continue }
+                markers[key] = marker.lastModified
+            }
+            for common in output.commonPrefixes ?? [] {
+                if let p = common.prefix { folders.insert(p) }
+            }
+            guard output.isTruncated == true else { break }
+            keyMarker = output.nextKeyMarker
+            versionMarker = output.nextVersionIdMarker
+        }
+        var items = markers.keys.filter { !live.contains($0) }.map { key in
+            S3Item(key: key, kind: .object, lastModified: markers[key] ?? nil, isDeleted: true)
+        }
+        items += folders.subtracting(live).map { S3Item(key: $0, kind: .folder, isDeleted: true) }
+        return items
+    }
+
     /// Raw recursive page used by the folder-stats scanner. No delimiter, no
     /// listing cache; the folder-stats subsystem owns its own cache/policy.
     func scanPage(

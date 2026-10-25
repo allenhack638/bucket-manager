@@ -240,6 +240,20 @@ enum UITest {
             check(panel.selectedVersion?.id == restored?.id, "refreshing the history keeps the selection")
         }
 
+        demoModel.applyShowDeleted(true)
+        let deletedRow = demoModel.items.first(where: \.isDeleted)
+        check(deletedRow != nil && demoModel.statusText.contains("1 deleted"),
+              "show deleted adds dimmed rows and counts them in the status bar")
+        if let deletedRow {
+            demoModel.setSelection([deletedRow.key])
+            demoModel.copySelectionToClipboard(cut: false)
+            check(!demoModel.hasClipboard, "deleted rows are never copied to the clipboard")
+            check(demoModel.sizeText(for: deletedRow) == "—", "deleted rows show no size")
+        }
+        demoModel.applyShowDeleted(false)
+        check(!demoModel.items.contains(where: \.isDeleted), "hiding deleted objects removes their rows")
+        demoModel.setSelection([])
+
         check(demoModel.buckets.count == 16, "account buckets are exposed for the sidebar")
         check(demoModel.buckets.contains { $0.name == "my-photos" },
               "the sidebar bucket list contains account buckets")

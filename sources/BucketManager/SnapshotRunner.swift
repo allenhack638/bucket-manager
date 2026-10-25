@@ -33,6 +33,7 @@ enum SnapshotRunner {
             if empty == "log" { model.clearLogsForSnapshot() }
             if let pathPrefix { model.setPrefixForSnapshot(pathPrefix) }
             if let errorMessage { model.setErrorForSnapshot(errorMessage) }
+            if CommandLine.arguments.contains("--show-deleted") { model.applyShowDeleted(true) }
         }
 
         let controller = MainWindowController(accounts: accounts, model: model)
