@@ -647,7 +647,6 @@ final class MainWindowController: NSWindowController {
         _ = item(menu, "Refresh buckets list", #selector(refreshBucketsAction), key: "r", modifiers: [.command, .shift])
         menu.addItem(.separator())
         _ = item(menu, "Generate Web URLs…", #selector(generateWebURL))
-        _ = item(menu, "Copy Share Link…", #selector(shareLinkAction))
         return menu
     }
 
@@ -655,6 +654,7 @@ final class MainWindowController: NSWindowController {
         let menu = baseMenu()
         _ = item(menu, "Open", #selector(openAction), key: "\r", modifiers: [])
         _ = item(menu, "Download…", #selector(downloadAction), key: "d")
+        _ = item(menu, "Copy Share Link…", #selector(shareLinkAction))
         _ = item(menu, "Upload file(s)…", #selector(uploadFilesAction), key: "u")
         _ = item(menu, "Upload folder(s)…", #selector(uploadFolderAction), key: "u", modifiers: [.command, .shift])
         menu.addItem(.separator())
