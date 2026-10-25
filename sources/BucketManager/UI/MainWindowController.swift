@@ -397,6 +397,7 @@ final class MainWindowController: NSWindowController {
     @objc private func filterAction() { browser.focusFilter() }
     @objc private func propertiesAction() { browser.showProperties() }
     @objc private func versionsAction() { browser.showVersions() }
+    @objc private func shareLinkAction() { browser.shareSelected() }
 
     @objc func showEventLogAction() { transfers.selectTab("log") }
 
@@ -653,6 +654,7 @@ final class MainWindowController: NSWindowController {
         let menu = baseMenu()
         _ = item(menu, "Open", #selector(openAction), key: "\r", modifiers: [])
         _ = item(menu, "Download…", #selector(downloadAction), key: "d")
+        _ = item(menu, "Copy Share Link…", #selector(shareLinkAction))
         _ = item(menu, "Upload file(s)…", #selector(uploadFilesAction), key: "u")
         _ = item(menu, "Upload folder(s)…", #selector(uploadFolderAction), key: "u", modifiers: [.command, .shift])
         menu.addItem(.separator())
@@ -735,6 +737,8 @@ extension MainWindowController: NSMenuItemValidation {
         case #selector(downloadAction), #selector(deleteFilesAction), #selector(renameAction),
              #selector(propertiesAction), #selector(versionsAction), #selector(generateWebURL):
             return model.selectedItem != nil
+        case #selector(shareLinkAction):
+            return model.selectedItem?.kind == .object
         case #selector(copyAction), #selector(cutAction):
             return !model.selection.isEmpty
         case #selector(pasteAction):

@@ -71,7 +71,18 @@ enum SnapshotRunner {
 
         var retained: [AnyObject] = []
         let window: NSWindow?
-        if kind == "accounts" {
+        if kind == "share" || kind == "share-copied" {
+            let alert = kind == "share"
+                ? BrowserViewController.makeShareAlert(for: "IMG_7072.JPG").alert
+                : BrowserViewController.makeShareLinkCopiedAlert(
+                    URL(string: "https://demo-bucket.s3.us-east-1.amazonaws.com/photos/IMG_7072.JPG"
+                        + "?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=86400&X-Amz-Signature=0123456789abcdef")!,
+                    lifetime: "1 day"
+                )
+            alert.layout()
+            retained.append(alert)
+            window = alert.window
+        } else if kind == "accounts" {
             let sheet = StorageAccountsWindowController(accounts: accounts, model: model)
             sheet.reload()
             retained.append(sheet)
@@ -90,6 +101,12 @@ enum SnapshotRunner {
         }
         defer { _ = retained }
         guard let window else { return }
+        if kind.hasPrefix("share") {
+            window.orderFrontRegardless()
+            render(window: window, to: path, size: window.frame.size)
+            app.terminate(nil)
+            return
+        }
         window.setContentSize(size)
         window.orderFrontRegardless()
         render(window: window, to: path, size: size)

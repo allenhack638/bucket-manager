@@ -230,6 +230,29 @@ enum Acceptance {
             await model.loadPreview(for: item)
             check(model.previewText?.contains("acceptance") == true, "text preview loads")
 
+            let oddDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("acceptance-share-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: oddDirectory, withIntermediateDirectories: true)
+            let oddURL = oddDirectory.appendingPathComponent("Q3 report é+50%.txt")
+            localURLs.append(oddDirectory)
+            try uploadBody.write(to: oddURL, atomically: true, encoding: .utf8)
+            model.upload(urls: [oddURL])
+            let oddKey = prefix + oddURL.lastPathComponent
+            _ = await waitUntil {
+                model.transfers.tasks.contains { $0.key == oddKey && $0.status == TransferTask.Status.completed }
+            }
+            for (key, name) in [(item.key, "share link signature is accepted by the server"),
+                                (oddKey, "share link works for keys with spaces and symbols")] {
+                let target = S3Item(key: key, kind: .object)
+                guard let link = await model.shareLink(for: target, expiresIn: 3600) else {
+                    check(false, name)
+                    continue
+                }
+                let (body, response) = try await URLSession.shared.data(from: link)
+                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                check(status == 200 && String(data: body, encoding: .utf8) == uploadBody, name, "status \(status)")
+            }
+
             let details = try await service.objectDetails(
                 account: account, secret: secret, bucket: bucket, key: item.key
             )
@@ -471,6 +494,9 @@ enum Acceptance {
             )
             try await service.delete(
                 account: account, secret: secret, bucket: bucket, key: renamedKey
+            )
+            try await service.delete(
+                account: account, secret: secret, bucket: bucket, key: oddKey
             )
             let leftovers = try await service.listAllObjects(
                 account: account, secret: secret, bucket: bucket, prefix: prefix

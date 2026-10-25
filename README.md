@@ -67,6 +67,7 @@ These captures use the built-in demo account only; no real credentials or bucket
   Versions, Event Log. Details are loaded on demand so selecting rows does not
   bombard the endpoint.
 - **Bookmarks** and **Generate Web URL** (copies a URL to the clipboard).
+- **Time-limited share links** (presigned URLs, up to 7 days).
 - **Logs & Statistics** — diagnostic logging is off by default; enabling it records
   structured request/UI events by level and category. Audit logging is always on for
   account, bucket, object, transfer, and settings changes. A dedicated window provides

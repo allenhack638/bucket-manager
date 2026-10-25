@@ -599,6 +599,25 @@ enum E2E {
                     check(quarantine?.quarantineProperties?[kLSQuarantineAgentNameKey as String] as? String == "Bucket Manager",
                           "downloaded objects carry the Gatekeeper quarantine flag")
                 }
+
+                let link = await model.shareLink(for: readme, expiresIn: 3600)
+                let query = link.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems } ?? []
+                func queryValue(_ name: String) -> String? { query.first { $0.name == name }?.value }
+                check(queryValue("X-Amz-Signature")?.isEmpty == false, "share link is presigned")
+                check(queryValue("X-Amz-Expires") == "3600", "share link honours the chosen lifetime")
+                check(queryValue("x-id") == nil, "share link omits the SDK x-id parameter for compatible endpoints")
+                check(link?.absoluteString.contains(secret) == false, "share link never embeds the secret key")
+                if let link {
+                    var request = URLRequest(url: link)
+                    request.cachePolicy = .reloadIgnoringLocalCacheData
+                    let body = try? await URLSession.shared.data(for: request).0
+                    check(body.flatMap { String(data: $0, encoding: .utf8) }?.contains("fake s3") == true,
+                          "share link downloads the object without app credentials")
+                }
+                let clamped = await model.shareLink(for: readme, expiresIn: 30 * 24 * 60 * 60)
+                let clampedExpiry = clamped.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems }?
+                    .first { $0.name == "X-Amz-Expires" }?.value
+                check(clampedExpiry == "604800", "share link lifetime is capped at seven days")
                 try? FileManager.default.removeItem(at: directory)
             }
 
