@@ -5,6 +5,8 @@
 - Quarantine downloaded objects so Gatekeeper checks them before they can open.
 - Remove the pre-rebrand data import and unused SmithyStreams and futures-util dependencies.
 - Label the admin passcode Keychain item and document how to reset a forgotten passcode.
+- Copy Share Link creates a presigned download link for an object, valid for 1 hour, 1 day, or 7 days (Files menu and object context menu).
+- Share links sign the endpoint's port, so links work on self-hosted servers such as MinIO on :9000.
 
 ## Windows preview 0.1.4 — 2026-10-24
 

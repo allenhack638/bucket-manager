@@ -1195,6 +1195,45 @@ final class BrowserModel {
         }
     }
 
+    /// Presigns a time-limited GET link. The URL embeds a signature, so it is
+    /// never written to logs; only the key and lifetime are audited.
+    func shareLink(for item: S3Item, expiresIn: TimeInterval) async -> URL? {
+        guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return nil }
+        if isDemoData {
+            return URL(string: "https://demo-bucket.example.com/\(item.key)?X-Amz-Expires=\(Int(expiresIn))")
+        }
+        guard let secret = try? accounts.secret(for: account) else {
+            setError(S3ServiceError.missingCredentials)
+            return nil
+        }
+        do {
+            let url = try await service.shareLink(
+                account: account, secret: secret, bucket: bucket, key: item.key, expiresIn: expiresIn
+            )
+            appendLog("Created share link for \(item.key)")
+            auditOperation(
+                event: "object.share_link.created",
+                message: "Share link created",
+                account: account,
+                bucket: bucket,
+                key: item.key,
+                metadata: ["expiresInSeconds": String(Int(expiresIn))]
+            )
+            return url
+        } catch {
+            auditOperation(
+                event: "object.share_link.failed",
+                message: "Share link creation failed",
+                account: account,
+                bucket: bucket,
+                key: item.key,
+                outcome: "failure"
+            )
+            setError(error)
+            return nil
+        }
+    }
+
     func copy(
         items selected: [S3Item],
         toBucket: String,

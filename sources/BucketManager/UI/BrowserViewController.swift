@@ -782,6 +782,59 @@ final class BrowserViewController: NSViewController {
         }
     }
 
+    static let shareLinkLifetimes: [(title: String, seconds: TimeInterval)] = [
+        ("1 hour", 60 * 60),
+        ("1 day", 24 * 60 * 60),
+        ("7 days", S3Service.maxShareLinkLifetime)
+    ]
+
+    static func makeShareAlert(for name: String) -> (alert: NSAlert, lifetime: NSPopUpButton) {
+        let alert = NSAlert()
+        alert.messageText = "Copy Share Link"
+        alert.informativeText = "Anyone with the link can download \(name) until it expires. "
+            + "The link is signed with this account's key; revoking it early requires rotating the key."
+        alert.addButton(withTitle: "Copy Link")
+        alert.addButton(withTitle: "Cancel")
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 160, height: 26), pullsDown: false)
+        popup.addItems(withTitles: shareLinkLifetimes.map { "Expires in \($0.title)" })
+        popup.selectItem(at: 1)
+        popup.setAccessibilityLabel("Link lifetime")
+        alert.accessoryView = popup
+        return (alert, popup)
+    }
+
+    static func makeShareLinkCopiedAlert(_ url: URL, lifetime: String) -> NSAlert {
+        let alert = NSAlert()
+        alert.messageText = "Share Link Copied"
+        alert.informativeText = "The link is on the clipboard and expires in \(lifetime)."
+        alert.addButton(withTitle: "Done")
+        let field = NSTextField(wrappingLabelWithString: url.absoluteString)
+        field.isSelectable = true
+        field.lineBreakMode = .byCharWrapping
+        field.preferredMaxLayoutWidth = 360
+        field.frame = NSRect(x: 0, y: 0, width: 360, height: field.fittingSize.height)
+        field.setAccessibilityLabel("Share link")
+        alert.accessoryView = field
+        return alert
+    }
+
+    @objc func shareSelected() {
+        guard let item = model.selectedItem, item.kind == .object, let window = view.window else { return }
+        let (alert, popup) = Self.makeShareAlert(for: item.displayName)
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            let lifetime = Self.shareLinkLifetimes[max(popup.indexOfSelectedItem, 0)]
+            Task { @MainActor in
+                guard let url = await self.model.shareLink(for: item, expiresIn: lifetime.seconds),
+                      let window = self.view.window else { return }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url.absoluteString, forType: .string)
+                Self.makeShareLinkCopiedAlert(url, lifetime: lifetime.title)
+                    .beginSheetModal(for: window, completionHandler: nil)
+            }
+        }
+    }
+
     @objc func copySelected() {
         model.copySelectionToClipboard(cut: false)
     }
@@ -879,6 +932,7 @@ final class BrowserViewController: NSViewController {
         let menu = NSMenu()
         menu.addItem(withTitle: "Open", action: #selector(openSelected), keyEquivalent: "")
         menu.addItem(withTitle: "Download…", action: #selector(downloadSelected), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy Share Link…", action: #selector(shareSelected), keyEquivalent: "")
         menu.addItem(.separator())
         menu.addItem(withTitle: "Cut", action: #selector(cutSelected), keyEquivalent: "")
         menu.addItem(withTitle: "Copy", action: #selector(copySelected), keyEquivalent: "")

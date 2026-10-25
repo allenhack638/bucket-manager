@@ -524,6 +524,27 @@ actor S3Service {
         return result.sorted { ($0.lastModified ?? .distantPast) > ($1.lastModified ?? .distantPast) }
     }
 
+    /// SigV4 query-string presigning caps validity at seven days.
+    nonisolated static let maxShareLinkLifetime: TimeInterval = 7 * 24 * 60 * 60
+
+    func shareLink(
+        account: Account,
+        secret: String,
+        bucket: String,
+        key: String,
+        expiresIn: TimeInterval
+    ) async throws -> URL {
+        let client = try await client(for: account, secret: secret)
+        let lifetime = min(max(expiresIn, 60), Self.maxShareLinkLifetime)
+        var config = client.config
+        config.interceptorProviders.append(PresignHostPortInterceptorProvider())
+        guard let url = try await GetObjectInput(bucket: bucket, key: key)
+            .presignURL(config: config, expiration: lifetime) else {
+            throw S3ServiceError.invalidEndpoint
+        }
+        return url
+    }
+
     func previewData(
         account: Account,
         secret: String,

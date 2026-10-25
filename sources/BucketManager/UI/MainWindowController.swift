@@ -397,6 +397,7 @@ final class MainWindowController: NSWindowController {
     @objc private func filterAction() { browser.focusFilter() }
     @objc private func propertiesAction() { browser.showProperties() }
     @objc private func versionsAction() { browser.showVersions() }
+    @objc private func shareLinkAction() { browser.shareSelected() }
 
     @objc func showEventLogAction() { transfers.selectTab("log") }
 
@@ -646,6 +647,7 @@ final class MainWindowController: NSWindowController {
         _ = item(menu, "Refresh buckets list", #selector(refreshBucketsAction), key: "r", modifiers: [.command, .shift])
         menu.addItem(.separator())
         _ = item(menu, "Generate Web URLs…", #selector(generateWebURL))
+        _ = item(menu, "Copy Share Link…", #selector(shareLinkAction))
         return menu
     }
 
@@ -735,6 +737,8 @@ extension MainWindowController: NSMenuItemValidation {
         case #selector(downloadAction), #selector(deleteFilesAction), #selector(renameAction),
              #selector(propertiesAction), #selector(versionsAction), #selector(generateWebURL):
             return model.selectedItem != nil
+        case #selector(shareLinkAction):
+            return model.selectedItem?.kind == .object
         case #selector(copyAction), #selector(cutAction):
             return !model.selection.isEmpty
         case #selector(pasteAction):
