@@ -7,7 +7,7 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/awslabs/aws-sdk-swift.git", exact: "1.8.10"),
         .package(url: "https://github.com/smithy-lang/smithy-swift", exact: "0.258.0"),
-        .package(url: "https://github.com/apple/swift-log.git", exact: "1.16.1")
+        .package(url: "https://github.com/apple/swift-log.git", exact: "1.16.2")
     ],
     targets: [
         .executableTarget(
