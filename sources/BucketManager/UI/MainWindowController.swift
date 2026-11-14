@@ -230,6 +230,7 @@ final class MainWindowController: NSWindowController {
         let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
         guard flags.contains(.command), !flags.contains(.control) else { return false }
         let hasObjectSelection = model.selectedBucket != nil && model.selectedItem != nil
+        let hasLiveSelection = model.selectedBucket != nil && !model.liveSelection.isEmpty
         let inTable = browser.isTableFirstResponder
 
         if flags == [.command] {
@@ -242,7 +243,7 @@ final class MainWindowController: NSWindowController {
                 browser.uploadFiles()
                 return true
             case 2:
-                guard hasObjectSelection else { return false }
+                guard hasLiveSelection else { return false }
                 browser.downloadSelected()
                 return true
             case 15:
@@ -253,11 +254,11 @@ final class MainWindowController: NSWindowController {
                 browser.selectAllItems()
                 return true
             case 7:
-                guard inTable, !model.selection.isEmpty else { return false }
+                guard inTable, hasLiveSelection else { return false }
                 browser.cutSelected()
                 return true
             case 8:
-                guard inTable, !model.selection.isEmpty else { return false }
+                guard inTable, hasLiveSelection else { return false }
                 browser.copySelected()
                 return true
             case 9:
@@ -279,6 +280,12 @@ final class MainWindowController: NSWindowController {
 
         if flags == [.command, .shift] {
             switch event.keyCode {
+            case 47:
+                // ⇧⌘. like Finder's "show hidden files"; ⌥⌘D is taken by the
+                // system's Dock-hiding shortcut and never reaches the app.
+                guard model.selectedBucket != nil else { return false }
+                toggleDeletedAction()
+                return true
             case 32:
                 guard model.selectedBucket != nil else { return false }
                 browser.uploadFolder()
@@ -288,11 +295,11 @@ final class MainWindowController: NSWindowController {
                 browser.newFolder()
                 return true
             case 8:
-                guard !model.selection.isEmpty else { return false }
+                guard hasLiveSelection else { return false }
                 browser.copyTo()
                 return true
             case 7:
-                guard !model.selection.isEmpty else { return false }
+                guard hasLiveSelection else { return false }
                 browser.moveTo()
                 return true
             case 9:
@@ -315,10 +322,6 @@ final class MainWindowController: NSWindowController {
                 return true
             case 46:
                 manageAccountsAction()
-                return true
-            case 2:
-                guard model.selectedBucket != nil else { return false }
-                toggleDeletedAction()
                 return true
             default:
                 return false
@@ -422,8 +425,15 @@ final class MainWindowController: NSWindowController {
     @objc func dumpDiagnostics() {
         let account = model.selectedAccount?.displayName ?? "none"
         let bucket = model.selectedBucket ?? "none"
-        AppLog.shared.log("STATE account=\(account) bucket=\(bucket) prefix=\(model.prefix) items=\(model.items.count) status=\(model.status) busy=\(model.isBusy) error=\(model.errorMessage ?? "none")")
-        for line in model.logs.suffix(30) { AppLog.shared.log("UI: \(line)") }
+        AppLog.shared.log(
+            "STATE account=\(account) bucket=\(bucket) prefix=\(model.prefix) items=\(model.items.count) status=\(model.status) busy=\(model.isBusy) error=\(model.errorMessage ?? "none")",
+            objectKeys: [model.prefix]
+        )
+        // UI log lines name objects freely; replay them only when stored logs
+        // may contain object keys.
+        if LogStore.shared.currentSettings().includeObjectKeys {
+            for line in model.logs.suffix(30) { AppLog.shared.log("UI: \(line)") }
+        }
         browser.updateChrome()
     }
 
@@ -491,7 +501,7 @@ final class MainWindowController: NSWindowController {
         ⇧⌘C / ⇧⌘X  Copy to / Move to
         ⌘I  Properties
         ⇧⌘V Versions
-        ⌥⌘D Show deleted objects
+        ⇧⌘. Show deleted objects
         F2  Rename
         Delete  Delete selected
         Esc  Go to parent folder
@@ -553,7 +563,7 @@ final class MainWindowController: NSWindowController {
 
     @objc private func generateWebURL() {
         guard let account = model.selectedAccount, let bucket = model.selectedBucket,
-              let item = model.selectedItem, item.kind == .object else { return }
+              let item = model.singleLiveObject else { return }
         let encodedKey = item.key.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? item.key
         let url: String
         if account.kind == .compatible, let endpoint = account.endpoint {
@@ -571,7 +581,7 @@ final class MainWindowController: NSWindowController {
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
-        model.appendLog("Copied URL \(url)")
+        model.appendLog("Copied URL \(url)", keys: [url, item.key, encodedKey])
         browser.updateChrome()
     }
 
@@ -683,7 +693,7 @@ final class MainWindowController: NSWindowController {
         menu.addItem(.separator())
         _ = item(menu, "Select All", #selector(selectAllAction), key: "a")
         _ = item(menu, "Filter Objects…", #selector(filterAction), key: "f")
-        _ = item(menu, "Show Deleted Objects", #selector(toggleDeletedAction), key: "d", modifiers: [.command, .option])
+        _ = item(menu, "Show Deleted Objects", #selector(toggleDeletedAction), key: ".", modifiers: [.command, .shift])
         _ = item(menu, "Refresh", #selector(refreshAction), key: "r")
         return menu
     }
@@ -745,9 +755,12 @@ extension MainWindowController: NSMenuItemValidation {
         switch menuItem.action {
         case #selector(uploadFilesAction), #selector(uploadFolderAction), #selector(newFolderAction):
             return model.selectedBucket != nil
-        case #selector(downloadAction), #selector(deleteFilesAction),
-             #selector(propertiesAction), #selector(versionsAction), #selector(generateWebURL):
+        case #selector(downloadAction), #selector(deleteFilesAction):
+            return !model.liveSelection.isEmpty
+        case #selector(propertiesAction), #selector(versionsAction):
             return model.selectedItem != nil
+        case #selector(generateWebURL):
+            return model.singleLiveObject != nil
         case #selector(renameAction), #selector(shareLinkAction):
             return model.singleLiveObject != nil
         case #selector(undeleteAction):
@@ -756,11 +769,11 @@ extension MainWindowController: NSMenuItemValidation {
             menuItem.state = model.showDeletedObjects ? .on : .off
             return model.selectedBucket != nil
         case #selector(copyAction), #selector(cutAction):
-            return !model.selection.isEmpty
+            return !model.liveSelection.isEmpty
         case #selector(pasteAction):
             return model.hasClipboard && model.selectedBucket != nil
         case #selector(copyToAction), #selector(moveToAction):
-            return !model.selection.isEmpty && model.selectedBucket != nil
+            return !model.liveSelection.isEmpty && model.selectedBucket != nil
         case #selector(selectAllAction), #selector(filterAction):
             return !model.visibleItems.isEmpty
         case #selector(deleteBucketAction):

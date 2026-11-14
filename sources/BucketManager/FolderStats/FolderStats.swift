@@ -48,7 +48,14 @@ struct FolderStatsSnapshot: Sendable {
         return record?.partial == true
     }
 
+    /// A partial scan of the parent stopped before reaching this folder, so
+    /// its zero is "unknown", not "empty".
+    var notReached: Bool {
+        isPartial && (record?.objectCount ?? 0) == 0
+    }
+
     var sizeText: String {
+        if notReached { return "—" }
         if let record {
             let value = record.size.byteString
             return isPartial ? "≥ \(value)" : value
@@ -64,6 +71,7 @@ struct FolderStatsSnapshot: Sendable {
     }
 
     var modifiedText: String {
+        if notReached { return "—" }
         if let record {
             return record.newestObjectDate?.s3ListString ?? "—"
         }
@@ -76,6 +84,9 @@ struct FolderStatsSnapshot: Sendable {
     }
 
     var tooltip: String? {
+        if notReached {
+            return "The parent folder has too many objects to size them all; open this folder to calculate its size."
+        }
         guard let record else {
             switch state {
             case .loading:

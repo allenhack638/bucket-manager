@@ -43,6 +43,7 @@ enum S3ServiceError: Error, LocalizedError {
     case sourceChangedDuringCopy
     case destinationVerificationFailed
     case rangeRestart
+    case restoreUnsupported(String)
 
     var errorDescription: String? {
         switch self {
@@ -59,6 +60,7 @@ enum S3ServiceError: Error, LocalizedError {
         case .rangeRestart: return "The remote object changed; restarting the download."
         case .incompleteDownload(let expected, let received):
             return "The download ended after \(received) of \(expected) bytes."
+        case .restoreUnsupported(let reason): return reason
         }
     }
 }
@@ -75,7 +77,11 @@ actor S3Service {
         let kind: Account.Kind
     }
     private var clients: [UUID: (client: S3Client, key: ClientKey)] = [:]
+    /// Bulk work: transfers, deletes, copies, recursive scans.
     private let throttle = Throttle(limit: 4)
+    /// Browsing: listings, details, versions, previews. A separate lane, so
+    /// opening a folder never queues behind a large delete or upload.
+    private let interactiveThrottle = Throttle(limit: 4)
     private let cacheTTL: TimeInterval = 60
     private let maxListCacheEntries = 256
 
@@ -238,7 +244,7 @@ actor S3Service {
         let output: ListBucketsOutput = try await measured(
             "ListBuckets", account: account, key: nil
         ) {
-            try await throttle.run { try await client.listBuckets(input: ListBucketsInput()) }
+            try await interactiveThrottle.run { try await client.listBuckets(input: ListBucketsInput()) }
         }
         let buckets = (output.buckets ?? []).compactMap { bucket -> S3Bucket? in
             guard let name = bucket.name else { return nil }
@@ -338,7 +344,7 @@ actor S3Service {
         let output: ListObjectsV2Output = try await measured(
             "ListObjectsV2", account: account, bucket: bucket, key: prefix
         ) {
-            try await throttle.run { try await client.listObjectsV2(input: input) }
+            try await interactiveThrottle.run { try await client.listObjectsV2(input: input) }
         }
 
         var items: [S3Item] = []
@@ -383,7 +389,8 @@ actor S3Service {
         secret: String,
         bucket: String,
         prefix: String,
-        live: Set<String>
+        live: Set<String>,
+        includeFolders: Bool = true
     ) async throws -> [S3Item] {
         let client = try await client(for: account, secret: secret)
         var keyMarker: String?
@@ -398,7 +405,7 @@ actor S3Service {
             let output: ListObjectVersionsOutput = try await measured(
                 "ListObjectVersions", account: account, bucket: bucket, key: prefix
             ) {
-                try await throttle.run { try await client.listObjectVersions(input: input) }
+                try await interactiveThrottle.run { try await client.listObjectVersions(input: input) }
             }
             for marker in output.deleteMarkers ?? [] where marker.isLatest == true {
                 guard let key = marker.key, key != prefix, !key.hasSuffix("/") else { continue }
@@ -414,7 +421,11 @@ actor S3Service {
         var items = markers.keys.filter { !live.contains($0) }.map { key in
             S3Item(key: key, kind: .object, lastModified: markers[key] ?? nil, isDeleted: true)
         }
-        items += folders.subtracting(live).map { S3Item(key: $0, kind: .folder, isDeleted: true) }
+        // A folder counts as deleted only when the live listing is complete;
+        // past its first page, a live folder would look deleted.
+        if includeFolders {
+            items += folders.subtracting(live).map { S3Item(key: $0, kind: .folder, isDeleted: true) }
+        }
         return items
     }
 
@@ -475,7 +486,7 @@ actor S3Service {
         let head: HeadObjectOutput = try await measured(
             "HeadObject", account: account, bucket: bucket, key: key
         ) {
-            try await throttle.run {
+            try await interactiveThrottle.run {
                 try await client.headObject(input: HeadObjectInput(bucket: bucket, key: key))
             }
         }
@@ -504,7 +515,7 @@ actor S3Service {
         let output: GetObjectTaggingOutput = try await measured(
             "GetObjectTagging", account: account, bucket: bucket, key: key
         ) {
-            try await throttle.run {
+            try await interactiveThrottle.run {
                 try await client.getObjectTagging(input: GetObjectTaggingInput(bucket: bucket, key: key))
             }
         }
@@ -520,7 +531,7 @@ actor S3Service {
         let output: GetObjectAclOutput = try await measured(
             "GetObjectAcl", account: account, bucket: bucket, key: key
         ) {
-            try await throttle.run {
+            try await interactiveThrottle.run {
                 try await client.getObjectAcl(input: GetObjectAclInput(bucket: bucket, key: key))
             }
         }
@@ -539,7 +550,7 @@ actor S3Service {
         let output: ListObjectVersionsOutput = try await measured(
             "ListObjectVersions", account: account, bucket: bucket, key: key
         ) {
-            try await throttle.run {
+            try await interactiveThrottle.run {
                 try await client.listObjectVersions(input: ListObjectVersionsInput(bucket: bucket, prefix: key))
             }
         }
@@ -602,7 +613,7 @@ actor S3Service {
         let output: GetObjectOutput = try await measured(
             "GetObject", account: account, bucket: bucket, key: key
         ) {
-            try await throttle.run {
+            try await interactiveThrottle.run {
                 try await client.getObject(input: GetObjectInput(
                     bucket: bucket,
                     key: key,
@@ -630,7 +641,11 @@ actor S3Service {
             kLSQuarantineAgentNameKey as String: "Bucket Manager"
         ]
         var target = url
-        try? target.setResourceValues(values)
+        do {
+            try target.setResourceValues(values)
+        } catch {
+            AppLog.shared.error("Could not quarantine a download: \(error.localizedDescription)")
+        }
     }
 
     nonisolated static func copyTemporaryURL() -> URL {
@@ -759,8 +774,11 @@ actor S3Service {
                 if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
                     throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: url.path])
                 }
+                // Quarantine before the file appears at its final name, so it
+                // is never openable without Gatekeeper's check.
+                Self.markQuarantined(temporaryURL)
                 if fileManager.fileExists(atPath: url.path) {
-                    _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
+                    _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL, options: .usingNewMetadataOnly)
                 } else {
                     try fileManager.moveItem(at: temporaryURL, to: url)
                 }
@@ -1285,17 +1303,51 @@ actor S3Service {
         let encodedSource = (("/\(bucket)/\(key)")
             .addingPercentEncoding(withAllowedCharacters: S3Key.copySourceAllowed) ?? "/\(bucket)/\(key)")
             + "?versionId=" + (versionID.addingPercentEncoding(withAllowedCharacters: S3Key.queryValueAllowed) ?? versionID)
-        _ = try await measured("CopyObject", account: account, bucket: bucket, key: key) {
+        // CopyObject otherwise writes STANDARD storage and the bucket's default
+        // encryption: carry the version's class and KMS key over.
+        let source: HeadObjectOutput = try await measured("HeadObject", account: account, bucket: bucket, key: key) {
             try await throttle.run {
-                try await client.copyObject(input: CopyObjectInput(
-                    bucket: bucket,
-                    copySource: encodedSource,
-                    key: key,
-                    metadataDirective: .copy
-                ))
+                try await client.headObject(input: HeadObjectInput(bucket: bucket, key: key, versionId: versionID))
             }
         }
+        // Archived data can be copied only after a Glacier restore finished:
+        // HEAD's x-amz-restore then reads ongoing-request="false".
+        let archived = source.archiveStatus != nil
+            || ["GLACIER", "DEEP_ARCHIVE"].contains(source.storageClass?.rawValue.uppercased() ?? "")
+        let restoredFromArchive = source.restore?.contains(#"ongoing-request="false""#) == true
+        if let blocker = Self.restoreBlocker(size: source.contentLength.map(Int64.init),
+                                              archived: archived && !restoredFromArchive) {
+            throw S3ServiceError.restoreUnsupported(blocker)
+        }
+        var input = CopyObjectInput(bucket: bucket, copySource: encodedSource, key: key, metadataDirective: .copy)
+        input.storageClass = source.storageClass
+        if source.serverSideEncryption == .awsKms || source.serverSideEncryption == .awsKmsDsse {
+            input.serverSideEncryption = source.serverSideEncryption
+            input.ssekmsKeyId = source.ssekmsKeyId
+            input.bucketKeyEnabled = source.bucketKeyEnabled
+        }
+        let request = input
+        _ = try await measured("CopyObject", account: account, bucket: bucket, key: key) {
+            try await throttle.run { try await client.copyObject(input: request) }
+        }
         invalidateListing(account: account.id, bucket: bucket, prefix: S3Key.parentPrefix(of: key))
+    }
+
+    /// CopyObject handles at most 5 GB in one request, and archived data must
+    /// be restored from Glacier before it can be read.
+    nonisolated static let maxRestoreSize: Int64 = 5 * 1024 * 1024 * 1024
+
+    /// The listing cannot tell whether an archived version was already
+    /// restored from Glacier, so the UI checks size only and the service
+    /// checks the archive state with a HEAD before copying.
+    nonisolated static func restoreBlocker(size: Int64?, archived: Bool = false) -> String? {
+        if let size, size > maxRestoreSize {
+            return "Versions larger than 5 GB can't be restored here; S3 copies at most 5 GB in one request."
+        }
+        if archived {
+            return "This version is archived. Restore it from Glacier first, then try again."
+        }
+        return nil
     }
 
     /// Permanently removes one version. Removing the latest delete marker

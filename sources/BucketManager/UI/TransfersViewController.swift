@@ -411,10 +411,17 @@ final class TransfersViewController: NSViewController {
     // MARK: - Public
 
     func reload() {
+        // Keep the selection on the same tasks: rows move as tasks change
+        // status, so row indexes alone would point at other tasks.
+        let selectedIDs = Set(selectedTasks.map(\.id))
         applyFilter()
         tabStrip.setCount(model.transfers.tasks.count, for: "tasks")
         tabStrip.selectedID = selectedTab
         tasksTable.reloadData()
+        let rows = IndexSet(visibleTasks.indices.filter { selectedIDs.contains(visibleTasks[$0].id) })
+        if rows != tasksTable.selectedRowIndexes {
+            tasksTable.selectRowIndexes(rows, byExtendingSelection: false)
+        }
         emptyTransfersView.isHidden = !visibleTasks.isEmpty
         if visibleTasks.isEmpty {
             if filter == .all {
@@ -748,7 +755,8 @@ final class TransfersViewController: NSViewController {
         case .restore:
             alert.messageText = "Restore this version?"
             alert.informativeText = "\(item.displayName) from \(when) becomes the current version. "
-                + "The version it replaces stays in the history."
+                + "The version it replaces stays in the history. "
+                + "Storage class and encryption are kept; object permissions (ACLs) reset to the bucket default."
             alert.addButton(withTitle: "Restore")
         case .delete:
             alert.alertStyle = .warning

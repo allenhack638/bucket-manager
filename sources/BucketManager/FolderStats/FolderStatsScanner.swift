@@ -131,7 +131,8 @@ actor FolderStatsScanner {
         }
 
         AppLog.shared.log(
-            "folderStats scan bucket=\(group.bucket) target=\(group.target) mode=\(group.mode.rawValue) objects=\(scanned) pages=\(pages) records=\(records.count) partial=\(partial)"
+            "folderStats scan bucket=\(group.bucket) target=\(group.target) mode=\(group.mode.rawValue) objects=\(scanned) pages=\(pages) records=\(records.count) partial=\(partial)",
+            objectKeys: [group.target]
         )
         return records
     }

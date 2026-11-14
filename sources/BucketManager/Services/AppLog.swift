@@ -11,24 +11,28 @@ final class AppLog: @unchecked Sendable {
 
     private init() {}
 
-    func log(_ message: String) {
+    /// - Parameter objectKeys: S3 keys that appear in `message`, so they can
+    ///   be redacted when "Include object keys" is off.
+    func log(_ message: String, objectKeys: [String] = []) {
         LogStore.shared.log(
             .info,
             category: .app,
             event: "app.log",
-            message: message
+            message: message,
+            metadata: LogRedactor.objectKeysMetadata(objectKeys)
         )
         #if DEBUG
         FileHandle.standardError.write(Data("\(message)\n".utf8))
         #endif
     }
 
-    func error(_ message: String) {
+    func error(_ message: String, objectKeys: [String] = []) {
         LogStore.shared.log(
             .error,
             category: .app,
             event: "app.error",
-            message: message
+            message: message,
+            metadata: LogRedactor.objectKeysMetadata(objectKeys)
         )
         #if DEBUG
         FileHandle.standardError.write(Data("ERROR: \(message)\n".utf8))

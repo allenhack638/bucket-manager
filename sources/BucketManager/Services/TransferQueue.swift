@@ -5,8 +5,8 @@ final class TransferQueue {
     private(set) var tasks: [TransferTask] = []
 
     var onChange: (() -> Void)?
-    var onLog: ((String) -> Void)?
-    var onFinished: (() -> Void)?
+    var onLog: ((String, [String]) -> Void)?
+    var onFinished: ((TransferTask) -> Void)?
 
     private let service = S3Service.shared
     private let multipartStore: MultipartUploadStore
@@ -166,14 +166,14 @@ final class TransferQueue {
             task.status = .failed
             task.error = "Source file is not readable; re-add it to upload."
             tasks.append(task)
-            log("Could not queue upload \(key): source file is unavailable")
+            log("Could not queue upload \(key): source file is unavailable", keys: [key])
             change()
             return
         }
         task.status = .queued
         tasks.append(task)
         credentials[task.id] = (account, secret)
-        log("Queued upload \(key) (\(size.byteString))")
+        log("Queued upload \(key) (\(size.byteString))", keys: [key])
         change()
         pump()
     }
@@ -192,7 +192,7 @@ final class TransferQueue {
         task.status = .queued
         tasks.append(task)
         credentials[task.id] = (account, secret)
-        log("Queued download \(key) (\(size.byteString))")
+        log("Queued download \(key) (\(size.byteString))", keys: [key])
         change()
         pump()
     }
@@ -231,7 +231,7 @@ final class TransferQueue {
         )
         temporaryRegistry.register(task.localURL)
         temporaryRegistry.register(S3Service.downloadTemporaryURL(for: task.localURL))
-        log("Queued \(move ? "move" : "copy") \(sourceBucket)/\(sourceKey) to \(destinationBucket)/\(destinationKey)")
+        log("Queued \(move ? "move" : "copy") \(sourceBucket)/\(sourceKey) to \(destinationBucket)/\(destinationKey)", keys: [sourceKey, destinationKey])
         change()
         pump()
     }
@@ -280,7 +280,7 @@ final class TransferQueue {
             tasks[index].status = .paused
             tasks[index].speed = 0
             workTasks[id]?.cancel()
-            log("Stopped \(tasks[index].key)")
+            log("Stopped \(tasks[index].key)", keys: [tasks[index].key])
             let auditAccount = credentials[id]?.0 ?? copyCredentials[id]?.source.0
             audit("transfer.paused", task: tasks[index], account: auditAccount, outcome: "success")
             if credentialProvider != nil {
@@ -350,7 +350,7 @@ final class TransferQueue {
                 }
             }
         }
-        log("Canceled \(task.key)")
+        log("Canceled \(task.key)", keys: [task.key])
         if wasRunning { pump() }
         change()
     }
@@ -452,6 +452,7 @@ final class TransferQueue {
     // MARK: - Pumping
 
     private func pump() {
+        guard batchDepth == 0 else { return }
         guard !isPumping else {
             needsPump = true
             return
@@ -549,7 +550,7 @@ final class TransferQueue {
         tasks[index].startedAt = Date()
         tasks[index].error = nil
         lastSample[id] = (Date(), 0)
-        log("\(direction.rawValue) started: \(key)")
+        log("\(direction.rawValue) started: \(key)", keys: [key])
         change()
 
         workTasks[id] = Task {
@@ -813,7 +814,7 @@ final class TransferQueue {
         tasks[index].bytesDone = tasks[index].size
         tasks[index].speed = 0
         tasks[index].finishedAt = Date()
-        log("Completed \(tasks[index].direction.rawValue.lowercased()) \(tasks[index].key)")
+        log("Completed \(tasks[index].direction.rawValue.lowercased()) \(tasks[index].key)", keys: [tasks[index].key])
         let account = tasks[index].direction == .copy
             ? copyCredentials[id]?.source.0
             : credentials[id]?.0
@@ -834,8 +835,9 @@ final class TransferQueue {
         credentials[id] = nil
         copyCredentials[id] = nil
         lastSample[id] = nil
+        let finished = tasks[index]
         change()
-        onFinished?()
+        onFinished?(finished)
         pump()
     }
 
@@ -866,7 +868,7 @@ final class TransferQueue {
         tasks[index].error = message
         tasks[index].speed = 0
         tasks[index].finishedAt = Date()
-        log("Failed \(tasks[index].key): \(message)")
+        log("Failed \(tasks[index].key): \(message)", keys: [tasks[index].key])
         let account = tasks[index].direction == .copy
             ? copyCredentials[id]?.source.0
             : credentials[id]?.0
@@ -890,7 +892,7 @@ final class TransferQueue {
         guard let bucket = task.destinationBucket,
               let key = task.destinationKey,
               let uploadID = task.destinationUploadID else { return }
-        log("Aborting destination multipart upload \(bucket)/\(key)")
+        log("Aborting destination multipart upload \(bucket)/\(key)", keys: [key])
         let service = service
         let store = multipartStore
         Task {
@@ -934,8 +936,35 @@ final class TransferQueue {
     }
 
     private func change() {
+        if batchDepth > 0 {
+            batchChanged = true
+            return
+        }
         onChange?()
         schedulePersistence()
+    }
+
+    private var batchDepth = 0
+    private var batchChanged = false
+    private var batchQueued = 0
+
+    /// Queues many transfers at once. The table reload, persistence, queue
+    /// scan and log line run once for the batch instead of once per file,
+    /// which made queueing a 5,000-file folder freeze the app for seconds.
+    func batch(_ body: () -> Void) {
+        batchDepth += 1
+        body()
+        batchDepth -= 1
+        guard batchDepth == 0 else { return }
+        if batchQueued > 0 {
+            log("Queued \(batchQueued) transfer(s)")
+            batchQueued = 0
+        }
+        if batchChanged {
+            batchChanged = false
+            change()
+        }
+        pump()
     }
 
     private func clearRuntimeState(for id: UUID) {
@@ -977,7 +1006,11 @@ final class TransferQueue {
         )
     }
 
-    private func log(_ message: String) {
-        onLog?(message)
+    private func log(_ message: String, keys: [String] = []) {
+        if batchDepth > 0, message.hasPrefix("Queued ") {
+            batchQueued += 1
+            return
+        }
+        onLog?(message, keys)
     }
 }

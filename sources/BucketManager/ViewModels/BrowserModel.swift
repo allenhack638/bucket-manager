@@ -42,7 +42,6 @@ final class BrowserModel {
     private(set) var nextToken: String?
     private(set) var isTruncated = false
     private(set) var selection: Set<String> = []
-    private(set) var checked: Set<String> = []
 
     private(set) var isBusy = false
     private(set) var isLoadingBuckets = false
@@ -112,10 +111,9 @@ final class BrowserModel {
             self.calculateFolderSizes = true
         }
         transfers.onChange = { [weak self] in self?.onTransferChange?() }
-        transfers.onLog = { [weak self] message in self?.appendLog(message) }
-        transfers.onFinished = { [weak self] in
-            guard let self else { return }
-            Task { await self.refreshAfterTransfer() }
+        transfers.onLog = { [weak self] message, keys in self?.appendLog(message, keys: keys) }
+        transfers.onFinished = { [weak self] task in
+            self?.transferFinished(task)
         }
         reloadAccounts()
         folderStats.onSnapshots = { [weak self] snapshots in
@@ -148,6 +146,10 @@ final class BrowserModel {
     }
 
     var selectedItems: [S3Item] { items.filter { selection.contains($0.key) } }
+
+    /// Selected rows that still exist. Download, Delete, Copy, Cut, Copy to
+    /// and Move to act only on these; deleted rows only offer Undelete.
+    var liveSelection: [S3Item] { selectedItems.filter { !$0.isDeleted } }
 
     /// The one live object selected, for actions that need a single target
     /// (Rename, Copy Share Link). Nil for folders, deleted rows or several rows.
@@ -312,7 +314,6 @@ final class BrowserModel {
             ], persist: false)
         }
         selection = ["IMG_7072.JPG"]
-        checked = []
         status = "Ready"
         errorMessage = nil
         isTruncated = false
@@ -435,7 +436,6 @@ final class BrowserModel {
         errorMessage = nil
         status = "Ready"
         selection = []
-        checked = []
         resetInspector()
         onFilesChange?()
     }
@@ -464,7 +464,6 @@ final class BrowserModel {
         errorMessage = nil
         status = "Loading buckets"
         selection = []
-        checked = []
         resetInspector()
         onTreeChange?()
         onFilesChange?()
@@ -540,7 +539,6 @@ final class BrowserModel {
         nextToken = nil
         isTruncated = false
         selection = []
-        checked = []
         errorMessage = nil
         status = "Loading \(bucket)/\(newPrefix)"
         isBusy = true
@@ -576,7 +574,6 @@ final class BrowserModel {
         nextToken = nil
         isTruncated = false
         selection = []
-        checked = []
         errorMessage = nil
         status = "Loading \(selectedBucket ?? "")/\(prefix)"
         isBusy = true
@@ -700,22 +697,31 @@ final class BrowserModel {
                   selectedAccount?.id == account.id,
                   selectedBucket == bucket,
                   prefix == targetPrefix else { return }
-            items = page.items
-            nextToken = page.nextToken
-            isTruncated = page.isTruncated
+            // Build the full listing before publishing it: the table must not
+            // show a half-merged, unsorted list while the version scan runs,
+            // and two overlapping reloads must not both append deleted rows.
+            var listed = page.items
             var deletedNote: String?
             if showDeletedObjects {
                 do {
                     let deleted = try await service.deletedItems(
                         account: account, secret: secret, bucket: bucket,
-                        prefix: targetPrefix, live: Set(page.items.map(\.key))
+                        prefix: targetPrefix, live: Set(page.items.map(\.key)),
+                        includeFolders: !page.isTruncated
                     )
-                    guard requestID == listingRequestID, prefix == targetPrefix else { return }
-                    items += deleted
+                    guard requestID == listingRequestID,
+                          selectedAccount?.id == account.id,
+                          selectedBucket == bucket,
+                          prefix == targetPrefix else { return }
+                    // The toggle may have been turned off during the scan.
+                    if showDeletedObjects { listed += deleted }
                 } catch {
                     deletedNote = "Deleted objects unavailable: \(S3ErrorPresenter.message(for: error))"
                 }
             }
+            items = listed
+            nextToken = page.nextToken
+            isTruncated = page.isTruncated
             sortItems()
             lastUpdated = Date()
             status = deletedNote ?? "Ready"
@@ -725,8 +731,11 @@ final class BrowserModel {
                   selectedAccount?.id == account.id,
                   selectedBucket == bucket,
                   prefix == targetPrefix else { return }
-            AppLog.shared.error("List bucket=\(bucket) prefix=\(targetPrefix): \(S3ErrorPresenter.message(for: error))")
-            setError(error)
+            AppLog.shared.error(
+                "List bucket=\(bucket) prefix=\(targetPrefix): \(S3ErrorPresenter.message(for: error))",
+                objectKeys: [targetPrefix]
+            )
+            setError(error, keys: [targetPrefix])
         }
 
         guard requestID == listingRequestID else { return }
@@ -764,6 +773,9 @@ final class BrowserModel {
                   selectedAccount?.id == account.id,
                   selectedBucket == bucket,
                   prefix == targetPrefix else { return }
+            // A live row on a later page replaces a deleted placeholder.
+            let incoming = Set(page.items.map(\.key))
+            items.removeAll { $0.isDeleted && incoming.contains($0.key) }
             let existing = Set(items.map(\.key))
             items.append(contentsOf: page.items.filter { !existing.contains($0.key) })
             nextToken = page.nextToken
@@ -871,7 +883,9 @@ final class BrowserModel {
             return
         }
         let keys = visibleItems.compactMap { item -> FolderStatsKey? in
-            guard item.kind == .folder else { return nil }
+            // A deleted folder holds no live objects; scanning it costs a
+            // full prefix listing for a guaranteed zero.
+            guard item.kind == .folder, !item.isDeleted else { return nil }
             return FolderStatsKey(accountID: account.id, bucket: bucket, prefix: item.key)
         }
         let secret = folderStats.needsScan(for: keys)
@@ -884,7 +898,6 @@ final class BrowserModel {
         let keys = Set(visibleItems.map(\.key))
         let oldSelection = selection
         selection = selection.intersection(keys)
-        checked = checked.intersection(keys)
         if selection != oldSelection { resetInspector() }
     }
 
@@ -911,11 +924,6 @@ final class BrowserModel {
         onChromeChange?()
     }
 
-    func toggleChecked(_ key: String) {
-        if checked.contains(key) { checked.remove(key) } else { checked.insert(key) }
-        onFilesChange?()
-        onChromeChange?()
-    }
 
     // MARK: - Operations
 
@@ -925,9 +933,11 @@ final class BrowserModel {
             setError(S3ServiceError.missingCredentials)
             return
         }
-        for url in urls {
-            let key = prefix + url.lastPathComponent
-            transfers.enqueueUpload(account: account, secret: secret, bucket: bucket, key: key, url: url)
+        transfers.batch {
+            for url in urls {
+                let key = prefix + url.lastPathComponent
+                transfers.enqueueUpload(account: account, secret: secret, bucket: bucket, key: key, url: url)
+            }
         }
         folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
         onTransferChange?()
@@ -947,15 +957,17 @@ final class BrowserModel {
         ) else { return }
 
         var queued = 0
-        for case let fileURL as URL in enumerator {
-            let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-            guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
-            let relative = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
-            let key = prefix + root.lastPathComponent + "/" + relative
-            transfers.enqueueUpload(account: account, secret: secret, bucket: bucket, key: key, url: fileURL)
-            queued += 1
+        transfers.batch {
+            for case let fileURL as URL in enumerator {
+                let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+                guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
+                let relative = fileURL.path.replacingOccurrences(of: root.path + "/", with: "")
+                let key = prefix + root.lastPathComponent + "/" + relative
+                transfers.enqueueUpload(account: account, secret: secret, bucket: bucket, key: key, url: fileURL)
+                queued += 1
+            }
         }
-        appendLog("Queued \(queued) file(s) from folder \(root.lastPathComponent)")
+        appendLog("Queued \(queued) file(s) from folder \(root.lastPathComponent)", keys: [prefix + root.lastPathComponent, root.lastPathComponent])
         folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
         onTransferChange?()
     }
@@ -977,7 +989,7 @@ final class BrowserModel {
                     account: account, secret: secret, bucket: bucket, key: item.key,
                     to: destination, progress: { _ in }
                 )
-                appendLog("Opened \(item.key)")
+                appendLog("Opened \(item.key)", keys: [item.key])
                 NSWorkspace.shared.open(destination)
             } catch {
                 try? FileManager.default.removeItem(at: directory)
@@ -1046,11 +1058,13 @@ final class BrowserModel {
             downloads.map(\.destination),
             reserved: transfers.reservedDownloadPaths
         )
-        for (download, destination) in zip(downloads, destinations) {
-            transfers.enqueueDownload(
-                account: account, secret: secret, bucket: bucket, key: download.item.key,
-                size: download.item.size ?? 0, to: destination
-            )
+        transfers.batch {
+            for (download, destination) in zip(downloads, destinations) {
+                transfers.enqueueDownload(
+                    account: account, secret: secret, bucket: bucket, key: download.item.key,
+                    size: download.item.size ?? 0, to: destination
+                )
+            }
         }
         onTransferChange?()
     }
@@ -1126,7 +1140,7 @@ final class BrowserModel {
                 let name = String(key.split(separator: "/").last ?? Substring(key))
                 failures.append("\(name): \(message)")
             } else {
-                appendLog("Deleted \(key)")
+                appendLog("Deleted \(key)", keys: [key])
             }
         }
         await service.invalidateListing(account: account.id, bucket: bucket, prefix: prefix)
@@ -1178,7 +1192,7 @@ final class BrowserModel {
         }
         do {
             try await service.createFolder(account: account, secret: secret, bucket: bucket, prefix: prefix, name: clean)
-            appendLog("Created folder \(prefix + clean)/")
+            appendLog("Created folder \(prefix + clean)/", keys: [prefix + clean])
             auditOperation(
                 event: "folder.created",
                 message: "Folder created",
@@ -1223,7 +1237,7 @@ final class BrowserModel {
             if try await objectExists(account: account, secret: secret, bucket: bucket, key: destination) {
                 setError(NSError(domain: "BucketManager", code: 8, userInfo: [
                     NSLocalizedDescriptionKey: "Destination already contains \(destination)."
-                ]))
+                ]), keys: [destination])
                 return
             }
             try await service.copyObject(
@@ -1232,7 +1246,7 @@ final class BrowserModel {
                 destinationBucket: bucket, destinationKey: destination
             )
             try await service.delete(account: account, secret: secret, bucket: bucket, key: item.key)
-            appendLog("Renamed \(item.key) to \(destination)")
+            appendLog("Renamed \(item.key) to \(destination)", keys: [item.key, destination])
             auditOperation(
                 event: "object.renamed",
                 message: "Object renamed",
@@ -1272,7 +1286,7 @@ final class BrowserModel {
             let url = try await service.shareLink(
                 account: account, secret: secret, bucket: bucket, key: item.key, expiresIn: expiresIn
             )
-            appendLog("Created share link for \(item.key)")
+            appendLog("Created share link for \(item.key)", keys: [item.key])
             auditOperation(
                 event: "object.share_link.created",
                 message: "Share link created",
@@ -1359,7 +1373,7 @@ final class BrowserModel {
             if let message {
                 failures.append("\(key): \(message)")
             } else {
-                appendLog("\(move ? "Moved" : "Copied") \(key)")
+                appendLog("\(move ? "Moved" : "Copied") \(key)", keys: [key])
             }
         }
         for folder in selected where folder.kind == .folder {
@@ -1523,20 +1537,22 @@ final class BrowserModel {
             return
         }
 
-        for entry in entries {
-            transfers.enqueueCopy(
-                sourceAccount: sourceAccount,
-                sourceSecret: sourceSecret,
-                sourceBucket: sourceBucket,
-                sourceKey: entry.sourceKey,
-                sourceSize: entry.size,
-                sourceETag: entry.eTag,
-                destinationAccount: destinationAccount,
-                destinationSecret: destinationSecret,
-                destinationBucket: destinationBucket,
-                destinationKey: entry.destinationKey,
-                move: move
-            )
+        transfers.batch {
+            for entry in entries {
+                transfers.enqueueCopy(
+                    sourceAccount: sourceAccount,
+                    sourceSecret: sourceSecret,
+                    sourceBucket: sourceBucket,
+                    sourceKey: entry.sourceKey,
+                    sourceSize: entry.size,
+                    sourceETag: entry.eTag,
+                    destinationAccount: destinationAccount,
+                    destinationSecret: destinationSecret,
+                    destinationBucket: destinationBucket,
+                    destinationKey: entry.destinationKey,
+                    move: move
+                )
+            }
         }
         appendLog("Queued \(move ? "move" : "copy") of \(entries.count) object(s) from \(sourceBucket) to \(destinationAccount.displayName)/\(destinationBucket)")
         auditOperation(
@@ -1609,7 +1625,8 @@ final class BrowserModel {
     }
 
     func copySelectionToClipboard(cut: Bool) {
-        guard let account = selectedAccount, let bucket = selectedBucket else { return }
+        // Copying only deleted rows must not wipe what is already on the clipboard.
+        guard let account = selectedAccount, let bucket = selectedBucket, !liveSelection.isEmpty else { return }
         clipboard = selectedItems.filter { !$0.isDeleted }.map {
             ClipboardItem(
                 accountID: account.id,
@@ -1675,7 +1692,7 @@ final class BrowserModel {
                 )
                 setError(NSError(domain: "BucketManager", code: 8, userInfo: [
                     NSLocalizedDescriptionKey: "Destination already contains \(destination)."
-                ]))
+                ]), keys: [destination])
                 return
             } catch {
                 // Same-account pastes worked before without read access to the
@@ -1994,9 +2011,12 @@ final class BrowserModel {
             return
         }
         if !force, versionsKey == item.key { return }
-        guard !inflightVersions.contains(item.key) else { return }
-        inflightVersions.insert(item.key)
-        defer { inflightVersions.remove(item.key) }
+        // Scoped to account and bucket: the same key in another bucket is a
+        // different object and must not be skipped as "already loading".
+        let inflightKey = "\(account.id)/\(bucket)/\(item.key)"
+        guard !inflightVersions.contains(inflightKey) else { return }
+        inflightVersions.insert(inflightKey)
+        defer { inflightVersions.remove(inflightKey) }
 
         guard let secret = try? accounts.secret(for: account) else { return }
         do {
@@ -2039,6 +2059,10 @@ final class BrowserModel {
         // Refuse a version that was listed for a different object.
         if let versionsKey, versionsKey != item.key, versions.contains(version) { return false }
         if action == .restore, version.isDeleteMarker || version.isLatest { return false }
+        if action == .restore, let blocker = S3Service.restoreBlocker(size: version.size) {
+            setError(S3ServiceError.restoreUnsupported(blocker))
+            return false
+        }
         if isDemoData {
             appendLog("Demo data is read-only")
             return false
@@ -2054,12 +2078,12 @@ final class BrowserModel {
                 try await service.restoreVersion(
                     account: account, secret: secret, bucket: bucket, key: item.key, versionID: version.versionID
                 )
-                appendLog("Restored \(item.key) to version \(version.versionID)")
+                appendLog("Restored \(item.key) to version \(version.versionID)", keys: [item.key])
             case .delete:
                 try await service.deleteVersion(
                     account: account, secret: secret, bucket: bucket, key: item.key, versionID: version.versionID
                 )
-                appendLog("Deleted version \(version.versionID) of \(item.key)")
+                appendLog("Deleted version \(version.versionID) of \(item.key)", keys: [item.key])
             }
             auditOperation(
                 event: action.event, message: action.message,
@@ -2083,7 +2107,11 @@ final class BrowserModel {
     func setShowDeletedObjects(_ show: Bool) async {
         guard show != showDeletedObjects else { return }
         applyShowDeleted(show)
-        if show, !isDemoData { await reload(useCache: true) }
+        guard show, !isDemoData else { return }
+        // A new generation, so a listing already in flight (without deleted
+        // rows) cannot finish after this one and overwrite it.
+        listingRequestID += 1
+        await reload(useCache: true, generation: listingRequestID)
     }
 
     /// Updates the flag and the rows already on screen; live listings then
@@ -2117,32 +2145,58 @@ final class BrowserModel {
             return
         }
         var restored = 0
+        var failure: Error?
         for item in targets {
             do {
-                let history = try await service.versions(
-                    account: account, secret: secret, bucket: bucket, key: item.key
-                )
-                guard let marker = history.first(where: { $0.isDeleteMarker && $0.isLatest }) else { continue }
-                try await service.deleteVersion(
-                    account: account, secret: secret, bucket: bucket, key: item.key, versionID: marker.versionID
-                )
+                // Deleting an already-deleted object stacks markers; every one
+                // newer than the latest data version must go. Timestamps are
+                // only second-precise, so re-list until no marker is current.
+                var removed: [String] = []
+                for _ in 0..<5 {
+                    let history = try await service.versions(
+                        account: account, secret: secret, bucket: bucket, key: item.key
+                    )
+                    guard history.contains(where: { $0.isDeleteMarker && $0.isLatest }) else { break }
+                    let markers = Self.markersHidingLatestData(history)
+                    let targets = markers.isEmpty ? history.filter { $0.isDeleteMarker && $0.isLatest } : markers
+                    for marker in targets {
+                        try await service.deleteVersion(
+                            account: account, secret: secret, bucket: bucket, key: item.key, versionID: marker.versionID
+                        )
+                        removed.append(marker.versionID)
+                    }
+                }
+                guard !removed.isEmpty else { continue }
                 restored += 1
                 auditOperation(
                     event: "object.undeleted", message: "Object undeleted",
                     account: account, bucket: bucket, key: item.key,
-                    metadata: ["versionId": marker.versionID]
+                    metadata: ["versionId": removed[0], "markers": String(removed.count)]
                 )
             } catch {
                 auditOperation(
                     event: "object.undelete.failed", message: "Object undelete failed",
                     account: account, bucket: bucket, key: item.key, outcome: "failure"
                 )
-                setError(error)
+                failure = error
             }
         }
         appendLog("Undeleted \(restored) of \(targets.count) object(s)")
         folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
         await reload(useCache: false)
+        // Reported after the reload, which would otherwise clear it.
+        if let failure { setError(failure) }
+    }
+
+    /// Delete markers newer than the most recent data version, newest first.
+    /// Empty when the object is not hidden by a marker.
+    nonisolated static func markersHidingLatestData(_ history: [ObjectVersion]) -> [ObjectVersion] {
+        let newestFirst = history.sorted {
+            let (a, b) = ($0.lastModified ?? .distantPast, $1.lastModified ?? .distantPast)
+            return a != b ? a > b : ($0.isLatest && !$1.isLatest)
+        }
+        guard newestFirst.first?.isDeleteMarker == true else { return [] }
+        return Array(newestFirst.prefix { $0.isDeleteMarker })
     }
 
     func loadACL(for item: S3Item, force: Bool = false) async {
@@ -2154,9 +2208,12 @@ final class BrowserModel {
             return
         }
         if !force, aclKey == item.key { return }
-        guard !inflightACL.contains(item.key) else { return }
-        inflightACL.insert(item.key)
-        defer { inflightACL.remove(item.key) }
+        // Scoped to account and bucket: the same key in another bucket is a
+        // different object and must not be skipped as "already loading".
+        let inflightKey = "\(account.id)/\(bucket)/\(item.key)"
+        guard !inflightACL.contains(inflightKey) else { return }
+        inflightACL.insert(inflightKey)
+        defer { inflightACL.remove(inflightKey) }
 
         guard let secret = try? accounts.secret(for: account) else { return }
         do {
@@ -2186,9 +2243,12 @@ final class BrowserModel {
             return
         }
         if !force, previewKey == item.key, previewText != nil || previewImage != nil { return }
-        guard !inflightPreview.contains(item.key) else { return }
-        inflightPreview.insert(item.key)
-        defer { inflightPreview.remove(item.key) }
+        // Scoped to account and bucket: the same key in another bucket is a
+        // different object and must not be skipped as "already loading".
+        let inflightKey = "\(account.id)/\(bucket)/\(item.key)"
+        guard !inflightPreview.contains(inflightKey) else { return }
+        inflightPreview.insert(inflightKey)
+        defer { inflightPreview.remove(inflightKey) }
 
         guard let secret = try? accounts.secret(for: account) else { return }
         do {
@@ -2241,8 +2301,8 @@ final class BrowserModel {
         return formatter
     }()
 
-    func appendLog(_ message: String) {
-        AppLog.shared.log(message)
+    func appendLog(_ message: String, keys: [String] = []) {
+        AppLog.shared.log(message, objectKeys: keys)
         logs.append("\(Self.logTimeFormatter.string(from: Date()))  \(message)")
         if logs.count > 1000 { logs.removeFirst(logs.count - 1000) }
         onLogChange?()
@@ -2250,15 +2310,75 @@ final class BrowserModel {
 
     // MARK: - Helpers
 
-    private func refreshAfterTransfer() async {
-        await reload(useCache: false)
+    private var transferRefreshPending = false
+
+    /// Refreshes the open folder after a transfer that changed it. Downloads
+    /// never do, and a burst of finished uploads refreshes once. The reload
+    /// keeps the selection and inspector (it bypasses the listing cache
+    /// without resetting them).
+    private func transferFinished(_ task: TransferTask) {
+        guard let account = selectedAccount, let bucket = selectedBucket,
+              Self.transfer(task, changes: account.id, bucket: bucket, prefix: prefix) else { return }
+        // Every folder between the open one and the changed object has a new size.
+        var changedKeys: [String] = []
+        if task.direction == .upload || task.moveSource { changedKeys.append(task.key) }
+        if task.direction == .copy, task.destinationBucket == bucket, let key = task.destinationKey { changedKeys.append(key) }
+        for key in changedKeys {
+            for folder in Self.folders(between: prefix, and: key) {
+                folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: folder)
+            }
+        }
+        guard !transferRefreshPending else { return }
+        transferRefreshPending = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard let self else { return }
+            self.transferRefreshPending = false
+            guard let account = self.selectedAccount, let bucket = self.selectedBucket else { return }
+            await self.service.invalidateListing(account: account.id, bucket: bucket, prefix: self.prefix)
+            await self.reload(useCache: true)
+        }
     }
 
-    private func setError(_ error: Error) {
+    /// Folder prefixes below `prefix` that contain `key`, e.g. "docs/" and
+    /// "docs/sub/" for key "docs/sub/a.txt" when viewing the bucket root.
+    nonisolated static func folders(between prefix: String, and key: String) -> [String] {
+        guard key.hasPrefix(prefix) else { return [] }
+        let parts = key.dropFirst(prefix.count).split(separator: "/", omittingEmptySubsequences: false).dropLast()
+        var folders: [String] = []
+        var current = prefix
+        for part in parts where !part.isEmpty {
+            current += part + "/"
+            folders.append(current)
+        }
+        return folders
+    }
+
+    /// Whether a finished transfer added or removed something at or below the
+    /// folder being viewed.
+    nonisolated static func transfer(_ task: TransferTask, changes accountID: UUID, bucket: String, prefix: String) -> Bool {
+        switch task.direction {
+        case .download:
+            return false
+        case .upload:
+            return task.accountID == accountID && task.bucket == bucket && task.key.hasPrefix(prefix)
+        case .copy:
+            let destination = task.destinationAccountID == accountID
+                && task.destinationBucket == bucket
+                && (task.destinationKey ?? "").hasPrefix(prefix)
+            let movedFromHere = task.moveSource
+                && task.accountID == accountID && task.bucket == bucket && task.key.hasPrefix(prefix)
+            return destination || movedFromHere
+        }
+    }
+
+    /// - Parameter keys: object keys the message may mention, so stored logs
+    ///   can hide them when "Include object keys" is off.
+    private func setError(_ error: Error, keys: [String] = []) {
         errorMessage = S3ErrorPresenter.message(for: error)
         status = "Error"
-        AppLog.shared.error(errorMessage ?? "S3 operation failed")
-        appendLog("Error: \(errorMessage ?? "")")
+        AppLog.shared.error(errorMessage ?? "S3 operation failed", objectKeys: keys)
+        appendLog("Error: \(errorMessage ?? "")", keys: keys)
         onChromeChange?()
     }
 }
