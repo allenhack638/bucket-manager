@@ -10,6 +10,9 @@
 - The Versions tab lists an object's history as a table; restore any previous version, permanently delete a version, or remove a delete marker to undelete the object.
 - Disabled link-style buttons now draw gray text and icons instead of looking clickable.
 - Files → Show Deleted Objects (⌥⌘D) lists objects hidden by a delete marker as dimmed rows, and Undelete brings them back by removing the marker.
+- Rename, Move, and Paste handle `+` in object keys correctly on AWS and never overwrite an existing object; right-click and version actions always act on the row you chose.
+- Downloads never overwrite each other or replace a local folder: colliding names get a numbered suffix, and a leftover partial download is never reused.
+- Windows: moving a folder no longer deletes files before they are copied; Pause works for downloads, same-named downloads no longer corrupt each other, transfer history survives crashes, and a second launch focuses the running app.
 
 ## Windows preview 0.1.4 — 2026-10-24
 

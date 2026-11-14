@@ -27,10 +27,6 @@ export const api = {
       prefix,
       continuationToken: continuationToken ?? null,
     }),
-  uploadObject: (id: string, bucket: string, key: string, filePath: string) =>
-    invoke<void>("upload_object", { id, bucket, key, filePath }),
-  downloadObject: (id: string, bucket: string, key: string, destination: string) =>
-    invoke<void>("download_object", { id, bucket, key, destination }),
   deleteObject: (id: string, bucket: string, key: string) =>
     invoke<void>("delete_object", { id, bucket, key }),
   createFolder: (id: string, bucket: string, key: string) =>
@@ -46,8 +42,6 @@ export const api = {
   revealLogs: () => invoke<void>("reveal_logs"),
   getStatistics: () => invoke<RequestMetric[]>("get_statistics"),
   clearStatistics: () => invoke<void>("clear_statistics"),
-  openLogsWindow: (tab: "logs" | "statistics" | "settings" = "logs") =>
-    invoke<void>("open_logs_window", { tab }),
   takeLogsTab: () => invoke<string | null>("take_logs_tab"),
   enqueueUpload: (id: string, bucket: string, key: string, filePath: string) =>
     invoke<TransferTask>("enqueue_upload", { id, bucket, key, filePath }),

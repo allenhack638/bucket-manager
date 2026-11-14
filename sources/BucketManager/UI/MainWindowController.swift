@@ -745,11 +745,11 @@ extension MainWindowController: NSMenuItemValidation {
         switch menuItem.action {
         case #selector(uploadFilesAction), #selector(uploadFolderAction), #selector(newFolderAction):
             return model.selectedBucket != nil
-        case #selector(downloadAction), #selector(deleteFilesAction), #selector(renameAction),
+        case #selector(downloadAction), #selector(deleteFilesAction),
              #selector(propertiesAction), #selector(versionsAction), #selector(generateWebURL):
             return model.selectedItem != nil
-        case #selector(shareLinkAction):
-            return model.selectedItem.map { $0.kind == .object && !$0.isDeleted } ?? false
+        case #selector(renameAction), #selector(shareLinkAction):
+            return model.singleLiveObject != nil
         case #selector(undeleteAction):
             return model.selectedItems.contains { $0.isDeleted && $0.kind == .object }
         case #selector(toggleDeletedAction):

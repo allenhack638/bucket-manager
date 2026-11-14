@@ -1,6 +1,7 @@
 import Foundation
 import AWSS3
 import AWSSDKIdentity
+import ClientRuntime
 import Smithy
 import SmithyIdentity
 import UniformTypeIdentifiers
@@ -669,6 +670,12 @@ actor S3Service {
             )
         }
 
+        var destinationIsDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: url.path, isDirectory: &destinationIsDirectory),
+           destinationIsDirectory.boolValue {
+            throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: url.path])
+        }
+
         var offset = max(0, resumeFrom)
         var resumeETag = expectedETag
         if resumeETag == nil { offset = 0 }
@@ -686,9 +693,12 @@ actor S3Service {
             if temporarySize < offset {
                 offset = 0
                 resumeETag = nil
-                try? Self.truncate(temporaryURL, to: 0)
             }
             try? Self.truncate(temporaryURL, to: UInt64(offset))
+        }
+        if offset == 0 {
+            // A temp left by an earlier failed attempt must not be appended to.
+            try Self.truncate(temporaryURL, to: 0)
         }
 
         var lastError: Error?
@@ -740,6 +750,15 @@ actor S3Service {
                     throw S3ServiceError.incompleteDownload(expected: expected, received: received)
                 }
                 try handle.close()
+                let writtenSize = ((try? fileManager.attributesOfItem(atPath: temporaryURL.path))?[.size]
+                    as? NSNumber)?.int64Value ?? -1
+                if let totalSize, writtenSize != totalSize {
+                    throw S3ServiceError.incompleteDownload(expected: totalSize, received: writtenSize)
+                }
+                var isDirectory: ObjCBool = false
+                if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue {
+                    throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: url.path])
+                }
                 if fileManager.fileExists(atPath: url.path) {
                     _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
                 } else {
@@ -789,10 +808,19 @@ actor S3Service {
         return Int64(contentRange[contentRange.index(after: slash)...])
     }
 
+    /// The HTTP status of an SDK service error, if it came from a response.
+    nonisolated static func httpStatus(of error: Error) -> Int? {
+        (error as? ClientRuntime.HTTPError)?.httpResponse.statusCode.rawValue
+    }
+
     private static func isRangeRestart(_ error: Error) -> Bool {
         if case S3ServiceError.rangeRestart = error { return true }
+        // 412: the object changed. 416: the temp already holds every byte
+        // (a check failed after the body arrived), so start over.
+        if let status = httpStatus(of: error), status == 412 || status == 416 { return true }
         let text = String(describing: error).lowercased()
-        return text.contains("preconditionfailed") || text.contains("precondition failed") || text.contains("status code: 412")
+        return text.contains("preconditionfailed") || text.contains("precondition failed")
+            || text.contains("status code: 412") || text.contains("invalidrange") || text.contains("status code: 416")
     }
 
     private static let multipartThreshold: Int64 = 16 * 1024 * 1024
@@ -1306,7 +1334,7 @@ actor S3Service {
     ) async throws {
         let client = try await client(for: account, secret: secret)
         let encodedSource = "/\(sourceBucket)/\(sourceKey)"
-            .addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "/\(sourceBucket)/\(sourceKey)"
+            .addingPercentEncoding(withAllowedCharacters: S3Key.copySourceAllowed) ?? "/\(sourceBucket)/\(sourceKey)"
         _ = try await measured(
             "CopyObject", account: account, bucket: destinationBucket, key: destinationKey
         ) {

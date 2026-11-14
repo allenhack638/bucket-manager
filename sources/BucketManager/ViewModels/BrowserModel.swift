@@ -7,7 +7,7 @@ final class BrowserModel {
         case name, size, type, modified, storage, etag
     }
 
-    struct ClipboardItem: Sendable {
+    struct ClipboardItem: Sendable, Equatable {
         let accountID: UUID
         let bucket: String
         let key: String
@@ -69,6 +69,7 @@ final class BrowserModel {
     private var sortAscending = true
     private var clipboard: [ClipboardItem] = []
     private var clipboardIsCut = false
+    private var pasteInFlight = false
 
     private var listingRequestID = 0
     private var bucketRequestID = 0
@@ -147,6 +148,14 @@ final class BrowserModel {
     }
 
     var selectedItems: [S3Item] { items.filter { selection.contains($0.key) } }
+
+    /// The one live object selected, for actions that need a single target
+    /// (Rename, Copy Share Link). Nil for folders, deleted rows or several rows.
+    var singleLiveObject: S3Item? {
+        let selected = selectedItems
+        guard selected.count == 1, selected[0].kind == .object, !selected[0].isDeleted else { return nil }
+        return selected[0]
+    }
 
     var visibleItems: [S3Item] {
         guard !filterText.isEmpty else { return items }
@@ -954,8 +963,12 @@ final class BrowserModel {
     func openObject(_ item: S3Item) {
         guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return }
         guard let secret = try? accounts.secret(for: account) else { return }
-        let directory = FileManager.default.temporaryDirectory
+        // A fresh folder per open, so two opens of same-named objects (or a
+        // stale temp from a failed open) never share a file.
+        let previewRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("BucketManagerPreview", isDirectory: true)
+        Self.prunePreviews(in: previewRoot)
+        let directory = previewRoot.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let destination = directory.appendingPathComponent(S3Key.safeLocalName(item.displayName))
         Task {
@@ -967,8 +980,24 @@ final class BrowserModel {
                 appendLog("Opened \(item.key)")
                 NSWorkspace.shared.open(destination)
             } catch {
+                try? FileManager.default.removeItem(at: directory)
                 setError(error)
             }
+        }
+    }
+
+    /// Opened copies live in per-open folders; drop ones older than a day so
+    /// repeated opens of large files do not pile up in the temp directory.
+    nonisolated static func prunePreviews(in root: URL, olderThan age: TimeInterval = 24 * 60 * 60) {
+        let fileManager = FileManager.default
+        guard let folders = try? fileManager.contentsOfDirectory(
+            at: root, includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return }
+        let cutoff = Date().addingTimeInterval(-age)
+        for folder in folders {
+            let modified = (try? folder.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+            if modified < cutoff { try? fileManager.removeItem(at: folder) }
         }
     }
 
@@ -1013,10 +1042,14 @@ final class BrowserModel {
             }
         }
 
-        for download in downloads {
+        let destinations = DownloadPlanner.resolve(
+            downloads.map(\.destination),
+            reserved: transfers.reservedDownloadPaths
+        )
+        for (download, destination) in zip(downloads, destinations) {
             transfers.enqueueDownload(
                 account: account, secret: secret, bucket: bucket, key: download.item.key,
-                size: download.item.size ?? 0, to: download.destination
+                size: download.item.size ?? 0, to: destination
             )
         }
         onTransferChange?()
@@ -1183,8 +1216,16 @@ final class BrowserModel {
             ]))
             return
         }
-        let destination = prefix + trimmed
+        // The item's own folder, not the live prefix, which can change.
+        let folder = S3Key.parentPrefix(of: item.key)
+        let destination = folder + trimmed
         do {
+            if try await objectExists(account: account, secret: secret, bucket: bucket, key: destination) {
+                setError(NSError(domain: "BucketManager", code: 8, userInfo: [
+                    NSLocalizedDescriptionKey: "Destination already contains \(destination)."
+                ]))
+                return
+            }
             try await service.copyObject(
                 account: account, secret: secret,
                 sourceBucket: bucket, sourceKey: item.key,
@@ -1200,7 +1241,7 @@ final class BrowserModel {
                 key: destination,
                 metadata: ["sourceKey": item.key]
             )
-            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
+            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: folder)
             await reload(useCache: false)
         } catch {
             auditOperation(
@@ -1538,14 +1579,33 @@ final class BrowserModel {
         ].joined(separator: "|")
     }
 
-    private func isNotFound(_ error: Error) -> Bool {
+    /// True when HEAD finds the key; false only on a definite 404. Any other
+    /// failure (503, 500, wrong region…) is thrown so a conflict check can
+    /// never pass by accident.
+    private func objectExists(account: Account, secret: String, bucket: String, key: String) async throws -> Bool {
+        do {
+            _ = try await service.objectDetails(account: account, secret: secret, bucket: bucket, key: key)
+            return true
+        } catch {
+            if isNotFound(error) { return false }
+            throw error
+        }
+    }
+
+    private func isAccessDenied(_ error: Error) -> Bool {
+        if let status = S3Service.httpStatus(of: error) { return status == 403 }
         let text = String(describing: error).lowercased()
-        return text.contains("notfound")
-            || text.contains("not found")
-            || text.contains("nosuchkey")
+        return text.contains("accessdenied") || text.contains("status code: 403")
+    }
+
+    /// A definite 404. The SDK reports every bodyless HEAD failure as
+    /// UnknownHTTPServiceError, so the status code decides, not the text.
+    private func isNotFound(_ error: Error) -> Bool {
+        if let status = S3Service.httpStatus(of: error) { return status == 404 }
+        let text = String(describing: error).lowercased()
+        return text.contains("nosuchkey")
             || text.contains("nosuchbucket")
             || text.contains("status code: 404")
-            || text.contains("unknownhttpserviceerror")
     }
 
     func copySelectionToClipboard(cut: Bool) {
@@ -1567,6 +1627,9 @@ final class BrowserModel {
     var hasClipboard: Bool { !clipboard.isEmpty }
 
     func paste() async {
+        guard !pasteInFlight else { return }
+        pasteInFlight = true
+        defer { pasteInFlight = false }
         guard let account = selectedAccount, let bucket = selectedBucket, !clipboard.isEmpty else { return }
         guard let secret = try? accounts.secret(for: account) else {
             setError(S3ServiceError.missingCredentials)
@@ -1578,15 +1641,20 @@ final class BrowserModel {
             ]))
             return
         }
+        // Captured once: the user may open another folder, or copy/cut
+        // something else, while this runs.
+        let targetPrefix = prefix
+        let entries = clipboard
+        let isCut = clipboardIsCut
         var destinationKeys = Set<String>()
-        for entry in clipboard {
+        for entry in entries {
             guard let sourceAccount = accounts.account(id: entry.accountID),
                   (try? accounts.secret(for: sourceAccount)) != nil else {
                 setError(S3ServiceError.missingCredentials)
                 return
             }
             let name = String(entry.key.split(separator: "/").last ?? "object")
-            let destination = prefix + name
+            let destination = targetPrefix + name
             guard destinationKeys.insert(destination).inserted else {
                 setError(NSError(domain: "BucketManager", code: 6, userInfo: [
                     NSLocalizedDescriptionKey: "Multiple clipboard items map to the same destination key."
@@ -1601,7 +1669,6 @@ final class BrowserModel {
                 ]))
                 return
             }
-            guard sourceAccount.id != account.id else { continue }
             do {
                 _ = try await service.objectDetails(
                     account: account, secret: secret, bucket: bucket, key: destination
@@ -1611,31 +1678,34 @@ final class BrowserModel {
                 ]))
                 return
             } catch {
-                guard isNotFound(error) else {
+                // Same-account pastes worked before without read access to the
+                // destination; keep that, and only block on a real conflict.
+                let sameAccount = sourceAccount.id == account.id
+                guard isNotFound(error) || (sameAccount && isAccessDenied(error)) else {
                     setError(error)
                     return
                 }
             }
         }
         isBusy = true
-        status = "Pasting \(clipboard.count) object(s)…"
+        status = "Pasting \(entries.count) object(s)…"
         onChromeChange?()
         var queued = 0
         do {
-            for entry in clipboard {
+            for entry in entries {
                 guard let sourceAccount = accounts.account(id: entry.accountID) else {
                     throw S3ServiceError.missingCredentials
                 }
                 let sourceSecret = try accounts.secret(for: sourceAccount)
                 let name = String(entry.key.split(separator: "/").last ?? "object")
-                let destination = prefix + name
+                let destination = targetPrefix + name
                 if sourceAccount.id == account.id {
                     try await service.copyObject(
                         account: account, secret: secret,
                         sourceBucket: entry.bucket, sourceKey: entry.key,
                         destinationBucket: bucket, destinationKey: destination
                     )
-                    if clipboardIsCut {
+                    if isCut {
                         try await service.delete(
                             account: account, secret: secret, bucket: entry.bucket, key: entry.key
                         )
@@ -1652,35 +1722,35 @@ final class BrowserModel {
                         destinationSecret: secret,
                         destinationBucket: bucket,
                         destinationKey: destination,
-                        move: clipboardIsCut
+                        move: isCut
                     )
                     queued += 1
                 }
             }
             appendLog(
                 queued > 0
-                    ? "Queued \(queued) cross-account paste(s) into \(currentPath)"
-                    : "Pasted \(clipboard.count) object(s) into \(currentPath)"
+                    ? "Queued \(queued) cross-account paste(s) into \(bucket)/\(targetPrefix)"
+                    : "Pasted \(entries.count) object(s) into \(bucket)/\(targetPrefix)"
             )
             auditOperation(
-                event: clipboardIsCut ? "clipboard.moved" : "clipboard.copied",
+                event: isCut ? "clipboard.moved" : "clipboard.copied",
                 message: queued > 0 ? "Cross-account clipboard transfer queued" : "Clipboard paste completed",
                 account: account,
                 bucket: bucket,
-                key: prefix,
+                key: targetPrefix,
                 metadata: [
-                    "count": String(clipboard.count),
+                    "count": String(entries.count),
                     "queuedCrossAccount": String(queued)
                 ]
             )
-            let pastedEntries = clipboard
-            if clipboardIsCut { clipboard = [] }
+            let pastedEntries = entries
+            if isCut, clipboard == entries { clipboard = [] }
             status = queued > 0 ? "Queued \(queued) cross-account transfer\(queued == 1 ? "" : "s")" : "Ready"
             for entry in pastedEntries {
                 let sourcePrefix = S3Key.parentPrefix(of: entry.key)
                 folderStats.invalidate(accountID: entry.accountID, bucket: entry.bucket, prefix: sourcePrefix)
             }
-            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: prefix)
+            folderStats.invalidate(accountID: account.id, bucket: bucket, prefix: targetPrefix)
             await reload(useCache: false)
         } catch {
             setError(error)
@@ -1956,9 +2026,18 @@ final class BrowserModel {
 
     /// Restore copies a version over the key; delete removes it permanently.
     /// Both refresh the listing and the version history afterwards.
+    /// The object whose history `versions` holds. Version actions must target
+    /// this, not the selection, which can change while the panel is open.
+    var versionsOwner: S3Item? {
+        guard let versionsKey else { return nil }
+        return items.first { $0.key == versionsKey && $0.kind == .object }
+    }
+
     @discardableResult
     func apply(_ action: VersionAction, to version: ObjectVersion, of item: S3Item) async -> Bool {
         guard item.kind == .object, let account = selectedAccount, let bucket = selectedBucket else { return false }
+        // Refuse a version that was listed for a different object.
+        if let versionsKey, versionsKey != item.key, versions.contains(version) { return false }
         if action == .restore, version.isDeleteMarker || version.isLatest { return false }
         if isDemoData {
             appendLog("Demo data is read-only")
