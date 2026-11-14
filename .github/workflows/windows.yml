@@ -44,6 +44,9 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Test frontend helpers
+        run: node --experimental-strip-types tests/fileName.test.ts
+
       - name: Test Rust backend
         run: cargo test --manifest-path src-tauri/Cargo.toml
 

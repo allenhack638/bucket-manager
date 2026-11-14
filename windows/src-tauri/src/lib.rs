@@ -17,6 +17,7 @@ use tauri::menu::{
     SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, Manager, State, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use transfer::{TransferManager, TransferTask};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -177,6 +178,47 @@ fn resume_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Re
 #[tauri::command]
 fn cancel_transfer(app: AppHandle, state: State<'_, AppState>, id: String) {
     state.transfers.cancel(&app, &id);
+    // A running upload aborts its own parts; a stopped one left by a crash or
+    // a failed abort is cleaned up here.
+    if !state.transfers.is_running(&id) {
+        if let Some(task) = state.transfers.get(&id) {
+            abort_recorded_upload(&app, &state, &task);
+        }
+    }
+}
+
+/// Aborts a multipart upload recorded on a task that has no runner, in the
+/// background, and forgets the id once S3 confirms it is gone.
+fn abort_recorded_upload(app: &AppHandle, state: &AppState, task: &TransferTask) {
+    let Some(upload_id) = task.upload_id.clone() else { return };
+    // Copies upload to the destination account, bucket and key.
+    let (account_id, bucket, key) = if task.kind == "copy" {
+        (
+            task.destination_account_id.clone(),
+            task.destination_bucket.clone(),
+            task.destination_key.clone(),
+        )
+    } else {
+        (Some(task.account_id.clone()), Some(task.bucket.clone()), Some(task.key.clone()))
+    };
+    let (Some(account_id), Some(bucket), Some(key)) = (account_id, bucket, key) else { return };
+    let (Ok(account), Ok(secret)) = (state.store.get(&account_id), state.store.secret(&account_id))
+    else {
+        return;
+    };
+    let manager = state.transfers.clone();
+    let app = app.clone();
+    let id = task.id.clone();
+    tauri::async_runtime::spawn(async move {
+        if s3::abort_upload(&account, &secret, &bucket, &key, &upload_id).await.is_ok() {
+            // A resumed run may already have recorded a newer upload.
+            manager.update(&app, &id, |task| {
+                if task.upload_id.as_deref() == Some(upload_id.as_str()) {
+                    task.upload_id = None;
+                }
+            });
+        }
+    });
 }
 
 #[tauri::command]
@@ -209,6 +251,8 @@ fn list_accounts(state: State<'_, AppState>) -> Result<Vec<Account>, String> {
 fn save_account(state: State<'_, AppState>, input: AccountInput) -> Result<Account, String> {
     let result = state.store.save(input);
     if let Ok(account) = &result {
+        // Region or credentials may have changed; rediscover bucket regions.
+        s3::forget_bucket_regions(&account.id, None);
         state.logs.audit(
             "account.saved",
             "Storage account saved",
@@ -501,14 +545,17 @@ fn open_logs_window_impl(app: &AppHandle, state: &AppState, tab: &str) -> Result
         let _ = window.emit("logs-tab", tab);
         return Ok(());
     }
-    let window = app
-        .get_webview_window("logs")
-        .ok_or_else(|| "Logs window is unavailable.".to_string())?;
-    let _ = window.show();
-    let _ = window.unminimize();
-    let _ = window.set_focus();
-    let _ = window.emit("logs-tab", tab);
-    Ok(())
+    // Created on demand: a hidden window kept from startup polled logs in the
+    // background, kept the app alive after the main window closed, and could
+    // never be reopened once closed. The new window reads the pending tab.
+    tauri::WebviewWindowBuilder::new(app, "logs", tauri::WebviewUrl::App("index.html".into()))
+        .title("Logs & Statistics")
+        .inner_size(1080.0, 680.0)
+        .min_inner_size(820.0, 480.0)
+        .center()
+        .build()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 fn record_operation(
@@ -849,6 +896,11 @@ pub fn run() {
 
             let state = app.state::<AppState>();
             state.transfers.remove_stale_temps();
+            // Nothing runs yet, and every transfer restarts from zero, so
+            // multipart uploads recorded by an earlier session can go.
+            for task in state.transfers.list() {
+                abort_recorded_upload(app.handle(), &state, &task);
+            }
             let system = CheckMenuItemBuilder::with_id("appearance:system", "System")
                 .checked(appearance == AppearanceMode::System)
                 .build(app)?;
@@ -923,6 +975,42 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if window.label() != "main" {
+                return;
+            }
+            match event {
+                // Warn before quitting with transfers in progress. Their state
+                // is saved, but running work restarts from zero next time.
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    let running = window
+                        .try_state::<AppState>()
+                        .map(|state| state.transfers.list().iter().filter(|task| task.status == "running").count())
+                        .unwrap_or(0);
+                    if running > 0 {
+                        api.prevent_close();
+                        let window = window.clone();
+                        window
+                            .dialog()
+                            .message(format!(
+                                "{running} transfer(s) are still running. Quit anyway? They will be stopped and can be resumed next time."
+                            ))
+                            .title("Quit Bucket Manager?")
+                            .parent(&window)
+                            .kind(MessageDialogKind::Warning)
+                            .buttons(MessageDialogButtons::OkCancelCustom("Quit".into(), "Cancel".into()))
+                            .show(move |quit| {
+                                if quit {
+                                    let _ = window.destroy();
+                                }
+                            });
+                    }
+                }
+                // Closing the main window quits the app, Logs window included.
+                tauri::WindowEvent::Destroyed => window.app_handle().exit(0),
+                _ => {}
+            }
+        })
         .on_menu_event(|app, event| {
             let id = event.id().as_ref();
             if let Some(mode) = id.strip_prefix("appearance:") {
@@ -932,11 +1020,20 @@ pub fn run() {
                     }
                 }
             } else if let Some(tab) = id.strip_prefix("window:") {
-                if let Some(state) = app.try_state::<AppState>() {
-                    if let Err(error) = open_logs_window_impl(app, &state, tab) {
-                        startup_log(&format!("open logs window failed: {error}"));
+                // Tauri documents that creating a window inside an event
+                // handler can deadlock on Windows; do it on another thread.
+                let app = app.clone();
+                let tab = tab.to_string();
+                static OPENING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+                std::thread::spawn(move || {
+                    // Two quick clicks must not race to create the window.
+                    let _opening = OPENING.lock();
+                    if let Some(state) = app.try_state::<AppState>() {
+                        if let Err(error) = open_logs_window_impl(&app, &state, &tab) {
+                            startup_log(&format!("open logs window failed: {error}"));
+                        }
                     }
-                }
+                });
             }
         })
         .invoke_handler(tauri::generate_handler![

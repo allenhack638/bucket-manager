@@ -14,6 +14,15 @@ use uuid::Uuid;
 
 const MULTIPART_THRESHOLD: u64 = 16 * 1024 * 1024;
 const PART_SIZE: u64 = 8 * 1024 * 1024;
+const MAX_PARTS: u64 = 10_000;
+
+/// S3 allows at most 10,000 parts, so a fixed 8 MiB part caps uploads at
+/// about 78 GiB. Grow the part size (in whole MiB) for larger files.
+fn part_size_for(size: u64) -> u64 {
+    const MIB: u64 = 1024 * 1024;
+    let needed = size.div_ceil(MAX_PARTS);
+    PART_SIZE.max(needed.div_ceil(MIB) * MIB)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,6 +53,10 @@ pub struct TransferTask {
     pub phase: Option<String>,
     #[serde(default)]
     pub content_type: Option<String>,
+    /// The in-progress multipart upload, so a crash can be cleaned up on the
+    /// next resume or retry instead of leaving billed parts behind.
+    #[serde(default)]
+    pub upload_id: Option<String>,
 }
 
 pub struct TransferControl {
@@ -195,6 +208,7 @@ impl TransferManager {
             source_e_tag: None,
             phase: None,
             content_type: None,
+            upload_id: None,
         };
         self.push(app, task.clone());
         Ok(task)
@@ -229,6 +243,7 @@ impl TransferManager {
             source_e_tag: None,
             phase: None,
             content_type: None,
+            upload_id: None,
         };
         self.push(app, task.clone());
         task
@@ -269,6 +284,7 @@ impl TransferManager {
             source_e_tag,
             phase: Some("download".to_string()),
             content_type: None,
+            upload_id: None,
         };
         self.push(app, task.clone());
         task
@@ -489,7 +505,7 @@ async fn simple_upload(
     if manager.is_cancelled(&task.id) {
         return Err("Transfer cancelled.".to_string());
     }
-    let client = s3::client_for(account, secret).await;
+    let client = s3::client_for_bucket(account, secret, &task.bucket).await;
     let content_type = task.content_type.clone().unwrap_or_else(|| {
         mime_guess::from_path(&task.local_path)
             .first_or_octet_stream()
@@ -507,7 +523,7 @@ async fn simple_upload(
         .body(body)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3::s3_error(&error))?;
     manager.update(app, &task.id, |task| task.transferred = task.size);
     Ok(())
 }
@@ -519,7 +535,19 @@ async fn multipart_upload(
     secret: &str,
     task: &TransferTask,
 ) -> Result<(), String> {
-    let client = s3::client_for(account, secret).await;
+    let client = s3::client_for_bucket(account, secret, &task.bucket).await;
+    // An upload left by a crash or kill: abort it before starting again. If
+    // that fails, stop rather than overwrite the only record of its id.
+    let stale = manager
+        .get(&task.id)
+        .and_then(|current| current.upload_id)
+        .or_else(|| task.upload_id.clone());
+    if let Some(stale) = stale {
+        s3::abort_upload(account, secret, &task.bucket, &task.key, &stale)
+            .await
+            .map_err(|error| format!("Could not clean up the previous upload: {error}"))?;
+        manager.update(app, &task.id, |current| current.upload_id = None);
+    }
     let created = client
         .create_multipart_upload()
         .bucket(&task.bucket)
@@ -531,29 +559,72 @@ async fn multipart_upload(
         }))
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3::s3_error(&error))?;
     let upload_id = created
         .upload_id()
         .ok_or_else(|| "Multipart upload id missing.".to_string())?
         .to_string();
+    manager.update(app, &task.id, |current| current.upload_id = Some(upload_id.clone()));
+    let result = upload_parts(app, manager, &client, task, &upload_id).await;
+    let result = match result {
+        Ok(parts) => {
+            let completed = aws_sdk_s3::types::CompletedMultipartUpload::builder()
+                .set_parts(Some(parts))
+                .build();
+            client
+                .complete_multipart_upload()
+                .bucket(&task.bucket)
+                .key(&task.key)
+                .upload_id(&upload_id)
+                .multipart_upload(completed)
+                .send()
+                .await
+                .map(|_| ())
+                .map_err(|error| s3::s3_error(&error))
+        }
+        Err(error) => Err(error),
+    };
+    // Every failure path aborts, so no billed parts are left behind. The id
+    // is kept when the abort itself fails (often the same network outage),
+    // so the next resume, retry, cancel or launch can clean it up.
+    let forget = match &result {
+        Ok(()) => true,
+        Err(_) => s3::abort_upload(account, secret, &task.bucket, &task.key, &upload_id)
+            .await
+            .is_ok(),
+    };
+    if forget {
+        manager.update(app, &task.id, |current| current.upload_id = None);
+    }
+    result
+}
+
+async fn upload_parts(
+    app: &AppHandle,
+    manager: &TransferManager,
+    client: &aws_sdk_s3::Client,
+    task: &TransferTask,
+    upload_id: &str,
+) -> Result<Vec<aws_sdk_s3::types::CompletedPart>, String> {
+    let part_size = part_size_for(task.size);
     let mut file = tokio::fs::File::open(&task.local_path)
         .await
         .map_err(|error| error.to_string())?;
     let mut parts = Vec::new();
     let mut offset = 0u64;
     let mut part_number = 1i32;
-    let result = loop {
+    loop {
         if manager.is_cancelled(&task.id) {
-            break Err("Transfer cancelled.".to_string());
+            return Err("Transfer cancelled.".to_string());
         }
         if manager.is_paused(&task.id) {
-            break Err("Transfer paused.".to_string());
+            return Err("Transfer paused.".to_string());
         }
         let remaining = task.size.saturating_sub(offset);
         if remaining == 0 {
-            break Ok(());
+            return Ok(parts);
         }
-        let length = remaining.min(PART_SIZE) as usize;
+        let length = remaining.min(part_size) as usize;
         let mut data = vec![0u8; length];
         file.seek(std::io::SeekFrom::Start(offset))
             .await
@@ -565,12 +636,12 @@ async fn multipart_upload(
             .upload_part()
             .bucket(&task.bucket)
             .key(&task.key)
-            .upload_id(&upload_id)
+            .upload_id(upload_id)
             .part_number(part_number)
             .body(aws_sdk_s3::primitives::ByteStream::from(data))
             .send()
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| s3::s3_error(&error))?;
         let e_tag = response
             .e_tag()
             .ok_or_else(|| "Multipart part ETag missing.".to_string())?
@@ -587,34 +658,6 @@ async fn multipart_upload(
             task.status = "running".to_string();
         });
         part_number += 1;
-    };
-
-    match result {
-        Ok(()) => {
-            let completed = aws_sdk_s3::types::CompletedMultipartUpload::builder()
-                .set_parts(Some(parts))
-                .build();
-            client
-                .complete_multipart_upload()
-                .bucket(&task.bucket)
-                .key(&task.key)
-                .upload_id(&upload_id)
-                .multipart_upload(completed)
-                .send()
-                .await
-                .map_err(|error| error.to_string())?;
-            Ok(())
-        }
-        Err(error) => {
-            let _ = client
-                .abort_multipart_upload()
-                .bucket(&task.bucket)
-                .key(&task.key)
-                .upload_id(&upload_id)
-                .send()
-                .await;
-            Err(error)
-        }
     }
 }
 
@@ -956,14 +999,14 @@ async fn download(
     secret: &str,
     task: &TransferTask,
 ) -> Result<(), String> {
-    let client = s3::client_for(account, secret).await;
+    let client = s3::client_for_bucket(account, secret, &task.bucket).await;
     let response = client
         .get_object()
         .bucket(&task.bucket)
         .key(&task.key)
         .send()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| s3::s3_error(&error))?;
     let expected = response.content_length().and_then(|length| u64::try_from(length).ok());
     let body = response.body;
     let destination = PathBuf::from(&task.local_path);
@@ -1131,6 +1174,7 @@ mod tests {
             source_e_tag: None,
             phase: None,
             content_type: None,
+            upload_id: None,
         }
     }
 
@@ -1188,6 +1232,18 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved.len(), 200 + 8 * 20, "the last save holds every task");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn part_size_keeps_every_upload_within_ten_thousand_parts() {
+        const MIB: u64 = 1024 * 1024;
+        assert_eq!(part_size_for(20 * MIB), PART_SIZE);
+        assert_eq!(part_size_for(MAX_PARTS * PART_SIZE), PART_SIZE);
+        for size in [MAX_PARTS * PART_SIZE + 1, 100 * 1024 * MIB, 5 * 1024 * 1024 * MIB] {
+            let part = part_size_for(size);
+            assert!(size.div_ceil(part) <= MAX_PARTS, "{size} needs too many parts");
+            assert_eq!(part % MIB, 0);
+        }
     }
 
     #[test]
