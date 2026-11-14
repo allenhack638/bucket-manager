@@ -286,7 +286,7 @@ no credentials, authorization headers, or signatures. Both use `0600` files insi
 | ⇧⌘N | Create folder |
 | ⌘I | Properties |
 | ⇧⌘V | Versions |
-| ⌥⌘D | Show deleted objects |
+| ⇧⌘. | Show deleted objects |
 | ⌥⌘N / ⌥⌘M | Add / Manage accounts |
 | ⌥⌘L | Open Logs & Statistics |
 | F2 | Rename |

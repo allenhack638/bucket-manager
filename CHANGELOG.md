@@ -9,13 +9,15 @@
 - Share links sign the endpoint's port, so links work on self-hosted servers such as MinIO on :9000.
 - The Versions tab lists an object's history as a table; restore any previous version, permanently delete a version, or remove a delete marker to undelete the object.
 - Disabled link-style buttons now draw gray text and icons instead of looking clickable.
-- Files → Show Deleted Objects (⌥⌘D) lists objects hidden by a delete marker as dimmed rows, and Undelete brings them back by removing the marker.
+- Files → Show Deleted Objects (⇧⌘.) lists objects hidden by a delete marker as dimmed rows, and Undelete brings them back by removing the marker.
 - Rename, Move, and Paste handle `+` in object keys correctly on AWS and never overwrite an existing object; right-click and version actions always act on the row you chose.
 - Downloads never overwrite each other or replace a local folder: colliding names get a numbered suffix, and a leftover partial download is never reused.
 - Windows: moving a folder no longer deletes files before they are copied; Pause works for downloads, same-named downloads no longer corrupt each other, transfer history survives crashes, and a second launch focuses the running app.
 - Windows: object names are cleaned before they reach the Save dialog, so a name shaped like a network path can no longer make Windows contact another server.
 - Windows: failed or interrupted multipart uploads are always cleaned up instead of leaving billed parts behind, and files larger than 78 GiB now upload.
 - Windows: the Logs window can be reopened after closing it, closing the main window quits the app (asking first if transfers are running), errors show the S3 code and message instead of "service error", and AWS buckets in another region open correctly.
+- The Tasks list keeps its selection while transfers run, queueing large folders no longer freezes the app, finished transfers only refresh the folder they changed, and browsing never waits behind bulk deletes or uploads.
+- Row checkboxes now select rows for every action; Restore Version keeps the storage class and encryption key and explains why versions over 5 GB or still in Glacier can't be restored; Undelete removes stacked delete markers.
 
 ## Windows preview 0.1.4 — 2026-10-24
 

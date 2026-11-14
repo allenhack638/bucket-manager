@@ -653,20 +653,34 @@ final class BrowserViewController: NSViewController {
         emptyView.setActionVisible(true, title: "Upload files")
     }
 
+    /// Re-applies selection state to the rows on screen: checkbox ticks,
+    /// the name cell, and each column's own text colour.
     private func updateTextColors() {
         let visible = model.visibleItems
-        for row in 0..<table.numberOfRows {
+        for row in 0..<table.numberOfRows where row < visible.count {
+            let item = visible[row]
             let selected = table.selectedRowIndexes.contains(row)
-            let deleted = row < visible.count && visible[row].isDeleted
-            let color = selected ? Theme.Colors.selectionText : (deleted ? Theme.Colors.secondaryText : Theme.Colors.text)
-            if let cell = table.view(atColumn: 1, row: row, makeIfNecessary: false) as? FileCellView,
-               row < visible.count {
-                cell.configure(item: visible[row], selected: selected)
+            for column in 0..<table.numberOfColumns {
+                let id = table.tableColumns[column].identifier.rawValue
+                guard let view = table.view(atColumn: column, row: row, makeIfNecessary: false) else { continue }
+                if let checkbox = view.subviews.first as? CheckboxView {
+                    checkbox.isChecked = selected
+                } else if let cell = view as? FileCellView {
+                    cell.configure(item: item, selected: selected)
+                } else if let cell = view as? NSTableCellView {
+                    cell.textField?.textColor = Self.textColor(column: id, item: item, selected: selected)
+                }
             }
-            for column in 2..<table.numberOfColumns {
-                (table.view(atColumn: column, row: row, makeIfNecessary: false) as? NSTableCellView)?
-                    .textField?.textColor = color
-            }
+        }
+    }
+
+    /// Type and Storage are always secondary; Size and Modified are primary
+    /// unless the row is deleted.
+    static func textColor(column: String, item: S3Item, selected: Bool) -> NSColor {
+        if selected { return Theme.Colors.selectionText }
+        switch column {
+        case "type", "storage": return Theme.Colors.secondaryText
+        default: return item.isDeleted ? Theme.Colors.secondaryText : Theme.Colors.text
         }
     }
 
@@ -737,7 +751,7 @@ final class BrowserViewController: NSViewController {
     }
 
     @objc func downloadSelected() {
-        guard model.selectedItem != nil else { return }
+        guard !model.liveSelection.isEmpty else { return }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -749,7 +763,7 @@ final class BrowserViewController: NSViewController {
     }
 
     @objc func deleteSelected() {
-        let items = model.selectedItems
+        let items = model.liveSelection
         guard !items.isEmpty else { return }
         let hasFolders = items.contains { $0.kind == .folder }
         let alert = NSAlert()
@@ -873,6 +887,16 @@ final class BrowserViewController: NSViewController {
         Task { await model.paste() }
     }
 
+    /// A checkbox click adds or removes one row, keeping the others selected.
+    func toggleRowSelection(key: String) {
+        guard let row = model.visibleItems.firstIndex(where: { $0.key == key }) else { return }
+        if table.selectedRowIndexes.contains(row) {
+            table.deselectRow(row)
+        } else {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: true)
+        }
+    }
+
     @objc func selectAllItems() {
         model.setSelection(Set(model.visibleItems.map(\.key)))
         reload()
@@ -901,8 +925,8 @@ final class BrowserViewController: NSViewController {
     }
 
     private func presentCopyDialog(move: Bool) {
-        guard let window = view.window, !model.selectedItems.isEmpty else { return }
-        let selectedItems = model.selectedItems
+        guard let window = view.window, !model.liveSelection.isEmpty else { return }
+        let selectedItems = model.liveSelection
         let accounts = model.accounts.accounts
         guard !accounts.isEmpty else { return }
         let alert = NSAlert()
@@ -1053,9 +1077,11 @@ extension BrowserViewController: NSTableViewDataSource, NSTableViewDelegate {
             }()
             if let checkbox = cell.subviews.first as? CheckboxView {
                 checkbox.tag = row
-                checkbox.isChecked = model.checked.contains(item.key)
+                // The tick mirrors the row selection, so every action
+                // (Download, Delete, Copy, Move…) acts on ticked rows.
+                checkbox.isChecked = selected
                 checkbox.accessibilityTitle = "Select \(item.displayName)"
-                checkbox.onToggle = { [weak self] in self?.model.toggleChecked(item.key) }
+                checkbox.onToggle = { [weak self] in self?.toggleRowSelection(key: item.key) }
             }
             return cell
 
@@ -1072,8 +1098,7 @@ extension BrowserViewController: NSTableViewDataSource, NSTableViewDelegate {
         case "size":
             let cell = textCell(tableView, id: "sizecell", alignment: .left)
             cell.textField?.stringValue = model.sizeText(for: item)
-            cell.textField?.textColor = selected ? Theme.Colors.selectionText
-                : (item.isDeleted ? Theme.Colors.secondaryText : Theme.Colors.text)
+            cell.textField?.textColor = Self.textColor(column: column.identifier.rawValue, item: item, selected: selected)
             cell.toolTip = model.folderTooltip(for: item)
             return cell
 
@@ -1082,21 +1107,20 @@ extension BrowserViewController: NSTableViewDataSource, NSTableViewDelegate {
             cell.textField?.stringValue = item.isDeleted
                 ? (item.kind == .folder ? "Deleted folder" : "Deleted")
                 : (item.kind == .folder ? "Folder" : item.typeDescription)
-            cell.textField?.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.secondaryText
+            cell.textField?.textColor = Self.textColor(column: column.identifier.rawValue, item: item, selected: selected)
             return cell
 
         case "modified":
             let cell = textCell(tableView, id: "modifiedcell")
             cell.textField?.stringValue = model.modifiedText(for: item)
-            cell.textField?.textColor = selected ? Theme.Colors.selectionText
-                : (item.isDeleted ? Theme.Colors.secondaryText : Theme.Colors.text)
+            cell.textField?.textColor = Self.textColor(column: column.identifier.rawValue, item: item, selected: selected)
             cell.toolTip = model.folderTooltip(for: item)
             return cell
 
         case "storage":
             let cell = textCell(tableView, id: "storagecell")
             cell.textField?.stringValue = item.isDeleted ? "" : item.storageClass ?? (item.kind == .folder ? "" : "STANDARD")
-            cell.textField?.textColor = selected ? Theme.Colors.selectionText : Theme.Colors.secondaryText
+            cell.textField?.textColor = Self.textColor(column: column.identifier.rawValue, item: item, selected: selected)
             return cell
 
         default:

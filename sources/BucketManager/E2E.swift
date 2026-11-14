@@ -1128,6 +1128,33 @@ enum E2E {
                   "orphan multipart upload is aborted on launch cleanup")
             try? FileManager.default.removeItem(at: orphanStateURL)
 
+            // Queueing a big batch updates the UI and the log once, not per file.
+            let batchQueue = TransferQueue(stateStore: TransferQueueStore(fileURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-batch-queue-\(UUID().uuidString).json")))
+            var batchChanges = 0
+            var batchLogs: [String] = []
+            batchQueue.onChange = { batchChanges += 1 }
+            batchQueue.onLog = { message, _ in batchLogs.append(message) }
+            let batchDirectory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("e2e-batch-\(UUID().uuidString)", isDirectory: true)
+            let batchStarted = Date()
+            batchQueue.batch {
+                for index in 0..<2_000 {
+                    batchQueue.enqueueDownload(
+                        account: account, secret: secret, bucket: "slow", key: "batch-\(index).txt",
+                        size: 1, to: batchDirectory.appendingPathComponent("batch-\(index).txt")
+                    )
+                }
+            }
+            let batchSeconds = Date().timeIntervalSince(batchStarted)
+            let changesDuringBatch = batchChanges
+            batchQueue.cancelAll()
+            check(batchQueue.tasks.count == 2_000, "a batch queues every transfer")
+            check(changesDuringBatch < 20 && batchLogs.first == "Queued 2000 transfer(s)",
+                  "a batch updates the queue UI and log once (\(changesDuringBatch) updates)")
+            check(batchSeconds < 2, "queueing 2,000 transfers takes \(String(format: "%.2f", batchSeconds))s")
+            try? FileManager.default.removeItem(at: batchDirectory)
+
             await resetStats()
             let persistedURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("e2e-persisted-\(UUID().uuidString).bin")

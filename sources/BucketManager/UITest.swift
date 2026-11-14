@@ -1072,6 +1072,103 @@ enum UITest {
         check(Set(manySame.map(\.path)).count == 3_000 && manySame.last?.lastPathComponent == "same (3000).txt",
               "thousands of colliding names stay unique")
 
+        // Undelete removes every delete marker stacked on the latest data.
+        let t0 = Date(timeIntervalSince1970: 1_000)
+        func version(_ id: String, _ offset: TimeInterval, marker: Bool, latest: Bool = false) -> ObjectVersion {
+            ObjectVersion(versionID: id, isLatest: latest, isDeleteMarker: marker, size: marker ? nil : 1,
+                          lastModified: t0.addingTimeInterval(offset), eTag: nil, storageClass: nil)
+        }
+        let stacked = BrowserModel.markersHidingLatestData([
+            version("data", 0, marker: false), version("m1", 10, marker: true),
+            version("m2", 20, marker: true, latest: true), version("old", -10, marker: true)
+        ])
+        check(stacked.map(\.versionID) == ["m2", "m1"], "undelete removes every stacked delete marker, newest first")
+        check(BrowserModel.markersHidingLatestData([version("data", 0, marker: false, latest: true),
+                                                    version("m", -5, marker: true)]).isEmpty,
+              "an object whose latest version is data has no hiding markers")
+
+        // Only transfers that change the open folder refresh it.
+        let here = UUID()
+        var upload = TransferTask(direction: .upload, bucket: "b", key: "docs/a.txt",
+                                  localURL: URL(fileURLWithPath: "/tmp/a"), size: 1)
+        upload.accountID = here
+        check(BrowserModel.transfer(upload, changes: here, bucket: "b", prefix: "docs/"),
+              "an upload into the open folder refreshes it")
+        check(!BrowserModel.transfer(upload, changes: here, bucket: "b", prefix: "other/"),
+              "an upload elsewhere leaves the open folder alone")
+        var download = upload
+        download.direction = .download
+        check(!BrowserModel.transfer(download, changes: here, bucket: "b", prefix: "docs/"),
+              "a finished download never reloads the folder")
+        var move = TransferTask(direction: .copy, bucket: "b", key: "docs/a.txt",
+                                localURL: URL(fileURLWithPath: "/tmp/c"), size: 1)
+        move.accountID = here
+        move.destinationAccountID = UUID()
+        move.destinationBucket = "x"
+        move.destinationKey = "y/a.txt"
+        move.moveSource = true
+        check(BrowserModel.transfer(move, changes: here, bucket: "b", prefix: "docs/"),
+              "a move out of the open folder refreshes it")
+
+        // Restore refuses what CopyObject cannot do.
+        check(S3Service.restoreBlocker(size: 6 * 1024 * 1024 * 1024) != nil,
+              "versions over 5 GB cannot be restored in place")
+        check(S3Service.restoreBlocker(size: 10, archived: true) != nil,
+              "archived versions cannot be restored without a Glacier restore")
+        check(S3Service.restoreBlocker(size: 10) == nil,
+              "ordinary and already-restored versions can be restored")
+
+        // Folder sizes refresh for every folder an upload changed.
+        check(BrowserModel.folders(between: "", and: "docs/sub/a.txt") == ["docs/", "docs/sub/"]
+                  && BrowserModel.folders(between: "docs/", and: "docs/a.txt").isEmpty,
+              "uploads invalidate the sizes of the folders that contain them")
+
+        // Short keys are redacted whole, never inside other words.
+        check(LogRedactor.replacingWhole("a", in: "Created folder a/ from a.txt") == "Created folder <object key>/ from a.txt",
+              "redaction replaces whole keys only")
+        check(LogRedactor.replacingWhole("docs/x", in: "Destination already contains docs/x.") ==
+                  "Destination already contains <object key>.",
+              "redaction still matches a key at the end of a sentence")
+
+        // Object keys never reach stored logs when the setting is off.
+        var noKeys = LoggingSettings()
+        noKeys.includeObjectKeys = false
+        let keyed = LogRecord(level: .info, category: .app, event: "app.log",
+                              message: "Renamed docs/a.txt to docs/ab.txt",
+                              metadata: LogRedactor.objectKeysMetadata(["docs/a.txt", "docs/ab.txt"])
+                                .merging(["sourceKey": "docs/a.txt", "accessKeyId": "AKIA"]) { a, _ in a })
+        let redacted = LogRedactor.record(keyed, settings: noKeys)
+        check(redacted.message == "Renamed <object key> to <object key>"
+                  && redacted.metadata["sourceKey"] == "<object key>"
+                  && redacted.metadata["_objectKeys"] == nil,
+              "log redaction hides keys inside messages and metadata: \(redacted.message)")
+        var withKeys = LoggingSettings()
+        withKeys.includeObjectKeys = true
+        let kept = LogRedactor.record(keyed, settings: withKeys)
+        check(kept.message.contains("docs/ab.txt") && kept.metadata["_objectKeys"] == nil,
+              "keys stay when the setting is on, and the internal field is always dropped")
+
+        // Plain HTTP is only for local hosts.
+        check(!EndpointValidator.isLocalHost("2001:db8::1") && !EndpointValidator.isLocalHost("[2606:4700::1111]"),
+              "public IPv6 addresses are not local")
+        check(EndpointValidator.isLocalHost("minio") && EndpointValidator.isLocalHost("fd00::5"),
+              "single-label names and private IPv6 stay local")
+
+        // A folder a partial scan never reached shows unknown, not "≥ Zero KB".
+        let statsKey = FolderStatsKey(accountID: here, bucket: "b", prefix: "zz/")
+        let unreached = FolderStatsSnapshot(key: statsKey, record: FolderStatsRecord(
+            accountID: here, bucket: "b", prefix: "zz/", size: 0, objectCount: 0,
+            newestObjectDate: nil, computedAt: Date(), partial: true
+        ), state: .partial)
+        check(unreached.sizeText == "—" && unreached.tooltip?.contains("open this folder") == true,
+              "folders past a partial scan's cutoff show as unknown")
+
+        // Selecting a row keeps each column's own colour.
+        let plain = S3Item(key: "a.txt", kind: .object)
+        check(BrowserViewController.textColor(column: "type", item: plain, selected: false) == Theme.Colors.secondaryText
+                  && BrowserViewController.textColor(column: "size", item: plain, selected: false) == Theme.Colors.text,
+              "Type stays secondary and Size primary when rows are recoloured")
+
         // Right-click targets the row under the pointer.
         let contextTable = NSTableView()
         contextTable.addTableColumn(NSTableColumn(identifier: .init("c")))

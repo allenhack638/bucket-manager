@@ -81,7 +81,10 @@ enum EndpointValidator {
         if value == "localhost" || value == "::1" || value == "0:0:0:0:0:0:0:1" {
             return true
         }
-        if !value.contains(".") {
+        // Single-label names ("minio", "nas") resolve on the local network or
+        // in Docker. IPv6 literals have no dots either, so they are judged by
+        // their prefix below, never by this rule.
+        if !value.contains("."), !value.contains(":") {
             return true
         }
         if value.hasSuffix(".local") || value.hasSuffix(".lan") || value.hasSuffix(".internal") {

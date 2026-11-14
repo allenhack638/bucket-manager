@@ -226,6 +226,9 @@ final class FlatButton: NSControl {
         var textColor = Theme.Colors.text
         var fill: NSColor?
         if !isEnabled { textColor = Theme.Colors.disabledText }
+        // A disabled button never reacts to the pointer.
+        let hovering = isEnabled && self.hovering
+        let pressed = isEnabled && self.pressed
 
         switch style {
         case .menu:
@@ -263,7 +266,8 @@ final class FlatButton: NSControl {
         let resolvedIconStyle = iconStyle ?? style.iconStyle
         let iconSize = resolvedIconStyle.size
         let image = iconName.flatMap { Theme.Icon.image($0, style: resolvedIconStyle) }
-        let tinted = image?.tinted(iconTint ?? (isEnabled ? textColor : Theme.Colors.disabledText))
+        // Custom tints (red Delete, accent icons) are dropped when disabled.
+        let tinted = image?.tinted(isEnabled ? (iconTint ?? textColor) : Theme.Colors.disabledText)
 
         let titleSize = (title as NSString).size(withAttributes: [.font: font])
         let imageWidth = tinted == nil ? 0 : (iconSize + (title.isEmpty ? 0 : 6))

@@ -129,11 +129,14 @@ final class VersionsPanel: NSView {
 
     private func updateActions() {
         let version = selectedVersion
-        restoreButton.isEnabled = version.map { !$0.isLatest && !$0.isDeleteMarker } ?? false
+        let blocker = version.flatMap { S3Service.restoreBlocker(size: $0.size) }
+        restoreButton.isEnabled = version.map { !$0.isLatest && !$0.isDeleteMarker && blocker == nil } ?? false
         deleteButton.isEnabled = version != nil
         switch version {
         case nil:
             hint.stringValue = "Select a version to restore or delete it."
+        case let v? where !v.isLatest && !v.isDeleteMarker && blocker != nil:
+            hint.stringValue = blocker ?? ""
         case let v? where v.isDeleteMarker:
             hint.stringValue = v.isLatest
                 ? "Deleting this marker brings the object back."
