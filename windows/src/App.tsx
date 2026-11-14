@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
@@ -161,10 +162,12 @@ function AccountDialog({
   account,
   onClose,
   onSaved,
+  onRemove,
 }: {
   account?: Account;
   onClose: () => void;
   onSaved: (account: Account) => void;
+  onRemove?: (account: Account) => void;
 }) {
   const [form, setForm] = useState<AccountInput>({
     id: account?.id,
@@ -359,6 +362,16 @@ function AccountDialog({
           >
             {testing ? "Testing…" : "Test connection"}
           </button>
+          {account && onRemove && (
+            <button
+              className="link-button danger"
+              type="button"
+              disabled={saving || testing}
+              onClick={() => onRemove(account)}
+            >
+              Remove account
+            </button>
+          )}
           <span className="sheet-actions-right">
             <button className="button secondary" type="button" onClick={onClose}>
               Cancel
@@ -577,6 +590,20 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [refreshTick, setRefreshTick] = useState(0);
+  const refreshTimer = useRef<number | undefined>(undefined);
+  // The transfer listener is registered once; it reads the current view here.
+  const viewRef = useRef({ accountId: "", bucket: "", prefix: "" });
+  const transferChangesView = (task: TransferTask) => {
+    const view = viewRef.current;
+    if (!view.bucket) return false;
+    const uploadedHere = task.kind === "upload" && task.accountId === view.accountId
+      && task.bucket === view.bucket && task.key.startsWith(view.prefix);
+    const copiedHere = task.kind === "copy" && task.destinationAccountId === view.accountId
+      && task.destinationBucket === view.bucket && (task.destinationKey ?? "").startsWith(view.prefix);
+    const movedFromHere = task.kind === "copy" && task.moveSource && task.accountId === view.accountId
+      && task.bucket === view.bucket && task.key.startsWith(view.prefix);
+    return uploadedHere || copiedHere || movedFromHere;
+  };
   const [dialog, setDialog] = useState<{ account?: Account } | null>(null);
   const [transferDialog, setTransferDialog] = useState<"copy" | "move" | null>(null);
   const [transfers, setTransfers] = useState<TransferTask[]>([]);
@@ -623,19 +650,30 @@ export default function App() {
   useEffect(() => {
     let active = true;
     let unlisten: (() => void) | undefined;
+    // Update rows in place: re-sorting on every progress event moved the
+    // Pause and Cancel buttons under the pointer.
     const upsert = (task: TransferTask) =>
       setTransfers((current) => {
-        const next = current.filter((item) => item.id !== task.id);
-        next.push(task);
-        return next.sort((left, right) => right.createdAt - left.createdAt);
+        const index = current.findIndex((item) => item.id === task.id);
+        if (index >= 0) {
+          const next = current.slice();
+          next[index] = task;
+          return next;
+        }
+        return [task, ...current];
       });
     void api.listTransfers().then((tasks) => {
       if (active) setTransfers(tasks);
     });
     void listen<TransferTask>("transfer-updated", (event) => {
       upsert(event.payload);
-      if (["upload", "copy"].includes(event.payload.kind) && event.payload.status === "completed") {
-        setRefreshTick((value) => value + 1);
+      if (event.payload.status === "completed" && transferChangesView(event.payload)) {
+        // A burst of finished uploads refreshes once.
+        if (refreshTimer.current) window.clearTimeout(refreshTimer.current);
+        refreshTimer.current = window.setTimeout(() => {
+          refreshTimer.current = undefined;
+          setRefreshTick((value) => value + 1);
+        }, 400);
       }
     }).then((stop) => {
       if (active) unlisten = stop;
@@ -692,7 +730,10 @@ export default function App() {
       .then((nextPage) => {
         if (cancelled) return;
         setPage(nextPage);
-        setSelectedKeys(new Set());
+        // Keep the rows that still exist (a refresh must not empty an open
+        // Copy/Move dialog); navigation clears the selection itself.
+        const present = new Set(nextPage.entries.map((entry) => entry.key));
+        setSelectedKeys((current) => new Set([...current].filter((key) => present.has(key))));
       })
       .catch((nextError) => {
         if (!cancelled) setError(errorMessage(nextError));
@@ -705,6 +746,24 @@ export default function App() {
       cancelled = true;
     };
   }, [accountId, bucket, prefix, refreshTick]);
+
+  useEffect(() => {
+    viewRef.current = { accountId: accountId ?? "", bucket, prefix };
+  }, [accountId, bucket, prefix]);
+
+  // F5 / Ctrl+R refresh buckets and the listing; the webview's own reload
+  // would reset the whole app.
+  const refreshBucketsRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const reloadKey = event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r");
+      if (!reloadKey) return;
+      event.preventDefault();
+      refreshBucketsRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const entries = useMemo(() => {
     const source = page?.entries ?? [];
@@ -779,6 +838,11 @@ export default function App() {
       const nextBuckets = await api.listBuckets(accountId);
       setBuckets(nextBuckets);
       if (!nextBuckets.some((item) => item.name === bucket)) {
+        // The open bucket is gone: start the next one fresh, so a selection
+        // from the old bucket can never be acted on in the new one.
+        setPrefix("");
+        setSelectedKeys(new Set());
+        setPage(null);
         setBucket(nextBuckets[0]?.name ?? "");
       }
       setRefreshTick((value) => value + 1);
@@ -799,6 +863,9 @@ export default function App() {
     try {
       await api.createBucket(accountId, cleaned);
       await refreshBuckets();
+      // A new bucket opens at its root, not at the previous bucket's folder.
+      setPrefix("");
+      setSelectedKeys(new Set());
       setBucket(cleaned);
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -806,6 +873,52 @@ export default function App() {
       setBusy(false);
     }
   };
+
+  const removeAccount = async (target: Account) => {
+    const message = `Remove the account "${target.name}" from Bucket Manager?\n\n`
+      + "Its saved credentials are deleted from this PC. Buckets and objects in storage are not affected.";
+    if (!window.confirm(message)) return;
+    // Close the dialog first so an error shows in the main window, not under it.
+    setDialog(null);
+    try {
+      await api.deleteAccount(target.id);
+      if (accountId === target.id) setAccountId("");
+      await loadAccounts();
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    }
+  };
+
+  const deleteBucket = async () => {
+    if (!accountId || !bucket || busy) return;
+    const target = bucket;
+    const typed = window.prompt(
+      `Delete the bucket "${target}"? S3 only deletes empty buckets, and this cannot be undone.\n\n`
+        + "Type the bucket name to confirm.",
+    );
+    if (typed === null) return;
+    if (typed.trim() !== target) {
+      setError("The bucket name did not match; nothing was deleted.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      await api.deleteBucket(accountId, target);
+      // Leave the deleted bucket before re-listing, so nothing lists it.
+      setBucket("");
+      setPage(null);
+      setPrefix("");
+      setSelectedKeys(new Set());
+      await refreshBuckets();
+    } catch (nextError) {
+      setError(errorMessage(nextError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  refreshBucketsRef.current = () => void refreshBuckets();
 
   const uploadFiles = async () => {
     if (!accountId || !bucket || busy) return;
@@ -962,11 +1075,15 @@ export default function App() {
     if (!accountId || !bucket || !page?.nextToken || loadingObjects) return;
     setLoadingObjects(true);
     try {
-      const nextPage = await api.listObjects(accountId, bucket, prefix, page.nextToken);
+      const token = page.nextToken;
+      const nextPage = await api.listObjects(accountId, bucket, prefix, token);
+      // Append only to the listing this request continued: after navigation
+      // or a refresh, the token no longer matches and the page is dropped.
       setPage((current) =>
-        current
+        current && current.bucket === nextPage.bucket && current.prefix === nextPage.prefix
+          && current.nextToken === token
           ? { ...current, entries: [...current.entries, ...nextPage.entries], nextToken: nextPage.nextToken }
-          : nextPage,
+          : current,
       );
     } catch (nextError) {
       setError(errorMessage(nextError));
@@ -1029,6 +1146,16 @@ export default function App() {
           >
             <Icon name="plus" />
             <span>New bucket</span>
+          </button>
+          <button
+            className="sidebar-action"
+            type="button"
+            onClick={() => void deleteBucket()}
+            disabled={!accountId || !bucket || busy || Boolean(activeAccount?.bucket)}
+            title="Delete the selected bucket (it must be empty)"
+            aria-label="Delete bucket"
+          >
+            <Icon name="trash" />
           </button>
           <button
             className="sidebar-action"
@@ -1480,6 +1607,7 @@ export default function App() {
             setDialog(null);
             void loadAccounts().then(() => setAccountId(saved.id));
           }}
+          onRemove={(removed) => void removeAccount(removed)}
         />
       )}
       {transferDialog && activeAccount && bucket && (

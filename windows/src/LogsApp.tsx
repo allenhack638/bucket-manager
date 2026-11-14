@@ -156,6 +156,19 @@ export default function LogsApp() {
     if (tab === "settings") void loadSettings();
   }, [tab]);
 
+  // F5 / Ctrl+R reload the current tab's data instead of the whole window.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const reloadKey = event.key === "F5" || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r");
+      if (!reloadKey) return;
+      event.preventDefault();
+      if (tab === "logs") void loadLogs();
+      if (tab === "statistics") void loadStats();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab, filter]);
+
   const accounts = useMemo(() => {
     const names = new Map<string, string>();
     for (const record of records) {
@@ -181,21 +194,11 @@ export default function LogsApp() {
     const list = filteredMetrics
       .filter((metric) => metric.operation === "ListObjectsV2")
       .reduce((sum, metric) => sum + requestCount(metric), 0);
-    const failures = filteredMetrics.reduce((sum, metric) => sum + metric.failures, 0);
-    const bytes = filteredMetrics.reduce((sum, metric) => sum + metric.bytes, 0);
+    const session = statsRange === "session";
+    const failures = filteredMetrics.reduce((sum, metric) => sum + (session ? metric.sessionFailures : metric.failures), 0);
+    const bytes = filteredMetrics.reduce((sum, metric) => sum + (session ? metric.sessionBytes : metric.bytes), 0);
     return `${total} requests · ${list} list requests · ${failures} errors · ${formatBytes(bytes)} transferred`;
   }, [filteredMetrics, statsRange]);
-
-  async function clearLogs() {
-    if (!window.confirm("Clear diagnostic logs? Audit records are retained.")) return;
-    try {
-      await api.clearDiagnostics();
-      setSettingsStatus("Diagnostic logs cleared.");
-      await loadLogs();
-    } catch (clearError) {
-      setError(String(clearError));
-    }
-  }
 
   async function exportLogs() {
     const destination = await save({ defaultPath: "bucket-manager-logs.jsonl" });
@@ -341,7 +344,6 @@ export default function LogsApp() {
             <span>{records.length} {records.length === 1 ? "record" : "records"}</span>
             <div>
               <button className="button" onClick={() => void api.revealLogs()}>Reveal Logs</button>
-              <button className="button" onClick={clearLogs}>Clear Diagnostics</button>
               <button className="button" onClick={exportLogs}>Export</button>
             </div>
           </footer>
@@ -394,16 +396,20 @@ export default function LogsApp() {
               </thead>
               <tbody>
                 {filteredMetrics.map((metric) => {
-                  const requests = statsRange === "session" ? metric.sessionRequests : metric.requests;
+                  const session = statsRange === "session";
+                  const requests = session ? metric.sessionRequests : metric.requests;
+                  const failures = session ? metric.sessionFailures : metric.failures;
+                  const totalMs = session ? metric.sessionMs : metric.totalMs;
+                  const bytes = session ? metric.sessionBytes : metric.bytes;
                   return (
                     <tr key={`${metric.accountId}-${metric.bucket}-${metric.operation}`}>
                       <td>{metric.accountName}</td>
                       <td>{metric.bucket || "—"}</td>
                       <td>{metric.operation}</td>
                       <td>{requests}</td>
-                      <td>{metric.failures}</td>
-                      <td>{requests ? (metric.totalMs / requests).toFixed(1) : "0.0"}</td>
-                      <td>{formatBytes(metric.bytes)}</td>
+                      <td>{failures}</td>
+                      <td>{requests ? (totalMs / requests).toFixed(1) : "0.0"}</td>
+                      <td>{formatBytes(bytes)}</td>
                       <td className="mono">{formatTime(metric.lastUsed)}</td>
                     </tr>
                   );
@@ -425,67 +431,6 @@ export default function LogsApp() {
       {currentTab === "settings" && settings && (
         <section className="logs-section settings-view">
           <h2>Logging</h2>
-          <label className="inline-check">
-            <input
-              type="checkbox"
-              checked={settings.diagnosticsEnabled}
-              onChange={(event) => setSettings({ ...settings, diagnosticsEnabled: event.target.checked })}
-            />
-            Enable diagnostic request and UI logging
-          </label>
-          <div className="settings-row">
-            <label>Minimum level</label>
-            <select
-              value={settings.minimumLevel}
-              onChange={(event) => setSettings({ ...settings, minimumLevel: event.target.value })}
-            >
-              {levels.slice(1).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label.replace("+", "")}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="settings-categories">
-            <span>Diagnostic categories</span>
-            <div>
-              {[
-                ["ui", "UI"],
-                ["network", "Network"],
-                ["transfer", "Transfer"],
-                ["settings", "Settings"],
-              ].map(([value, label]) => (
-                <label key={value} className="inline-check">
-                  <input
-                    type="checkbox"
-                    checked={settings.enabledCategories.includes(value)}
-                    onChange={(event) =>
-                      setSettings({
-                        ...settings,
-                        enabledCategories: event.target.checked
-                          ? [...settings.enabledCategories, value]
-                          : settings.enabledCategories.filter((category) => category !== value),
-                      })
-                    }
-                  />
-                  {label}
-                </label>
-              ))}
-            </div>
-          </div>
-          <div className="settings-row">
-            <label>Diagnostics retention</label>
-            <select
-              value={settings.diagnosticRetentionDays}
-              onChange={(event) => setSettings({ ...settings, diagnosticRetentionDays: Number(event.target.value) })}
-            >
-              {[7, 14, 30, 60].map((days) => (
-                <option key={days} value={days}>
-                  {days} days
-                </option>
-              ))}
-            </select>
-          </div>
           <div className="settings-row">
             <label>Audit retention</label>
             <select
@@ -509,7 +454,7 @@ export default function LogsApp() {
           </label>
           <p className="settings-note">
             Audit logging is always on. Credentials, authorization headers, and signatures are never
-            logged. Diagnostic logging is off by default.
+            logged.
           </p>
           <div className="settings-actions">
             <button className="button primary" onClick={() => void saveSettings()} disabled={saving}>
@@ -523,7 +468,7 @@ export default function LogsApp() {
 
       <footer className="logs-window-footer">
         <span>Logs &amp; Statistics</span>
-        <span>Audit records are retained unless you clear diagnostics.</span>
+        <span>Audit records are kept for the retention period set in Settings.</span>
       </footer>
     </div>
   );

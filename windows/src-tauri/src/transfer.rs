@@ -15,6 +15,7 @@ use uuid::Uuid;
 const MULTIPART_THRESHOLD: u64 = 16 * 1024 * 1024;
 const PART_SIZE: u64 = 8 * 1024 * 1024;
 const MAX_PARTS: u64 = 10_000;
+const MAX_ACTIVE_TRANSFERS: usize = 4;
 
 /// S3 allows at most 10,000 parts, so a fixed 8 MiB part caps uploads at
 /// about 78 GiB. Grow the part size (in whole MiB) for larger files.
@@ -72,6 +73,9 @@ pub struct TransferManager {
     running: Mutex<HashSet<String>>,
     /// Serialises writes of transfers.json.
     save_lock: Mutex<()>,
+    /// At most this many transfers move data at once; the rest wait as
+    /// "queued". Unlimited parallel copies could fill %TEMP%.
+    slots: Arc<tokio::sync::Semaphore>,
     path: PathBuf,
 }
 
@@ -109,7 +113,22 @@ impl TransferManager {
             controls: Mutex::new(HashMap::new()),
             running: Mutex::new(HashSet::new()),
             save_lock: Mutex::new(()),
+            slots: Arc::new(tokio::sync::Semaphore::new(MAX_ACTIVE_TRANSFERS)),
             path,
+        }
+    }
+
+    /// Waits for a transfer slot. Returns None if the task is paused or
+    /// cancelled while it waits, so its runner exits and releases its claim.
+    pub async fn wait_for_slot(&self, id: &str) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        loop {
+            if self.is_cancelled(id) || self.is_paused(id) {
+                return None;
+            }
+            if let Ok(permit) = Arc::clone(&self.slots).try_acquire_owned() {
+                return Some(permit);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         }
     }
 
@@ -1022,6 +1041,11 @@ async fn download(
         let _ = tokio::fs::remove_file(&temporary).await;
         return result;
     }
+    if task.kind == "download" {
+        // Tag before the file gets its final name, so it is never opened
+        // without SmartScreen's check. Bucket contents are untrusted.
+        mark_of_the_web(&temporary);
+    }
     if let Err(error) = tokio::fs::rename(&temporary, &destination).await {
         let _ = tokio::fs::remove_file(&temporary).await;
         return Err(error.to_string());
@@ -1097,6 +1121,20 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
 }
 
+/// Adds the Windows Mark-of-the-Web (Zone.Identifier stream, Internet zone),
+/// like a browser download. NTFS keeps the stream through the rename; other
+/// file systems ignore it.
+fn mark_of_the_web(path: &Path) {
+    #[cfg(windows)]
+    {
+        let mut stream = path.as_os_str().to_owned();
+        stream.push(":Zone.Identifier");
+        let _ = std::fs::write(stream, "[ZoneTransfer]\r\nZoneId=3\r\n");
+    }
+    #[cfg(not(windows))]
+    let _ = path;
+}
+
 /// A per-task temp name next to the destination. Deriving it from the stem
 /// alone made IMG_1.CR2 and IMG_1.JPG share one file.
 fn download_temp_path(destination: &Path, task_id: &str) -> PathBuf {
@@ -1127,6 +1165,7 @@ mod tests {
             controls: Mutex::new(HashMap::new()),
             running: Mutex::new(HashSet::new()),
             save_lock: Mutex::new(()),
+            slots: Arc::new(tokio::sync::Semaphore::new(MAX_ACTIVE_TRANSFERS)),
             path,
         })
     }

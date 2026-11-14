@@ -18,6 +18,14 @@ pub struct RequestMetric {
     pub bytes: u64,
     pub last_used: String,
     pub session_requests: u64,
+    // Session counterparts, so the "Session" view never mixes in all-time
+    // totals. Reset at launch like session_requests.
+    #[serde(default)]
+    pub session_failures: u64,
+    #[serde(default)]
+    pub session_ms: u64,
+    #[serde(default)]
+    pub session_bytes: u64,
 }
 
 pub struct MetricsStore {
@@ -38,6 +46,9 @@ impl MetricsStore {
             .into_iter()
             .map(|mut metric| {
                 metric.session_requests = 0;
+                metric.session_failures = 0;
+                metric.session_ms = 0;
+                metric.session_bytes = 0;
                 (
                     metric_key(&metric.account_id, &metric.bucket, &metric.operation),
                     metric,
@@ -76,15 +87,21 @@ impl MetricsStore {
             bytes: 0,
             last_used: now(),
             session_requests: 0,
+            session_failures: 0,
+            session_ms: 0,
+            session_bytes: 0,
         });
         metric.account_name = account_name.into();
         metric.requests += 1;
         metric.session_requests += 1;
         metric.total_ms += elapsed_ms;
         metric.bytes += bytes;
+        metric.session_ms += elapsed_ms;
+        metric.session_bytes += bytes;
         metric.last_used = now();
         if !success {
             metric.failures += 1;
+            metric.session_failures += 1;
         }
         let values: Vec<_> = rows.values().cloned().collect();
         drop(rows);
