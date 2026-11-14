@@ -1190,6 +1190,64 @@ enum UITest {
         BrowserTableView.prepareContextSelection(contextTable, clickedRow: -1)
         check(contextTable.selectedRowIndexes.isEmpty, "right-clicking empty space clears the selection")
 
+        // Sizes use digits even for zero.
+        check(Int64(0).byteString == "0 bytes" && Int64(3).byteString == "3 bytes",
+              "an empty size reads 0 bytes, not Zero KB")
+
+        // The date format follows the Options choice.
+        let savedFormat = UserDefaults.standard.string(forKey: DateDisplayFormat.defaultsKey)
+        let sampleDate = Date(timeIntervalSince1970: 1_763_131_693)
+        DateDisplayFormat.current = .iso
+        let isoText = sampleDate.s3ListString
+        DateDisplayFormat.current = .dayFirst24h
+        let dayFirstText = sampleDate.s3ListString
+        DateDisplayFormat.current = .monthFirst12h
+        let monthFirstText = sampleDate.s3ListString
+        if let savedFormat {
+            UserDefaults.standard.set(savedFormat, forKey: DateDisplayFormat.defaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: DateDisplayFormat.defaultsKey)
+        }
+        check(isoText.range(of: #"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$"#, options: .regularExpression) != nil
+                  && dayFirstText.range(of: #"^\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2}$"#, options: .regularExpression) != nil
+                  && (monthFirstText.hasSuffix("AM") || monthFirstText.hasSuffix("PM")),
+              "dates switch to the format chosen in Options")
+
+        // A click on a row checkbox is routed to the checkbox, not the table.
+        final class CheckCells: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+            func numberOfRows(in tableView: NSTableView) -> Int { 3 }
+            func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+                let cell = NSTableCellView()
+                if tableColumn?.identifier.rawValue == "check" {
+                    let box = CheckboxView(frame: NSRect(x: 3, y: 0, width: 18, height: 18))
+                    cell.addSubview(box)
+                }
+                return cell
+            }
+        }
+        let checkTable = BrowserTableView(frame: NSRect(x: 0, y: 0, width: 300, height: 90))
+        let checkColumn = NSTableColumn(identifier: .init("check"))
+        checkColumn.width = 24
+        checkTable.addTableColumn(checkColumn)
+        let nameColumn = NSTableColumn(identifier: .init("name"))
+        nameColumn.width = 200
+        checkTable.addTableColumn(nameColumn)
+        checkTable.rowHeight = 18
+        let checkCells = CheckCells()
+        checkTable.dataSource = checkCells
+        checkTable.delegate = checkCells
+        let checkWindow = NSWindow(contentRect: checkTable.frame, styleMask: [], backing: .buffered, defer: true)
+        checkWindow.contentView?.addSubview(checkTable)
+        checkTable.reloadData()
+        checkTable.layoutSubtreeIfNeeded()
+        let rowRect = checkTable.rect(ofRow: 1)
+        let boxPoint = NSPoint(x: checkTable.rect(ofColumn: 0).minX + 12, y: rowRect.midY)
+        let namePoint = NSPoint(x: checkTable.rect(ofColumn: 1).midX, y: rowRect.midY)
+        check(BrowserTableView.checkbox(in: checkTable, at: boxPoint) != nil,
+              "a click on a row checkbox reaches the checkbox")
+        check(BrowserTableView.checkbox(in: checkTable, at: namePoint) == nil,
+              "a click on a row name is left to the table")
+
         print("UITEST SUMMARY passed=\(passed) failed=\(failed)")
         exit(failed == 0 ? 0 : 1)
     }

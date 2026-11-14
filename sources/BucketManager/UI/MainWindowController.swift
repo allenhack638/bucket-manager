@@ -459,13 +459,38 @@ final class MainWindowController: NSWindowController {
             action: nil
         )
         checkbox.state = model.calculateFolderSizes ? .on : .off
-        checkbox.frame = NSRect(x: 0, y: 0, width: 380, height: 24)
-        alert.accessoryView = checkbox
+
+        let sample = Date()
+        let dateLabel = NSTextField(labelWithString: "Date format:")
+        let datePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+        datePopup.setAccessibilityLabel("Date format")
+        for format in DateDisplayFormat.allCases {
+            datePopup.addItem(withTitle: "\(format.title) — \(format.makeFormatter().string(from: sample))")
+            datePopup.lastItem?.representedObject = format.rawValue
+        }
+        datePopup.selectItem(at: DateDisplayFormat.allCases.firstIndex(of: .current) ?? 0)
+
+        let dateRow = NSStackView(views: [dateLabel, datePopup])
+        dateRow.orientation = .horizontal
+        dateRow.spacing = 8
+        let accessory = NSStackView(views: [checkbox, dateRow])
+        accessory.orientation = .vertical
+        accessory.alignment = .leading
+        accessory.spacing = 10
+        accessory.frame = NSRect(x: 0, y: 0, width: 440, height: 62)
+        alert.accessoryView = accessory
         alert.addButton(withTitle: "Apply")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
             self.model.setCalculateFolderSizes(checkbox.state == .on)
+            if let raw = datePopup.selectedItem?.representedObject as? String,
+               let format = DateDisplayFormat(rawValue: raw),
+               format != .current {
+                DateDisplayFormat.current = format
+                self.browser.reload()
+                self.transfers.redrawDetails()
+            }
             self.browser.refreshFolderStatsForListing()
         }
     }
