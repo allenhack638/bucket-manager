@@ -46,6 +46,22 @@ final class BrowserTableView: HoverTrackingTableView {
         if onKeyDown?(event) == true { return }
         super.keyDown(with: event)
     }
+
+    /// Like Finder: right-clicking a row outside the selection selects it, so
+    /// every context-menu action targets the row under the pointer.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let row = self.row(at: convert(event.locationInWindow, from: nil))
+        Self.prepareContextSelection(self, clickedRow: row)
+        return super.menu(for: event)
+    }
+
+    static func prepareContextSelection(_ table: NSTableView, clickedRow row: Int) {
+        if row < 0 {
+            table.deselectAll(nil)
+        } else if !table.selectedRowIndexes.contains(row) {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        }
+    }
 }
 
 @MainActor
@@ -562,7 +578,7 @@ final class BrowserViewController: NSViewController {
         openButton?.isEnabled = hasBucket && model.selectedItem != nil
         refreshButton?.isEnabled = model.selectedAccount != nil
         bookmarkButton?.isEnabled = hasBucket
-        renameButton?.isEnabled = hasBucket && model.selectedItem != nil
+        renameButton?.isEnabled = hasBucket && model.singleLiveObject != nil
         filterButton?.isEnabled = hasBucket
         filterButton?.isSelectedState = !filterField.isHidden
         filterButton?.iconTint = filterField.isHidden ? nil : Theme.Colors.accent
@@ -770,7 +786,7 @@ final class BrowserViewController: NSViewController {
     }
 
     @objc func renameSelected() {
-        guard let item = model.selectedItem, item.kind == .object, let window = view.window else { return }
+        guard let item = model.singleLiveObject, let window = view.window else { return }
         let alert = NSAlert()
         alert.messageText = "Rename Object"
         alert.informativeText = "Rename \(item.displayName). S3 performs this as a copy followed by a delete."
@@ -823,7 +839,7 @@ final class BrowserViewController: NSViewController {
     }
 
     @objc func shareSelected() {
-        guard let item = model.selectedItem, item.kind == .object, let window = view.window else { return }
+        guard let item = model.singleLiveObject, let window = view.window else { return }
         let (alert, popup) = Self.makeShareAlert(for: item.displayName)
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
@@ -1156,9 +1172,14 @@ extension BrowserViewController: NSMenuItemValidation {
         case #selector(undeleteSelected):
             return selected.contains { $0.isDeleted && $0.kind == .object }
         case #selector(openSelected):
-            return model.selectedItem.map { $0.kind == .folder || !$0.isDeleted } ?? false
+            // openSelected acts on the clicked row first; validate the same row.
+            let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
+            let visible = model.visibleItems
+            guard row >= 0, row < visible.count else { return false }
+            return visible[row].kind == .folder || !visible[row].isDeleted
         case #selector(shareSelected), #selector(renameSelected):
-            return model.selectedItem.map { !$0.isDeleted } ?? false
+            // One live object only: with several rows there is no single target.
+            return model.singleLiveObject != nil
         case #selector(downloadSelected), #selector(deleteSelected), #selector(copySelected),
              #selector(cutSelected), #selector(copyTo), #selector(moveTo), #selector(showProperties):
             return !live.isEmpty

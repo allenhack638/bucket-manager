@@ -7,8 +7,6 @@ use aws_sdk_s3::primitives::ByteStream;
 use aws_sdk_s3::types::{BucketLocationConstraint, CreateBucketConfiguration};
 use aws_sdk_s3::Client;
 use serde::Serialize;
-use std::path::Path;
-use tokio::fs;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -328,88 +326,6 @@ fn is_not_found(error: &str) -> bool {
         || lower.contains("404")
 }
 
-pub async fn upload_object(
-    account: &Account,
-    secret: &str,
-    bucket: &str,
-    key: &str,
-    file_path: &str,
-) -> Result<(), String> {
-    if key.trim().is_empty() || key.ends_with('/') {
-        return Err("A file key is required.".to_string());
-    }
-
-    let path = Path::new(file_path);
-    let metadata = fs::metadata(path)
-        .await
-        .map_err(|error| format!("Could not read {}: {error}", path.display()))?;
-    if !metadata.is_file() {
-        return Err("Choose a file to upload.".to_string());
-    }
-
-    let content_type = mime_guess::from_path(path)
-        .first_or_octet_stream()
-        .to_string();
-    let body = ByteStream::from_path(path)
-        .await
-        .map_err(|error| format!("Could not open {}: {error}", path.display()))?;
-
-    let client = client_for(account, secret).await;
-    client
-        .put_object()
-        .bucket(bucket)
-        .key(key)
-        .content_type(content_type)
-        .body(body)
-        .send()
-        .await
-        .map_err(|error| s3_error(&error))?;
-
-    Ok(())
-}
-
-pub async fn download_object(
-    account: &Account,
-    secret: &str,
-    bucket: &str,
-    key: &str,
-    destination: &str,
-) -> Result<(), String> {
-    if key.ends_with('/') {
-        return Err("Choose a file to download.".to_string());
-    }
-
-    let client = client_for(account, secret).await;
-    let response = client
-        .get_object()
-        .bucket(bucket)
-        .key(key)
-        .send()
-        .await
-        .map_err(|error| s3_error(&error))?;
-    let bytes = response
-        .body
-        .collect()
-        .await
-        .map_err(|error| error.to_string())?
-        .into_bytes();
-
-    let destination = Path::new(destination);
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .await
-            .map_err(|error| error.to_string())?;
-    }
-    let temporary = destination.with_extension("bucket-manager-part");
-    fs::write(&temporary, &bytes)
-        .await
-        .map_err(|error| error.to_string())?;
-    fs::rename(&temporary, destination)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(())
-}
-
 pub async fn delete_object(
     account: &Account,
     secret: &str,
@@ -451,6 +367,26 @@ pub async fn delete_object(
         return Ok(());
     }
 
+    client
+        .delete_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await
+        .map_err(|error| s3_error(&error))?;
+    Ok(())
+}
+
+/// Deletes exactly one key, even when it ends in "/". `delete_object` treats such
+/// keys as a folder and removes everything below them, which a move of a single
+/// folder-marker object must never do.
+pub async fn delete_exact_object(
+    account: &Account,
+    secret: &str,
+    bucket: &str,
+    key: &str,
+) -> Result<(), String> {
+    let client = client_for(account, secret).await;
     client
         .delete_object()
         .bucket(bucket)

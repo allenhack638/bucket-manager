@@ -3,7 +3,7 @@ use crate::logging::{LogFields, LogStore};
 use crate::metrics::MetricsStore;
 use crate::s3;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -54,7 +54,26 @@ pub struct TransferControl {
 pub struct TransferManager {
     tasks: Mutex<Vec<TransferTask>>,
     controls: Mutex<HashMap<String, Arc<TransferControl>>>,
+    /// Tasks with a live runner. A second runner on the same task would write
+    /// the same temp file concurrently.
+    running: Mutex<HashSet<String>>,
+    /// Serialises writes of transfers.json.
+    save_lock: Mutex<()>,
     path: PathBuf,
+}
+
+/// Held by a runner for its whole lifetime; releases the task on drop.
+pub struct RunClaim {
+    manager: Arc<TransferManager>,
+    id: String,
+}
+
+impl Drop for RunClaim {
+    fn drop(&mut self) {
+        if let Ok(mut running) = self.manager.running.lock() {
+            running.remove(&self.id);
+        }
+    }
 }
 
 impl TransferManager {
@@ -75,8 +94,44 @@ impl TransferManager {
         Self {
             tasks: Mutex::new(tasks),
             controls: Mutex::new(HashMap::new()),
+            running: Mutex::new(HashSet::new()),
+            save_lock: Mutex::new(()),
             path,
         }
+    }
+
+    /// Downloads and copies restart from zero, so temp files left by a crash
+    /// are useless. Called from setup, after the single-instance check, so a
+    /// second launch can never delete files the first one is still writing.
+    pub fn remove_stale_temps(&self) {
+        let tasks = self.list();
+        for task in tasks.iter().filter(|task| task.kind == "download" || task.kind == "copy") {
+            let _ = std::fs::remove_file(download_temp_path(Path::new(&task.local_path), &task.id));
+            if task.kind == "copy" {
+                // The copy's staging file in %TEMP%, never a user file.
+                let _ = std::fs::remove_file(&task.local_path);
+            }
+        }
+    }
+
+    pub fn is_running(&self, id: &str) -> bool {
+        self.running
+            .lock()
+            .map(|running| running.contains(id))
+            .unwrap_or(false)
+    }
+
+    /// Claims the task for one runner. Returns None while another runner is
+    /// still alive (for example, a paused download that has not stopped yet).
+    pub fn claim(self: &Arc<Self>, id: &str) -> Option<RunClaim> {
+        let mut running = self.running.lock().ok()?;
+        if !running.insert(id.to_string()) {
+            return None;
+        }
+        Some(RunClaim {
+            manager: Arc::clone(self),
+            id: id.to_string(),
+        })
     }
 
     pub fn list(&self) -> Vec<TransferTask> {
@@ -248,6 +303,19 @@ impl TransferManager {
         }
     }
 
+    /// Byte-progress update: emitted to the UI but not written to disk, so a
+    /// download does not rewrite transfers.json for every chunk.
+    pub fn progress(&self, app: &AppHandle, id: &str, transferred: u64) {
+        let task = self.tasks.lock().ok().and_then(|mut tasks| {
+            let task = tasks.iter_mut().find(|task| task.id == id)?;
+            task.transferred = transferred;
+            Some(task.clone())
+        });
+        if let Some(task) = task {
+            let _ = app.emit("transfer-updated", task);
+        }
+    }
+
     pub fn set_status(&self, app: &AppHandle, id: &str, status: &str, error: Option<String>) {
         self.update(app, id, |task| {
             task.status = status.to_string();
@@ -317,6 +385,10 @@ impl TransferManager {
     }
 
     fn save(&self) {
+        // Snapshot and write under one lock so saves cannot interleave, and
+        // write a sibling file then rename it, so a crash never leaves a
+        // half-written transfers.json.
+        let _guard = self.save_lock.lock();
         let tasks = self
             .tasks
             .lock()
@@ -326,7 +398,7 @@ impl TransferManager {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(json) = serde_json::to_vec_pretty(&tasks) {
-            let _ = std::fs::write(&self.path, json);
+            let _ = write_atomic(&self.path, &json);
         }
     }
 }
@@ -398,7 +470,8 @@ pub async fn run_upload(
             } else {
                 "failed"
             };
-            manager.set_status(&app, &id, status, Some(error));
+            let error = (status != "paused").then_some(error);
+            manager.set_status(&app, &id, status, error);
         }
     }
 }
@@ -576,7 +649,7 @@ pub async fn run_copy(
         return;
     };
     let temporary = PathBuf::from(&task.local_path);
-    let download_temporary = temporary.with_extension("bucket-manager-part");
+    let download_temporary = download_temp_path(&temporary, &task.id);
     let _ = tokio::fs::remove_file(&temporary).await;
     let _ = tokio::fs::remove_file(&download_temporary).await;
 
@@ -680,7 +753,8 @@ pub async fn run_copy(
             } else {
                 "failed"
             };
-            manager.set_status(&app, &id, status, Some(error));
+            let error = (status != "paused").then_some(error);
+            manager.set_status(&app, &id, status, error);
         }
     }
 }
@@ -792,7 +866,7 @@ async fn copy_between_accounts(
         {
             return Err("The source object changed during the move.".into());
         }
-        s3::delete_object(source_account, source_secret, &task.bucket, &task.key).await?;
+        s3::delete_exact_object(source_account, source_secret, &task.bucket, &task.key).await?;
     }
     Ok(())
 }
@@ -816,7 +890,12 @@ pub async fn run_download(
         manager.set_status(&app, &id, "cancelled", None);
         return;
     }
-    manager.set_status(&app, &id, "running", None);
+    // Downloads restart from zero; drop the old percentage.
+    manager.update(&app, &id, |task| {
+        task.status = "running".to_string();
+        task.error = None;
+        task.transferred = 0;
+    });
     let result = download(&app, &manager, &account, &secret, &task).await;
     let success = result.is_ok();
     let error = result.as_ref().err().cloned();
@@ -859,10 +938,13 @@ pub async fn run_download(
         Err(error) => {
             let status = if manager.is_cancelled(&id) {
                 "cancelled"
+            } else if manager.is_paused(&id) {
+                "paused"
             } else {
                 "failed"
             };
-            manager.set_status(&app, &id, status, Some(error));
+            let error = (status != "paused").then_some(error);
+            manager.set_status(&app, &id, status, error);
         }
     }
 }
@@ -882,40 +964,107 @@ async fn download(
         .send()
         .await
         .map_err(|error| error.to_string())?;
-    let mut body = response.body;
+    let expected = response.content_length().and_then(|length| u64::try_from(length).ok());
+    let body = response.body;
     let destination = PathBuf::from(&task.local_path);
-    let temporary = destination.with_extension("bucket-manager-part");
+    let temporary = download_temp_path(&destination, &task.id);
     if let Some(parent) = temporary.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .map_err(|error| error.to_string())?;
     }
-    let mut file = tokio::fs::File::create(&temporary)
+    let result = write_download(app, manager, task, body, &temporary, expected).await;
+    if result.is_err() {
+        // Never leave a partial file in the user's folder.
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return result;
+    }
+    if let Err(error) = tokio::fs::rename(&temporary, &destination).await {
+        let _ = tokio::fs::remove_file(&temporary).await;
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+async fn write_download(
+    app: &AppHandle,
+    manager: &TransferManager,
+    task: &TransferTask,
+    mut body: aws_sdk_s3::primitives::ByteStream,
+    temporary: &Path,
+    expected: Option<u64>,
+) -> Result<(), String> {
+    let mut file = tokio::fs::File::create(temporary)
         .await
         .map_err(|error| error.to_string())?;
     let mut transferred = 0u64;
+    let mut last_emit = Instant::now();
     while let Some(chunk) = body.next().await {
         if manager.is_cancelled(&task.id) {
-            drop(file);
-            let _ = tokio::fs::remove_file(&temporary).await;
             return Err("Transfer cancelled.".to_string());
+        }
+        if manager.is_paused(&task.id) {
+            return Err("Transfer paused.".to_string());
         }
         let bytes = chunk.map_err(|error| error.to_string())?;
         file.write_all(&bytes)
             .await
             .map_err(|error| error.to_string())?;
         transferred += bytes.len() as u64;
-        manager.update(app, &task.id, |task| {
-            task.transferred = transferred;
-            task.status = "running".to_string();
-        });
+        if last_emit.elapsed().as_millis() >= 200 {
+            last_emit = Instant::now();
+            manager.progress(app, &task.id, transferred);
+        }
     }
     file.flush().await.map_err(|error| error.to_string())?;
-    drop(file);
-    tokio::fs::rename(&temporary, &destination)
-        .await
-        .map_err(|error| error.to_string())?;
+    if let Some(expected) = expected {
+        if transferred != expected {
+            return Err(format!(
+                "Download incomplete: received {transferred} of {expected} bytes."
+            ));
+        }
+    }
+    manager.progress(app, &task.id, transferred);
     Ok(())
+}
+
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    let temporary = PathBuf::from(temporary);
+    {
+        let mut file = std::fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        // Flush to disk before the rename so a power cut cannot leave an
+        // empty file in place of the history.
+        file.sync_all()?;
+    }
+    // Antivirus or indexers can briefly hold the target open on Windows.
+    let mut attempt = 0;
+    loop {
+        match std::fs::rename(&temporary, path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && attempt < 3 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50 * attempt));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// A per-task temp name next to the destination. Deriving it from the stem
+/// alone made IMG_1.CR2 and IMG_1.JPG share one file.
+fn download_temp_path(destination: &Path, task_id: &str) -> PathBuf {
+    let name = destination
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "download".to_string());
+    let short_id: String = task_id.chars().take(8).collect();
+    // Keep the temp name within the 255-character file name limit.
+    let name: String = name.chars().take(200).collect();
+    destination.with_file_name(format!("{name}.{short_id}.bucket-manager-part"))
 }
 
 fn now() -> u64 {
@@ -923,4 +1072,128 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manager(path: PathBuf) -> Arc<TransferManager> {
+        Arc::new(TransferManager {
+            tasks: Mutex::new(Vec::new()),
+            controls: Mutex::new(HashMap::new()),
+            running: Mutex::new(HashSet::new()),
+            save_lock: Mutex::new(()),
+            path,
+        })
+    }
+
+    #[test]
+    fn same_stem_downloads_get_distinct_temp_files() {
+        let folder = Path::new("C:/Downloads");
+        let raw = download_temp_path(&folder.join("IMG_1.CR2"), "aaaaaaaa-1");
+        let jpg = download_temp_path(&folder.join("IMG_1.JPG"), "bbbbbbbb-2");
+        assert_ne!(raw, jpg);
+        assert_eq!(raw.parent(), Some(folder));
+        let again = download_temp_path(&folder.join("IMG_1.JPG"), "cccccccc-3");
+        assert_ne!(jpg, again, "two tasks for one destination never share a temp");
+    }
+
+    #[test]
+    fn a_task_has_at_most_one_runner() {
+        let manager = manager(std::env::temp_dir().join("bm-claim-test.json"));
+        let first = manager.claim("task").expect("first claim");
+        assert!(manager.claim("task").is_none());
+        assert!(manager.is_running("task"));
+        drop(first);
+        assert!(!manager.is_running("task"));
+        assert!(manager.claim("task").is_some());
+    }
+
+    fn sample_task(index: usize) -> TransferTask {
+        TransferTask {
+            id: format!("t{index}"),
+            kind: "download".into(),
+            account_id: "a".into(),
+            bucket: "b".into(),
+            key: format!("key-{index}-{}", "x".repeat(200)),
+            local_path: "x".into(),
+            size: 1,
+            transferred: 0,
+            status: "completed".into(),
+            error: None,
+            multipart: false,
+            created_at: 0,
+            destination_account_id: None,
+            destination_bucket: None,
+            destination_key: None,
+            move_source: false,
+            source_e_tag: None,
+            phase: None,
+            content_type: None,
+        }
+    }
+
+    /// A reader running alongside the savers must never see a torn file. The
+    /// old unlocked, in-place fs::write fails this within a few reads.
+    #[test]
+    fn concurrent_saves_never_expose_a_torn_file() {
+        let dir = std::env::temp_dir().join(format!("bm-save-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("transfers.json");
+        let manager = manager(path.clone());
+        manager.tasks.lock().unwrap().extend((0..200).map(sample_task));
+        manager.save();
+
+        let done = Arc::new(AtomicBool::new(false));
+        let reader = {
+            let done = Arc::clone(&done);
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let mut reads = 0;
+                while !done.load(Ordering::SeqCst) {
+                    let text = std::fs::read_to_string(&path).expect("file always exists");
+                    let tasks: Vec<TransferTask> =
+                        serde_json::from_str(&text).expect("file is never torn");
+                    assert!(tasks.len() >= 200, "file is never short");
+                    reads += 1;
+                }
+                reads
+            })
+        };
+        let writers: Vec<_> = (0..8)
+            .map(|writer| {
+                let manager = Arc::clone(&manager);
+                std::thread::spawn(move || {
+                    for round in 0..40 {
+                        // Vary the content so lost or mixed writes would show.
+                        if let Ok(mut tasks) = manager.tasks.lock() {
+                            tasks[writer].transferred = round;
+                            if round % 2 == 0 {
+                                tasks.push(sample_task(1_000 + writer * 100 + round as usize));
+                            }
+                        }
+                        manager.save();
+                    }
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        done.store(true, Ordering::SeqCst);
+        assert!(reader.join().unwrap() > 0);
+
+        let saved: Vec<TransferTask> =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved.len(), 200 + 8 * 20, "the last save holds every task");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn temp_names_stay_within_file_name_limits() {
+        let long = "n".repeat(250) + ".bin";
+        let temp = download_temp_path(&Path::new("C:/d").join(&long), "abcdef12-3456");
+        assert!(temp.file_name().unwrap().len() <= 255);
+    }
 }

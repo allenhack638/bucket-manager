@@ -178,6 +178,14 @@ final class TransferQueue {
         pump()
     }
 
+    /// Local paths that unfinished downloads will write, so a new batch never
+    /// shares a destination (or its temp file) with one already queued.
+    var reservedDownloadPaths: Set<String> {
+        Set(tasks.lazy
+            .filter { $0.direction == .download && [.queued, .running, .paused, .failed].contains($0.status) }
+            .map(\.localURL.path))
+    }
+
     func enqueueDownload(account: Account, secret: String, bucket: String, key: String, size: Int64, to url: URL) {
         var task = TransferTask(direction: .download, bucket: bucket, key: key, localURL: url, size: size)
         task.accountID = account.id

@@ -86,20 +86,6 @@ final class AdminPasscodeStore: @unchecked Sendable {
         return PasscodeHasher.verify(password, against: credential)
     }
 
-    func removePasscode() throws {
-        lock.lock()
-        defer { lock.unlock() }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw keychainError(status)
-        }
-    }
-
     private func readCredential() throws -> PasscodeCredential? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,

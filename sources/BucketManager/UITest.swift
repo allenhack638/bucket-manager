@@ -1001,6 +1001,98 @@ enum UITest {
               "multipart orphan planner reclaims paused copy uploads")
         try? FileManager.default.removeItem(at: maintenanceDir)
 
+        // Download destinations never collide.
+        let dl = URL(fileURLWithPath: "/tmp/bm-plan", isDirectory: true)
+        let noDirs: (URL) -> Bool = { _ in false }
+        let plannedPaths = DownloadPlanner.resolve([
+            dl.appendingPathComponent("p/x"),
+            dl.appendingPathComponent("p/x/y"),
+            dl.appendingPathComponent("a_b.txt"),
+            dl.appendingPathComponent("a_b.txt"),
+            dl.appendingPathComponent("docs/Readme.md"),
+            dl.appendingPathComponent("docs/readme.md")
+        ], isDirectory: noDirs).map { $0.path.replacingOccurrences(of: dl.path + "/", with: "") }
+        check(plannedPaths == ["p/x (2)", "p/x/y", "a_b.txt", "a_b (2).txt", "docs/Readme.md", "docs/readme (2).md"],
+              "download planner separates file/folder, sanitised and case-only collisions: \(plannedPaths)")
+        let existingDir = DownloadPlanner.resolve(
+            [dl.appendingPathComponent("Photos")],
+            isDirectory: { $0.lastPathComponent == "Photos" }
+        )
+        check(existingDir.first?.lastPathComponent == "Photos (2)",
+              "a download never replaces an existing local folder")
+        let reservedPlan = DownloadPlanner.resolve(
+            [dl.appendingPathComponent("report.pdf")],
+            reserved: [dl.appendingPathComponent("Report.PDF").path],
+            isDirectory: noDirs
+        )
+        check(reservedPlan.first?.lastPathComponent == "report (2).pdf",
+              "a new download never shares a destination with a queued one")
+        check(DownloadPlanner.resolve([dl.appendingPathComponent("caf\u{65}\u{301}.txt"),
+                                       dl.appendingPathComponent("caf\u{e9}.txt")], isDirectory: noDirs)
+                .last?.lastPathComponent == "caf\u{e9} (2).txt",
+              "download planner treats Unicode-equivalent names as one file")
+
+        let queuedFolderPlan = DownloadPlanner.resolve(
+            [dl.appendingPathComponent("p/x")],
+            reserved: [dl.appendingPathComponent("p/x/y").path],
+            isDirectory: noDirs
+        )
+        check(queuedFolderPlan.first?.lastPathComponent == "x (2)",
+              "a new download never takes a folder a queued download needs")
+
+        let previewRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("bm-preview-test-\(UUID().uuidString)", isDirectory: true)
+        let oldPreview = previewRoot.appendingPathComponent("old", isDirectory: true)
+        let newPreview = previewRoot.appendingPathComponent("new", isDirectory: true)
+        try? FileManager.default.createDirectory(at: oldPreview, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: newPreview, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-2 * 24 * 60 * 60)], ofItemAtPath: oldPreview.path
+        )
+        BrowserModel.prunePreviews(in: previewRoot)
+        check(!FileManager.default.fileExists(atPath: oldPreview.path)
+                  && FileManager.default.fileExists(atPath: newPreview.path),
+              "opened-file copies older than a day are cleaned up")
+        try? FileManager.default.removeItem(at: previewRoot)
+
+        check(DownloadPlanner.resolve([dl.appendingPathComponent("Straße.pdf"),
+                                       dl.appendingPathComponent("STRASSE.pdf")], isDirectory: noDirs)
+                .last?.lastPathComponent == "STRASSE (2).pdf",
+              "download planner uses APFS-style full case folding")
+        let underQueuedFile = DownloadPlanner.resolve(
+            [dl.appendingPathComponent("p/x/y"), dl.appendingPathComponent("p/x/z")],
+            reserved: [dl.appendingPathComponent("p/x").path],
+            isDirectory: noDirs
+        ).map { $0.path.replacingOccurrences(of: dl.path + "/", with: "") }
+        check(underQueuedFile == ["p/x (2)/y", "p/x (2)/z"],
+              "a folder named like a queued file is renamed once for every file below it: \(underQueuedFile)")
+        let manySame = DownloadPlanner.resolve(
+            Array(repeating: dl.appendingPathComponent("same.txt"), count: 3_000), isDirectory: noDirs
+        )
+        check(Set(manySame.map(\.path)).count == 3_000 && manySame.last?.lastPathComponent == "same (3000).txt",
+              "thousands of colliding names stay unique")
+
+        // Right-click targets the row under the pointer.
+        let contextTable = NSTableView()
+        contextTable.addTableColumn(NSTableColumn(identifier: .init("c")))
+        final class Rows: NSObject, NSTableViewDataSource {
+            func numberOfRows(in tableView: NSTableView) -> Int { 4 }
+        }
+        let rows = Rows()
+        contextTable.dataSource = rows
+        contextTable.allowsMultipleSelection = true
+        contextTable.reloadData()
+        contextTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        BrowserTableView.prepareContextSelection(contextTable, clickedRow: 2)
+        check(contextTable.selectedRowIndexes == IndexSet(integer: 2),
+              "right-clicking an unselected row selects it")
+        contextTable.selectRowIndexes(IndexSet([1, 3]), byExtendingSelection: false)
+        BrowserTableView.prepareContextSelection(contextTable, clickedRow: 3)
+        check(contextTable.selectedRowIndexes == IndexSet([1, 3]),
+              "right-clicking inside a multi-selection keeps it")
+        BrowserTableView.prepareContextSelection(contextTable, clickedRow: -1)
+        check(contextTable.selectedRowIndexes.isEmpty, "right-clicking empty space clears the selection")
+
         print("UITEST SUMMARY passed=\(passed) failed=\(failed)")
         exit(failed == 0 ? 0 : 1)
     }

@@ -741,7 +741,7 @@ final class TransfersViewController: NSViewController {
     }
 
     private func confirmVersion(_ action: BrowserModel.VersionAction, _ version: ObjectVersion) {
-        guard let item = model.selectedItem, let window = view.window else { return }
+        guard let item = model.versionsOwner, let window = view.window else { return }
         let alert = NSAlert()
         let when = version.lastModified?.s3ListString ?? version.versionID
         switch action {

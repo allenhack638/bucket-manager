@@ -66,10 +66,24 @@ fn list_transfers(state: State<'_, AppState>) -> Vec<TransferTask> {
     state.transfers.list()
 }
 
+/// Starts a runner; if that fails (missing account or secret), marks the task
+/// failed instead of leaving it queued with nothing running it.
+fn start_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Result<(), String> {
+    let id = task.id.clone();
+    spawn_transfer(app, state, task).inspect_err(|error| {
+        if !state.transfers.is_running(&id) {
+            state.transfers.set_status(app, &id, "failed", Some(error.clone()));
+        }
+    })
+}
+
 fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Result<(), String> {
     let account = state.store.get(&task.account_id)?;
     let secret = state.store.secret(&task.account_id)?;
     let manager = state.transfers.clone();
+    let claim = manager.claim(&task.id).ok_or_else(|| {
+        "This transfer is still stopping. Try again in a moment.".to_string()
+    })?;
     let app = app.clone();
     let id = task.id.clone();
     let logs = state.logs.clone();
@@ -82,6 +96,7 @@ fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Resu
         let destination_account = state.store.get(&destination_id)?;
         let destination_secret = state.store.secret(&destination_id)?;
         tauri::async_runtime::spawn(async move {
+            let _claim = claim;
             transfer::run_copy(
                 app,
                 manager,
@@ -97,10 +112,12 @@ fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Resu
         });
     } else if task.kind == "upload" {
         tauri::async_runtime::spawn(async move {
+            let _claim = claim;
             transfer::run_upload(app, manager, account, secret, id, logs, metrics).await;
         });
     } else {
         tauri::async_runtime::spawn(async move {
+            let _claim = claim;
             transfer::run_download(app, manager, account, secret, id, logs, metrics).await;
         });
     }
@@ -119,7 +136,7 @@ fn enqueue_upload(
     let task = state
         .transfers
         .add_upload(&app, &id, &bucket, &key, &file_path)?;
-    spawn_transfer(&app, &state, task.clone())?;
+    start_transfer(&app, &state, task.clone())?;
     Ok(task)
 }
 
@@ -136,7 +153,7 @@ fn enqueue_download(
     let task = state
         .transfers
         .add_download(&app, &id, &bucket, &key, &destination, size);
-    spawn_transfer(&app, &state, task.clone())?;
+    start_transfer(&app, &state, task.clone())?;
     Ok(task)
 }
 
@@ -150,8 +167,11 @@ fn resume_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Re
     let Some(task) = state.transfers.get(&id) else {
         return Err("Transfer not found.".to_string());
     };
+    if state.transfers.is_running(&id) {
+        return Err("This transfer is still stopping. Try again in a moment.".to_string());
+    }
     state.transfers.resume(&app, &id);
-    spawn_transfer(&app, &state, task)
+    start_transfer(&app, &state, task)
 }
 
 #[tauri::command]
@@ -164,8 +184,11 @@ fn retry_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Res
     let Some(task) = state.transfers.get(&id) else {
         return Err("Transfer not found.".to_string());
     };
+    if state.transfers.is_running(&id) {
+        return Err("This transfer is still stopping. Try again in a moment.".to_string());
+    }
     state.transfers.retry(&app, &id);
-    spawn_transfer(&app, &state, task)
+    start_transfer(&app, &state, task)
 }
 
 #[tauri::command]
@@ -175,11 +198,6 @@ fn get_appearance(state: State<'_, AppState>) -> String {
         .lock()
         .map(|mode| mode.as_str().to_string())
         .unwrap_or_else(|_| "system".to_string())
-}
-
-#[tauri::command]
-fn set_appearance(app: AppHandle, state: State<'_, AppState>, mode: String) -> Result<(), String> {
-    apply_appearance(&app, &state, &mode)
 }
 
 #[tauri::command]
@@ -360,64 +378,6 @@ async fn list_objects(
 }
 
 #[tauri::command]
-async fn upload_object(
-    state: State<'_, AppState>,
-    id: String,
-    bucket: String,
-    key: String,
-    file_path: String,
-) -> Result<(), String> {
-    let account = state.store.get(&id)?;
-    let secret = state.store.secret(&id)?;
-    let started = Instant::now();
-    let bytes = std::fs::metadata(&file_path).map(|m| m.len()).unwrap_or(0);
-    let result = s3::upload_object(&account, &secret, &bucket, &key, &file_path).await;
-    record_operation(
-        &state,
-        &account,
-        &bucket,
-        "PutObject",
-        "object.uploaded",
-        "object.upload_failed",
-        Some(&key),
-        started,
-        bytes,
-        &result,
-    );
-    result
-}
-
-#[tauri::command]
-async fn download_object(
-    state: State<'_, AppState>,
-    id: String,
-    bucket: String,
-    key: String,
-    destination: String,
-) -> Result<(), String> {
-    let account = state.store.get(&id)?;
-    let secret = state.store.secret(&id)?;
-    let started = Instant::now();
-    let result = s3::download_object(&account, &secret, &bucket, &key, &destination).await;
-    let bytes = std::fs::metadata(&destination)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    record_operation(
-        &state,
-        &account,
-        &bucket,
-        "GetObject",
-        "object.downloaded",
-        "object.download_failed",
-        Some(&key),
-        started,
-        bytes,
-        &result,
-    );
-    result
-}
-
-#[tauri::command]
 async fn delete_object(
     state: State<'_, AppState>,
     id: String,
@@ -528,15 +488,6 @@ fn clear_statistics(state: State<'_, AppState>) {
 #[tauri::command]
 fn take_logs_tab(state: State<'_, AppState>) -> Option<String> {
     state.logs_tab.lock().ok().and_then(|mut tab| tab.take())
-}
-
-#[tauri::command]
-fn open_logs_window(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    tab: Option<String>,
-) -> Result<(), String> {
-    open_logs_window_impl(&app, &state, tab.as_deref().unwrap_or("logs"))
 }
 
 fn open_logs_window_impl(app: &AppHandle, state: &AppState, tab: &str) -> Result<(), String> {
@@ -742,7 +693,7 @@ async fn start_cross_account_transfer(
             destination_key,
             move_source,
         );
-        spawn_transfer(&app, &state, task.clone())?;
+        start_transfer(&app, &state, task.clone())?;
         queued.push(task);
     }
     state.logs.audit(
@@ -874,6 +825,15 @@ pub fn run() {
         Some("success".into()),
     );
     let result = tauri::Builder::default()
+        // Must be the first plugin: a second launch focuses this window and
+        // exits before it can touch transfers.json or in-flight temp files.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             store,
@@ -888,6 +848,7 @@ pub fn run() {
             startup_log("setup");
 
             let state = app.state::<AppState>();
+            state.transfers.remove_stale_temps();
             let system = CheckMenuItemBuilder::with_id("appearance:system", "System")
                 .checked(appearance == AppearanceMode::System)
                 .build(app)?;
@@ -987,7 +948,6 @@ pub fn run() {
             cancel_transfer,
             retry_transfer,
             get_appearance,
-            set_appearance,
             get_logs,
             get_logging_settings,
             save_logging_settings,
@@ -996,7 +956,6 @@ pub fn run() {
             reveal_logs,
             get_statistics,
             clear_statistics,
-            open_logs_window,
             take_logs_tab,
             list_accounts,
             save_account,
@@ -1006,8 +965,6 @@ pub fn run() {
             create_bucket,
             delete_bucket,
             list_objects,
-            upload_object,
-            download_object,
             delete_object,
             create_folder,
             start_cross_account_transfer

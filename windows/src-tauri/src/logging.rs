@@ -90,9 +90,6 @@ impl LogStore {
         store
     }
 
-    pub fn directory(&self) -> &Path {
-        &self.dir
-    }
 
     pub fn settings(&self) -> LoggingSettings {
         self.settings.lock().map(|s| s.clone()).unwrap_or_default()

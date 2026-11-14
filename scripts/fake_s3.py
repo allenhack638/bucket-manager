@@ -300,6 +300,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Last-Modified", HTTP_DATE)
             self.end_headers()
             return
+        if key.startswith("head-503/"):
+            # A bodyless non-404 failure: the SDK reports it as an unknown
+            # service error, which a conflict check must not read as "absent".
+            bump("head503")
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         if bucket != "alpha" or key != "readme.txt":
             self.send_response(404)
             self.send_header("Content-Length", "0")
@@ -319,6 +327,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_PUT(self):
         bucket, key, query = self.split()
         if bucket == "denied":
+            # Drain the body so a kept-alive connection stays in sync.
+            read_request_body(self)
             bump("deniedPut")
             return error_response(self, "AccessDenied", "Access Denied", 403)
         body = read_request_body(self)
@@ -354,7 +364,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        copy_source = urllib.parse.unquote(self.headers.get("x-amz-copy-source", ""))
+        # AWS decodes x-amz-copy-source like a form value, so a raw "+" means a
+        # space. Mirror that so clients that leave "+" unencoded are caught.
+        copy_source = urllib.parse.unquote_plus(self.headers.get("x-amz-copy-source", ""))
+        if copy_source and "?versionId=" not in copy_source:
+            bump(f"copySource:{copy_source.lstrip('/')}")
         if "?versionId=" in copy_source:
             source, version_id = copy_source.split("?versionId=", 1)
             if source.lstrip("/") == f"{bucket}/{key}":
@@ -380,6 +394,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         global NEXT_UPLOAD
         bucket, key, query = self.split()
         if bucket == "denied":
+            # Drain the body so a kept-alive connection stays in sync.
+            read_request_body(self)
             bump("deniedPost")
             return error_response(self, "AccessDenied", "Access Denied", 403)
         if "uploads" in query:

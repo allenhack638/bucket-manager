@@ -600,6 +600,32 @@ enum E2E {
                           "downloaded objects carry the Gatekeeper quarantine flag")
                 }
 
+                // A temp file left by an earlier failed download must not be appended to.
+                let staleTarget = directory.appendingPathComponent("stale-temp.txt")
+                try? Data("leftover bytes from a failed attempt".utf8)
+                    .write(to: S3Service.downloadTemporaryURL(for: staleTarget))
+                let freshBytes = try? await service.download(
+                    account: account, secret: secret, bucket: "alpha", key: "readme.txt",
+                    to: staleTarget, progress: { _ in }
+                )
+                let freshText = try? String(contentsOf: staleTarget, encoding: .utf8)
+                check(freshBytes != nil && freshText?.contains("leftover") == false
+                          && freshText?.contains("fake s3") == true,
+                      "a fresh download overwrites a stale temp file instead of appending")
+
+                // Downloading onto an existing local folder keeps the folder.
+                let folderTarget = directory.appendingPathComponent("readme.txt-folder", isDirectory: true)
+                try? FileManager.default.createDirectory(
+                    at: folderTarget.appendingPathComponent("keep"), withIntermediateDirectories: true
+                )
+                let folderReplaced = (try? await service.download(
+                    account: account, secret: secret, bucket: "alpha", key: "readme.txt",
+                    to: folderTarget, progress: { _ in }
+                )) != nil
+                check(!folderReplaced && FileManager.default.fileExists(
+                    atPath: folderTarget.appendingPathComponent("keep").path),
+                      "a download never replaces an existing local folder")
+
                 let link = await model.shareLink(for: readme, expiresIn: 3600)
                 let query = link.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false)?.queryItems } ?? []
                 func queryValue(_ name: String) -> String? { query.first { $0.name == name }?.value }
@@ -619,6 +645,27 @@ enum E2E {
                     .first { $0.name == "X-Amz-Expires" }?.value
                 check(clampedExpiry == "604800", "share link lifetime is capped at seven days")
 
+                let plusCopy: Void? = try? await service.copyObject(
+                    account: account, secret: secret,
+                    sourceBucket: "alpha", sourceKey: "report+final é.txt",
+                    destinationBucket: "alpha", destinationKey: "copy-source-check.txt"
+                )
+                check(plusCopy != nil, "copying a key with '+' succeeds")
+                try? await service.delete(account: account, secret: secret, bucket: "alpha", key: "copy-source-check.txt")
+                check((await stats())["copySource:alpha/report+final é.txt"] == 1,
+                      "copy source keeps '+' in keys instead of letting S3 read it as a space")
+
+                // Rename never overwrites, and never treats a failed check as "absent".
+                let copiesBeforeRename = (await stats()).filter { $0.key.hasPrefix("copySource:") }.values.reduce(0, +)
+                await model.rename(S3Item(key: "notes-to-rename.txt", kind: .object), to: "readme.txt")
+                check(model.errorMessage?.lowercased().contains("destination already") == true,
+                      "rename refuses to overwrite an existing object")
+                await model.rename(S3Item(key: "head-503/a.txt", kind: .object), to: "b.txt")
+                check((await stats())["head503"] ?? 0 > 0, "rename checks the destination first")
+                let copiesAfterRename = (await stats()).filter { $0.key.hasPrefix("copySource:") }.values.reduce(0, +)
+                check(copiesAfterRename == copiesBeforeRename,
+                      "a conflict or a failed destination check stops the rename before any copy")
+
                 let older = ObjectVersion(
                     versionID: "v0+/=", isLatest: false, isDeleteMarker: false,
                     size: 12, lastModified: nil, eTag: nil, storageClass: nil
@@ -630,6 +677,17 @@ enum E2E {
                 check(await model.apply(.restore, to: older, of: readme), "restoring a version succeeds")
                 check((await stats())["restoreVersion:v0+/="] == 1,
                       "restore copies the exact version over the same key")
+                if let otherObject = model.items.first(where: { $0.kind == .object && $0.key != readme.key }) {
+                    model.setSelection([readme.key])
+                    await model.loadVersions(for: readme, force: true)
+                    let shown = model.versions.first
+                    check(shown != nil, "versions load for the inspected object")
+                    if let shown {
+                        check(await model.apply(.delete, to: shown, of: otherObject) == false,
+                              "a version listed for one object is never applied to another")
+                    }
+                    check(model.versionsOwner?.key == readme.key, "version actions target the inspected object")
+                }
                 check(await model.apply(.restore, to: current, of: readme) == false,
                       "restoring the current version is refused")
                 check(await model.apply(.delete, to: older, of: readme), "deleting a version succeeds")
