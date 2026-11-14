@@ -11,6 +11,7 @@ import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import appIcon from "./assets/app-icon.png";
 import { api } from "./api";
+import { safeFileName } from "./fileName";
 import { applyAppearance, initAppearance, type Appearance } from "./theme";
 import type { Account, AccountInput, Bucket, ListPage, ObjectEntry, TransferTask } from "./types";
 
@@ -843,7 +844,7 @@ export default function App() {
       for (const entry of files) {
         let destination: string | null;
         try {
-          destination = await save({ title: "Download object", defaultPath: entry.name });
+          destination = await save({ title: "Download object", defaultPath: safeFileName(entry.name) });
         } catch (nextError) {
           setError(`Save dialog failed: ${errorMessage(nextError)}`);
           break;
