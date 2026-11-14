@@ -36,7 +36,6 @@ export const api = {
   getLoggingSettings: () => invoke<LoggingSettings>("get_logging_settings"),
   saveLoggingSettings: (settings: LoggingSettings) =>
     invoke<void>("save_logging_settings", { settings }),
-  clearDiagnostics: () => invoke<number>("clear_diagnostics"),
   exportLogs: (destination: string, filter: LogFilter) =>
     invoke<number>("export_logs", { destination, filter }),
   revealLogs: () => invoke<void>("reveal_logs"),

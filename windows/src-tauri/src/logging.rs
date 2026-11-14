@@ -26,10 +26,6 @@ pub struct LogRecord {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoggingSettings {
-    pub diagnostics_enabled: bool,
-    pub minimum_level: String,
-    pub enabled_categories: Vec<String>,
-    pub diagnostic_retention_days: u32,
     pub audit_retention_days: u32,
     pub include_object_keys: bool,
 }
@@ -37,15 +33,6 @@ pub struct LoggingSettings {
 impl Default for LoggingSettings {
     fn default() -> Self {
         Self {
-            diagnostics_enabled: false,
-            minimum_level: "info".into(),
-            enabled_categories: vec![
-                "ui".into(),
-                "network".into(),
-                "transfer".into(),
-                "settings".into(),
-            ],
-            diagnostic_retention_days: 30,
             audit_retention_days: 90,
             include_object_keys: false,
         }
@@ -97,14 +84,6 @@ impl LogStore {
 
     pub fn update_settings(&self, settings: LoggingSettings) -> Result<(), String> {
         let settings = LoggingSettings {
-            diagnostics_enabled: settings.diagnostics_enabled,
-            minimum_level: normalize_level(&settings.minimum_level),
-            enabled_categories: settings
-                .enabled_categories
-                .into_iter()
-                .filter(|category| category != "audit")
-                .collect(),
-            diagnostic_retention_days: settings.diagnostic_retention_days.clamp(1, 365),
             audit_retention_days: settings.audit_retention_days.clamp(30, 365),
             include_object_keys: settings.include_object_keys,
         };
@@ -135,6 +114,11 @@ impl LogStore {
     ) {
         if !self.settings().include_object_keys {
             fields.key = None;
+            // Copies and moves also carry "destinationKey" and
+            // "destinationPrefix"; they are object keys too.
+            if let Some(Value::Object(map)) = fields.metadata.as_mut() {
+                map.retain(|name, _| !is_object_key_field(name));
+            }
         }
         self.write(LogRecord {
             timestamp: now(),
@@ -149,30 +133,6 @@ impl LogStore {
             bucket: fields.bucket,
             key: fields.key,
             metadata: fields.metadata,
-        });
-    }
-
-    pub fn diagnostic(&self, level: &str, category: &str, event: &str, message: &str) {
-        let settings = self.settings();
-        if !settings.diagnostics_enabled
-            || !settings.enabled_categories.iter().any(|c| c == category)
-            || level_rank(level) < level_rank(&settings.minimum_level)
-        {
-            return;
-        }
-        self.write(LogRecord {
-            timestamp: now(),
-            level: normalize_level(level),
-            category: category.into(),
-            event: event.into(),
-            message: message.into(),
-            outcome: None,
-            account_id: None,
-            account_name: None,
-            operation: None,
-            bucket: None,
-            key: None,
-            metadata: None,
         });
     }
 
@@ -242,35 +202,6 @@ impl LogStore {
         records
     }
 
-    pub fn clear_diagnostics(&self) -> Result<usize, String> {
-        let mut removed = 0;
-        if let Ok(entries) = fs::read_dir(&self.dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|name| name.starts_with("diagnostic-"))
-                {
-                    if fs::remove_file(path).is_ok() {
-                        removed += 1;
-                    }
-                }
-            }
-        }
-        self.audit(
-            "logs.diagnostics.cleared",
-            "Diagnostic logs cleared",
-            LogFields {
-                operation: Some("ClearDiagnostics".into()),
-                metadata: Some(serde_json::json!({ "files": removed })),
-                ..Default::default()
-            },
-            Some("success".into()),
-        );
-        Ok(removed)
-    }
-
     pub fn export(&self, destination: &str, filter: LogFilter) -> Result<usize, String> {
         let records = self.recent(filter);
         let mut data = String::new();
@@ -316,8 +247,6 @@ impl LogStore {
             };
             let (prefix, days) = if name.starts_with("audit-") {
                 ("audit-", settings.audit_retention_days)
-            } else if name.starts_with("diagnostic-") {
-                ("diagnostic-", settings.diagnostic_retention_days)
             } else {
                 continue;
             };
@@ -372,17 +301,6 @@ fn now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-fn normalize_level(level: &str) -> String {
-    match level.to_lowercase().as_str() {
-        "trace" => "trace",
-        "debug" => "debug",
-        "warning" | "warn" => "warning",
-        "error" => "error",
-        _ => "info",
-    }
-    .into()
-}
-
 fn level_rank(level: &str) -> u8 {
     match level.to_lowercase().as_str() {
         "trace" => 0,
@@ -391,5 +309,24 @@ fn level_rank(level: &str) -> u8 {
         "warning" | "warn" => 3,
         "error" => 4,
         _ => 2,
+    }
+}
+
+/// Metadata names that hold object keys or prefixes.
+fn is_object_key_field(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with("key") || lower.ends_with("prefix")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_object_key_field;
+
+    #[test]
+    fn object_key_fields_are_recognised() {
+        assert!(is_object_key_field("destinationKey"));
+        assert!(is_object_key_field("destinationPrefix"));
+        assert!(!is_object_key_field("destinationBucket"));
+        assert!(!is_object_key_field("destinationAccountID"));
     }
 }

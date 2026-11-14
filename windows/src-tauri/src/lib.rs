@@ -97,6 +97,11 @@ fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Resu
         let destination_account = state.store.get(&destination_id)?;
         let destination_secret = state.store.secret(&destination_id)?;
         tauri::async_runtime::spawn(async move {
+            let Some(_slot) = manager.wait_for_slot(&id).await else {
+                drop(claim);
+                cancelled_while_waiting(&app, &id);
+                return;
+            };
             let _claim = claim;
             transfer::run_copy(
                 app,
@@ -113,11 +118,21 @@ fn spawn_transfer(app: &AppHandle, state: &AppState, task: TransferTask) -> Resu
         });
     } else if task.kind == "upload" {
         tauri::async_runtime::spawn(async move {
+            let Some(_slot) = manager.wait_for_slot(&id).await else {
+                drop(claim);
+                cancelled_while_waiting(&app, &id);
+                return;
+            };
             let _claim = claim;
             transfer::run_upload(app, manager, account, secret, id, logs, metrics).await;
         });
     } else {
         tauri::async_runtime::spawn(async move {
+            let Some(_slot) = manager.wait_for_slot(&id).await else {
+                drop(claim);
+                cancelled_while_waiting(&app, &id);
+                return;
+            };
             let _claim = claim;
             transfer::run_download(app, manager, account, secret, id, logs, metrics).await;
         });
@@ -164,10 +179,18 @@ fn pause_transfer(app: AppHandle, state: State<'_, AppState>, id: String) {
 }
 
 #[tauri::command]
-fn resume_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn resume_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let Some(task) = state.transfers.get(&id) else {
         return Err("Transfer not found.".to_string());
     };
+    // A paused runner stops within one poll or chunk; give it a moment
+    // instead of failing a quick Pause → Resume.
+    for _ in 0..10 {
+        if !state.transfers.is_running(&id) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     if state.transfers.is_running(&id) {
         return Err("This transfer is still stopping. Try again in a moment.".to_string());
     }
@@ -184,6 +207,18 @@ fn cancel_transfer(app: AppHandle, state: State<'_, AppState>, id: String) {
         if let Some(task) = state.transfers.get(&id) {
             abort_recorded_upload(&app, &state, &task);
         }
+    }
+}
+
+/// A task cancelled before it got a transfer slot never ran, so nothing
+/// aborted the multipart upload a previous run may have recorded.
+fn cancelled_while_waiting(app: &AppHandle, id: &str) {
+    let Some(state) = app.try_state::<AppState>() else { return };
+    if !state.transfers.is_cancelled(id) {
+        return;
+    }
+    if let Some(task) = state.transfers.get(id) {
+        abort_recorded_upload(app, &state, &task);
     }
 }
 
@@ -222,10 +257,18 @@ fn abort_recorded_upload(app: &AppHandle, state: &AppState, task: &TransferTask)
 }
 
 #[tauri::command]
-fn retry_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn retry_transfer(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
     let Some(task) = state.transfers.get(&id) else {
         return Err("Transfer not found.".to_string());
     };
+    // A paused runner stops within one poll or chunk; give it a moment
+    // instead of failing a quick Pause → Resume.
+    for _ in 0..10 {
+        if !state.transfers.is_running(&id) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
     if state.transfers.is_running(&id) {
         return Err("This transfer is still stopping. Try again in a moment.".to_string());
     }
@@ -269,7 +312,15 @@ fn save_account(state: State<'_, AppState>, input: AccountInput) -> Result<Accou
 }
 
 #[tauri::command]
-fn delete_account(state: State<'_, AppState>, id: String) -> Result<(), String> {
+fn delete_account(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
+    // Abort partial uploads recorded for this account while its credentials
+    // still exist; afterwards nothing could clean them up.
+    for task in state.transfers.list() {
+        let uses_account = task.account_id == id || task.destination_account_id.as_deref() == Some(id.as_str());
+        if uses_account && !state.transfers.is_running(&task.id) {
+            abort_recorded_upload(&app, &state, &task);
+        }
+    }
     let account = state.store.get(&id).ok();
     let result = state.store.delete(&id);
     if result.is_ok() {
@@ -396,16 +447,8 @@ async fn list_objects(
     let secret = state.store.secret(&id)?;
     let started = Instant::now();
     let result = s3::list_objects(&account, &secret, &bucket, &prefix, continuation_token).await;
-    let bytes = result
-        .as_ref()
-        .map(|page| {
-            page.entries
-                .iter()
-                .filter_map(|entry| entry.size)
-                .map(|size| size.max(0) as u64)
-                .sum()
-        })
-        .unwrap_or(0);
+    // A listing transfers no object data; its entries' sizes are not bytes moved.
+    let bytes = 0;
     record_operation(
         &state,
         &account,
@@ -489,11 +532,6 @@ fn save_logging_settings(
     settings: LoggingSettings,
 ) -> Result<(), String> {
     state.logs.update_settings(settings)
-}
-
-#[tauri::command]
-fn clear_diagnostics(state: State<'_, AppState>) -> Result<usize, String> {
-    state.logs.clear_diagnostics()
 }
 
 #[tauri::command]
@@ -1048,7 +1086,6 @@ pub fn run() {
             get_logs,
             get_logging_settings,
             save_logging_settings,
-            clear_diagnostics,
             export_logs,
             reveal_logs,
             get_statistics,

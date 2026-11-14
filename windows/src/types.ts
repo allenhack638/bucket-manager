@@ -99,10 +99,6 @@ export type LogFilter = {
 };
 
 export type LoggingSettings = {
-  diagnosticsEnabled: boolean;
-  minimumLevel: string;
-  enabledCategories: string[];
-  diagnosticRetentionDays: number;
   auditRetentionDays: number;
   includeObjectKeys: boolean;
 };
@@ -118,4 +114,7 @@ export type RequestMetric = {
   bytes: number;
   lastUsed: string;
   sessionRequests: number;
+  sessionFailures: number;
+  sessionMs: number;
+  sessionBytes: number;
 };

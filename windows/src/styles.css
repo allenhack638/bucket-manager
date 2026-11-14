@@ -681,6 +681,11 @@ button.header-cell:hover {
   text-decoration: underline;
 }
 
+.link-button.danger {
+  color: #c42b1c;
+  margin-left: 12px;
+}
+
 .link-button:disabled {
   color: var(--tertiary);
   cursor: default;

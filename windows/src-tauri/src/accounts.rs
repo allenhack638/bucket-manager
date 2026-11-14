@@ -211,16 +211,44 @@ fn clean_endpoint(value: Option<&str>) -> Result<Option<String>, String> {
     let Some(value) = clean_optional(value)? else {
         return Ok(None);
     };
-    let local_http = value.starts_with("http://localhost")
-        || value.starts_with("http://127.0.0.1")
-        || value.starts_with("http://[::1]");
+    let local_http = value
+        .strip_prefix("http://")
+        .is_some_and(|rest| is_loopback_host(host_of(rest)));
     if !value.starts_with("https://") && !local_http {
         return Err("The endpoint must use HTTPS, except for localhost.".to_string());
     }
     Ok(Some(value.trim_end_matches('/').to_string()))
 }
 
+/// The host part of "host[:port][/path]" or "[ipv6][:port][/path]".
+/// A prefix test let "http://localhost.attacker.example" pass as local.
+fn host_of(authority_and_path: &str) -> &str {
+    let authority = authority_and_path
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let authority = authority.rsplit('@').next().unwrap_or_default();
+    if let Some(rest) = authority.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or_default();
+    }
+    authority.split(':').next().unwrap_or_default()
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let host = host.to_ascii_lowercase();
+    host == "localhost"
+        || host == "::1"
+        || host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+/// Writes a sibling file and renames it over the target, so a crash during a
+/// save can never leave accounts.json truncated (losing every account).
 fn write_private(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".tmp");
+    let temporary = PathBuf::from(temporary);
     let mut options = fs::OpenOptions::new();
     options.create(true).write(true).truncate(true);
     #[cfg(unix)]
@@ -228,8 +256,26 @@ fn write_private(path: &Path, contents: &[u8]) -> Result<(), String> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path).map_err(|error| error.to_string())?;
-    file.write_all(contents).map_err(|error| error.to_string())
+    {
+        let mut file = options.open(&temporary).map_err(|error| error.to_string())?;
+        file.write_all(contents).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+    }
+    // Antivirus or indexers can briefly hold the target open on Windows.
+    let mut attempt = 0;
+    loop {
+        match fs::rename(&temporary, path) {
+            Ok(()) => return Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && attempt < 3 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50 * attempt));
+            }
+            Err(error) => {
+                let _ = fs::remove_file(&temporary);
+                return Err(error.to_string());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -250,6 +296,11 @@ mod tests {
             Ok(Some("https://s3.example.com".to_string()))
         );
         assert!(clean_endpoint(Some("http://localhost:9000")).is_ok());
+        assert!(clean_endpoint(Some("http://127.0.0.1:9000/")).is_ok());
+        assert!(clean_endpoint(Some("http://[::1]:9000")).is_ok());
+        assert!(clean_endpoint(Some("http://localhost.attacker.example")).is_err());
+        assert!(clean_endpoint(Some("http://127.0.0.1.attacker.example")).is_err());
+        assert!(clean_endpoint(Some("http://localhost@attacker.example")).is_err());
     }
 
     #[test]

@@ -179,6 +179,14 @@ async fn client_in_region(account: &Account, secret: &str, region: &str) -> Clie
     if account.path_style {
         config = config.force_path_style(true);
     }
+    if has_custom_endpoint(account) {
+        // The SDK's default sends uploads as aws-chunked with a CRC32
+        // trailer, which several S3-compatible servers reject. Only add
+        // checksums when an operation requires them, as older SDKs did.
+        config = config
+            .request_checksum_calculation(aws_sdk_s3::config::RequestChecksumCalculation::WhenRequired)
+            .response_checksum_validation(aws_sdk_s3::config::ResponseChecksumValidation::WhenRequired);
+    }
     Client::from_conf(config.build())
 }
 
@@ -600,5 +608,91 @@ where
     match status {
         Some(status) => format!("{detail} (HTTP {status})"),
         None => detail,
+    }
+}
+
+/// Real-server checks for this module, skipped unless pointed at a disposable
+/// bucket:
+///
+///   BM_ACCEPT_ENDPOINT=http://127.0.0.1:19000 BM_ACCEPT_ACCESS_KEY=… \
+///   BM_ACCEPT_SECRET=… BM_ACCEPT_BUCKET=… cargo test minio -- --ignored
+#[cfg(test)]
+mod minio_acceptance {
+    use crate::accounts::Account;
+
+    fn target() -> Option<(Account, String, String)> {
+        let endpoint = std::env::var("BM_ACCEPT_ENDPOINT").ok()?;
+        let account = Account {
+            id: "acceptance".into(),
+            name: "Acceptance".into(),
+            access_key_id: std::env::var("BM_ACCEPT_ACCESS_KEY").ok()?,
+            region: std::env::var("BM_ACCEPT_REGION").unwrap_or_else(|_| "us-east-1".into()),
+            endpoint: Some(endpoint),
+            bucket: None,
+            path_style: true,
+        };
+        Some((account, std::env::var("BM_ACCEPT_SECRET").ok()?, std::env::var("BM_ACCEPT_BUCKET").ok()?))
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn windows_s3_layer_against_a_real_server() {
+        let Some((account, secret, bucket)) = target() else {
+            eprintln!("BM_ACCEPT_* not set; skipping");
+            return;
+        };
+        let run = format!("win-accept-{}/", std::process::id());
+        let client = super::client_for_bucket(&account, &secret, &bucket).await;
+
+        // Uploads work with the custom-endpoint checksum setting.
+        for key in ["photos/2024/a.jpg", "photos/2024/b.jpg"] {
+            client
+                .put_object()
+                .bucket(&bucket)
+                .key(format!("{run}{key}"))
+                .body(b"image bytes".to_vec().into())
+                .send()
+                .await
+                .map_err(|error| super::s3_error(&error))
+                .expect("PutObject succeeds against the custom endpoint");
+        }
+        super::create_folder(&account, &secret, &bucket, &format!("{run}photos/2024/"))
+            .await
+            .expect("folder marker is created");
+
+        // Moving a folder deletes its marker exactly, never the files below it.
+        super::delete_exact_object(&account, &secret, &bucket, &format!("{run}photos/2024/"))
+            .await
+            .expect("exact delete of the marker succeeds");
+        let page = super::list_objects(&account, &secret, &bucket, &format!("{run}photos/2024/"), None)
+            .await
+            .expect("listing succeeds");
+        assert_eq!(page.entries.len(), 2, "deleting a folder marker keeps the objects below it");
+
+        // A multipart upload is cleaned up, and a second abort counts as gone.
+        let created = client
+            .create_multipart_upload()
+            .bucket(&bucket)
+            .key(format!("{run}big.bin"))
+            .send()
+            .await
+            .expect("multipart upload starts");
+        let upload_id = created.upload_id().expect("upload id").to_string();
+        super::abort_upload(&account, &secret, &bucket, &format!("{run}big.bin"), &upload_id)
+            .await
+            .expect("abort succeeds");
+        super::abort_upload(&account, &secret, &bucket, &format!("{run}big.bin"), &upload_id)
+            .await
+            .expect("aborting an upload that is already gone counts as done");
+
+        // Errors name the S3 code instead of "service error".
+        let missing = super::list_objects(&account, &secret, "bm-no-such-bucket-acceptance", "", None)
+            .await
+            .expect_err("listing a missing bucket fails");
+        assert!(missing.contains("NoSuchBucket"), "error is readable: {missing}");
+
+        for key in ["photos/2024/a.jpg", "photos/2024/b.jpg"] {
+            let _ = super::delete_exact_object(&account, &secret, &bucket, &format!("{run}{key}")).await;
+        }
     }
 }

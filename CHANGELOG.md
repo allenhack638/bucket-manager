@@ -18,6 +18,9 @@
 - Windows: the Logs window can be reopened after closing it, closing the main window quits the app (asking first if transfers are running), errors show the S3 code and message instead of "service error", and AWS buckets in another region open correctly.
 - The Tasks list keeps its selection while transfers run, queueing large folders no longer freezes the app, finished transfers only refresh the folder they changed, and browsing never waits behind bulk deletes or uploads.
 - Row checkboxes now select rows for every action; Restore Version keeps the storage class and encryption key and explains why versions over 5 GB or still in Glacier can't be restored; Undelete removes stacked delete markers.
+- Windows: the Tasks list no longer reorders under the cursor, finished uploads only refresh the folder they changed and keep the selection, F5 and Ctrl+R refresh instead of resetting the app, and at most four transfers run at once.
+- Windows: remove an account from the Edit account dialog, and delete an empty bucket from the sidebar (type its name to confirm).
+- Windows: downloads carry the Mark-of-the-Web so SmartScreen checks them, account settings are saved crash-safely, the unused diagnostic logging controls are removed, and Session statistics no longer mix in all-time totals.
 
 ## Windows preview 0.1.4 — 2026-10-24
 
