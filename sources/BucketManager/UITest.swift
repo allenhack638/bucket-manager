@@ -42,7 +42,12 @@ enum UITest {
         growing.testSelectKind(.amazonS3)
         let amazonHeight = growing.window?.contentLayoutRect.height ?? 0
         growing.testSelectKind(.compatible)
-        check(growing.testFormFitsWithoutScrolling && (growing.window?.contentLayoutRect.height ?? 0) > amazonHeight,
+        // On a short screen (such as CI's) the sheet stops at the screen limit
+        // and the form scrolls instead.
+        let screenLimit = (NSScreen.main?.visibleFrame.height ?? 900) - 80
+        let compatibleHeight = growing.window?.contentLayoutRect.height ?? 0
+        check(compatibleHeight > amazonHeight
+                  && (growing.testFormFitsWithoutScrolling || abs(compatibleHeight - screenLimit) <= 1),
               "switching to S3-compatible grows the sheet so endpoint, bucket, addressing and SSL all show")
         growing.testSelectKind(.amazonS3)
         check(growing.window?.contentLayoutRect.height == amazonHeight, "switching back to Amazon S3 shrinks the sheet again")
