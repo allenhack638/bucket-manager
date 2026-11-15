@@ -16,6 +16,7 @@ export const api = {
   getDateFormat: () => invoke<string>("get_date_format"),
   getAutoUpdateCheck: () => invoke<boolean>("get_auto_update_check"),
   openUpdateDownload: (url: string) => invoke<void>("open_update_download", { url }),
+  fetchReleaseFeed: () => invoke<string>("fetch_release_feed"),
   listAccounts: () => invoke<Account[]>("list_accounts"),
   saveAccount: (input: AccountInput) => invoke<Account>("save_account", { input }),
   deleteAccount: (id: string) => invoke<void>("delete_account", { id }),

@@ -92,7 +92,67 @@ export function pickUpdate(releases: Release[], installed: string): AvailableUpd
   return { version: best.version, notes: notesExcerpt(best.release.body ?? ""), downloadUrl };
 }
 
-export async function fetchUpdate(installed: string): Promise<AvailableUpdate | null> {
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&nbsp;/g, " ")
+    .replace(/&#([0-9]{1,6});/g, (whole, digits: string) => {
+      const value = Number(digits);
+      return value === 38 || value > 0x10ffff ? whole : String.fromCodePoint(value);
+    })
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** Release notes HTML as plain lines: list items keep a "- " marker. */
+export function htmlToText(html: string): string {
+  const text = html
+    .replace(/<li[^>]*>/g, "- ")
+    .replace(/<br\s*\/?>\n?|<\/(p|li|h[1-6]|ul|ol|pre|div)>/g, "\n")
+    .replace(/<[^>]+>/g, "");
+  return decodeEntities(text)
+    .replace(/\n\s*\n(?=- )/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * The newest Windows release in GitHub's Atom releases feed, newer than
+ * `installed`. The feed has no asset list, so Download opens the release
+ * page, where the installers are. It lists only the ten newest releases of
+ * both apps. Throws when the body is not a releases feed (a Wi-Fi login
+ * page, say), so that is never mistaken for "up to date".
+ */
+export function pickUpdateFromFeed(xml: string, installed: string): AvailableUpdate | null {
+  if (!xml.includes("<feed") || !xml.includes("/releases/tag/")) {
+    throw new Error("GitHub's releases page could not be read.");
+  }
+  let best: { version: string; page: string; notes: string } | null = null;
+  for (const entry of xml.split("<entry>").slice(1)) {
+    const href = /<link[^>]*href="([^"]+)"/.exec(entry)?.[1];
+    if (!href) continue;
+    const page = decodeEntities(href);
+    if (!isTrustedDownload(page) || !page.includes("/releases/tag/")) continue;
+    let tag: string;
+    try {
+      tag = decodeURIComponent(page.split("/").pop() ?? "");
+    } catch {
+      continue;
+    }
+    if (!tag.startsWith(TAG_PREFIX)) continue;
+    const version = tag.slice(TAG_PREFIX.length);
+    if (!versionParts(version)) continue;
+    if (best && !isNewer(version, best.version)) continue;
+    const content = /<content[^>]*>([\s\S]*?)<\/content>/.exec(entry)?.[1] ?? "";
+    best = { version, page, notes: htmlToText(decodeEntities(content)) };
+  }
+  if (!best || !isNewer(best.version, installed)) return null;
+  return { version: best.version, notes: notesExcerpt(best.notes), downloadUrl: best.page };
+}
+
+async function fetchFromApi(installed: string): Promise<AvailableUpdate | null> {
   const response = await fetch(RELEASES_URL, {
     headers: { Accept: "application/vnd.github+json" },
     cache: "no-store",
@@ -103,4 +163,26 @@ export async function fetchUpdate(installed: string): Promise<AvailableUpdate | 
   }
   if (!response.ok) throw new Error(`GitHub answered with HTTP ${response.status}.`);
   return pickUpdate((await response.json()) as Release[], installed);
+}
+
+/**
+ * Asks the GitHub API first; if that fails (GitHub allows 60 API requests an
+ * hour per network, which offices and VPNs use up), falls back to GitHub's
+ * releases feed, which the backend downloads (`loadFeed`) because github.com
+ * does not allow the web view to fetch it directly.
+ */
+export async function fetchUpdate(
+  installed: string,
+  loadFeed: () => Promise<string>,
+): Promise<AvailableUpdate | null> {
+  try {
+    return await fetchFromApi(installed);
+  } catch (apiError) {
+    try {
+      return pickUpdateFromFeed(await loadFeed(), installed);
+    } catch {
+      // Report the API's reason, e.g. GitHub limiting requests.
+      throw apiError;
+    }
+  }
 }

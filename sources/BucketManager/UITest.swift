@@ -1401,6 +1401,47 @@ enum UITest {
               "update downloads only open from GitHub over HTTPS")
         check(UpdateChecker.notesExcerpt("# Title\r\n\r\n\r\n## Fixed\r\n- **Bold** and `code`\n```bash\nxattr x\n```") == "Title\n\nFixed\n- Bold and code\nxattr x",
               "release notes show as plain text")
+        let feedXML = #"""
+        <?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/allenhack638/bucket-manager/releases/tag/windows-v0.3.0"/>
+            <content type="html">&lt;p&gt;Windows notes&lt;/p&gt;</content>
+          </entry>
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.2.0"/>
+            <content type="html">&lt;h2&gt;What&amp;#39;s new&lt;/h2&gt;
+        &lt;ul&gt;
+        &lt;li&gt;&lt;strong&gt;Faster&lt;/strong&gt; lists &amp;amp; uploads&lt;/li&gt;
+        &lt;li&gt;Fixes&lt;/li&gt;
+        &lt;/ul&gt;</content>
+          </entry>
+          <entry>
+            <link rel="alternate" type="text/html" href="https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.1.0"/>
+            <content type="html">&lt;p&gt;Older&lt;/p&gt;</content>
+          </entry>
+          <entry>
+            <link rel="alternate" type="text/html" href="https://evil.example/allenhack638/bucket-manager/releases/tag/macos-v9.0.0"/>
+            <content type="html">&lt;p&gt;Not GitHub&lt;/p&gt;</content>
+          </entry>
+        </feed>
+
+        """#.data(using: .utf8)!
+        let fromFeed = try? UpdateChecker.update(fromFeed: feedXML, installed: "1.1.0")
+        check(fromFeed?.version == "1.2.0"
+                  && fromFeed?.downloadURL.absoluteString == "https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.2.0"
+                  && fromFeed?.notes == "What's new\n- Faster lists & uploads\n- Fixes",
+              "when the GitHub API is limited, the releases feed finds the newest Mac release and its notes")
+        check((try? UpdateChecker.update(fromFeed: feedXML, installed: "1.2.0")) == .some(nil),
+              "the releases feed reports up to date for the newest version")
+        check((try? UpdateChecker.update(fromFeed: Data("<html>Wi-Fi login</html>".utf8), installed: "1.1.0")) == nil,
+              "a page that is not the releases feed is an error, never \"up to date\"")
+        let prereleaseFeed = Data(#"<feed><entry><link href="https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.3.0-beta.1"/><content type="html"></content></entry><entry><link href="https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.2.0"/><content type="html"></content></entry></feed>"#.utf8)
+        check((try? UpdateChecker.update(fromFeed: prereleaseFeed, installed: "1.1.0"))??.version == "1.2.0",
+              "the releases feed never offers a Mac pre-release")
+        check(UpdateChecker.htmlToText("<p>Click Done on the<br>\nwarning&nbsp;now &#8594; ok</p>\n<ul><li class=\"task-list-item\">One</li></ul>")
+                  == "Click Done on the\nwarning now \u{2192} ok\n- One",
+              "feed notes keep wrapped lines together and decode entities")
 
         // The date format follows the Options choice.
         let savedFormat = UserDefaults.standard.string(forKey: DateDisplayFormat.defaultsKey)

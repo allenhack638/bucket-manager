@@ -111,7 +111,7 @@ async function checkForUpdates(requestedManually: boolean) {
     const installed = await getVersion();
     let update;
     try {
-      update = await fetchUpdate(installed);
+      update = await fetchUpdate(installed, api.fetchReleaseFeed);
     } finally {
       manual = manual || manualCheckPending;
       manualCheckPending = false;
@@ -130,7 +130,7 @@ async function checkForUpdates(requestedManually: boolean) {
     localStorage.setItem(NOTIFIED_UPDATE_KEY, update.version);
     const notes = update.notes ? `\n\n${update.notes}` : "";
     const download = await ask(
-      `You have ${installed}. Download the new installer and run it to update.${notes}`,
+      `You have ${installed}. Download the new version and run its installer to update.${notes}`,
       { title: `Bucket Manager ${update.version} is available`, kind: "info", okLabel: "Download", cancelLabel: "Later" },
     );
     if (download) await api.openUpdateDownload(update.downloadUrl);
