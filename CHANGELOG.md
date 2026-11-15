@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## 1.1.0 — 2026-11-15
+
 - Quarantine downloaded objects so Gatekeeper checks them before they can open.
 - Remove the pre-rebrand data import and unused SmithyStreams and futures-util dependencies.
 - Label the admin passcode Keychain item and document how to reset a forgotten passcode.
@@ -12,22 +14,27 @@
 - Files → Show Deleted Objects (⇧⌘.) lists objects hidden by a delete marker as dimmed rows, and Undelete brings them back by removing the marker.
 - Rename, Move, and Paste handle `+` in object keys correctly on AWS and never overwrite an existing object; right-click and version actions always act on the row you chose.
 - Downloads never overwrite each other or replace a local folder: colliding names get a numbered suffix, and a leftover partial download is never reused.
-- Windows: moving a folder no longer deletes files before they are copied; Pause works for downloads, same-named downloads no longer corrupt each other, transfer history survives crashes, and a second launch focuses the running app.
-- Windows: object names are cleaned before they reach the Save dialog, so a name shaped like a network path can no longer make Windows contact another server.
-- Windows: failed or interrupted multipart uploads are always cleaned up instead of leaving billed parts behind, and files larger than 78 GiB now upload.
-- Windows: the Logs window can be reopened after closing it, closing the main window quits the app (asking first if transfers are running), errors show the S3 code and message instead of "service error", and AWS buckets in another region open correctly.
 - The Tasks list keeps its selection while transfers run, queueing large folders no longer freezes the app, finished transfers only refresh the folder they changed, and browsing never waits behind bulk deletes or uploads.
 - Row checkboxes now select rows for every action; Restore Version keeps the storage class and encryption key and explains why versions over 5 GB or still in Glacier can't be restored; Undelete removes stacked delete markers.
-- Windows: the Tasks list no longer reorders under the cursor, finished uploads only refresh the folder they changed and keep the selection, F5 and Ctrl+R refresh instead of resetting the app, and at most four transfers run at once.
-- Windows: remove an account from the Edit account dialog, and delete an empty bucket from the sidebar (type its name to confirm).
-- Windows: downloads carry the Mark-of-the-Web so SmartScreen checks them, account settings are saved crash-safely, the unused diagnostic logging controls are removed, and Session statistics no longer mix in all-time totals.
 - Choose how dates are shown: month-first 12-hour, day-first 24-hour, ISO, or the system's own format (Mac: Options; Windows: View → Date Format).
 - Clicking a row checkbox adds or removes just that row instead of clearing the selection, and empty sizes read "0 bytes" instead of "Zero KB".
 - The status bar counts "items" rather than "files" (folders included), Download and Delete stay greyed out until something they can act on is selected, and empty folders inside very large folders show "0 bytes" instead of "—".
 - Check for Updates (Mac: Bucket Manager menu; Windows: Help menu) shows when a newer release is on GitHub, with its notes and a Download button; an optional once-a-day check announces each new version once (Mac: Options; Windows: Help → Check for Updates Automatically).
 - The Add/Edit Account sheet looks and works the same from the sidebar and from Storage Accounts, sizes itself so every field (including Addressing and SSL) is visible, and key fields no longer show spelling, completion or password AutoFill popups over the secret.
 - Edit Account no longer saves and closes when you click from one field to another; only Return or Save changes saves.
-- Windows: a click outside the account or Copy/Move dialog no longer closes it and discards what was typed, and Esc closes it.
+
+## Windows preview 0.2.0 — 2026-11-15
+
+- Moving a folder no longer deletes files before they are copied; Pause works for downloads, same-named downloads no longer corrupt each other, transfer history survives crashes, and a second launch focuses the running app.
+- Object names are cleaned before they reach the Save dialog, so a name shaped like a network path can no longer make Windows contact another server.
+- Failed or interrupted multipart uploads are always cleaned up instead of leaving billed parts behind, and files larger than 78 GiB now upload.
+- The Logs window can be reopened after closing it, closing the main window quits the app (asking first if transfers are running), errors show the S3 code and message instead of "service error", and AWS buckets in another region open correctly.
+- The Tasks list no longer reorders under the cursor, finished uploads only refresh the folder they changed and keep the selection, F5 and Ctrl+R refresh instead of resetting the app, and at most four transfers run at once.
+- Remove an account from the Edit account dialog, and delete an empty bucket from the sidebar (type its name to confirm).
+- Downloads carry the Mark-of-the-Web so SmartScreen checks them, account settings are saved crash-safely, the unused diagnostic logging controls are removed, and Session statistics no longer mix in all-time totals.
+- A click outside the account or Copy/Move dialog no longer closes it and discards what was typed, and Esc closes it.
+- Choose how dates are shown: month-first 12-hour, day-first 24-hour, ISO, or the system's own format (Mac: Options; Windows: View → Date Format).
+- Check for Updates (Mac: Bucket Manager menu; Windows: Help menu) shows when a newer release is on GitHub, with its notes and a Download button; an optional once-a-day check announces each new version once (Mac: Options; Windows: Help → Check for Updates Automatically).
 
 ## Windows preview 0.1.4 — 2026-10-24
 
