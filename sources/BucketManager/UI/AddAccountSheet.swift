@@ -1,7 +1,13 @@
 import AppKit
 
 @MainActor
-final class AddAccountWindowController: NSWindowController {
+final class AddAccountWindowController: NSWindowController, NSWindowDelegate {
+    /// The same width everywhere; the height fits the fields shown for the
+    /// chosen account type, so nothing is ever hidden below the fold.
+    static let contentSize = NSSize(width: 620, height: 580)
+    private static let chromeHeight: CGFloat = 72 + 8 + 8 + 16 + 8 + 30 + 16
+    private static let minimumHeight: CGFloat = 420
+
     private let existing: Account?
     private let existingSecret: String?
     private let onSave: (Account, String?) -> Void
@@ -22,6 +28,7 @@ final class AddAccountWindowController: NSWindowController {
     private let spinner = NSProgressIndicator()
 
     private let formStack = NSStackView()
+    private var formScroll: NSScrollView?
     private var endpointRow: NSView?
     private var endpointHelpRow: NSView?
     private var bucketRow: NSView?
@@ -43,7 +50,7 @@ final class AddAccountWindowController: NSWindowController {
         self.onSave = onSave
         self.onCancel = onCancel
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 600),
+            contentRect: NSRect(origin: .zero, size: Self.contentSize),
             styleMask: [.titled],
             backing: .buffered,
             defer: false
@@ -51,6 +58,7 @@ final class AddAccountWindowController: NSWindowController {
         window.title = account == nil ? "Add New Account" : "Edit Account"
         window.isReleasedWhenClosed = false
         super.init(window: window)
+        window.delegate = self
         build()
         populate()
     }
@@ -60,10 +68,7 @@ final class AddAccountWindowController: NSWindowController {
     func present(in parent: NSWindow) {
         parentWindow = parent
         guard let window else { return }
-        let parentRect = parent.contentLayoutRect
-        let width = min(640, max(520, parentRect.width - 40))
-        let height = min(600, max(420, parentRect.height - 40))
-        window.setContentSize(NSSize(width: width, height: height))
+        fitToContent(animate: false, parent: parent)
         parent.beginSheet(window)
         window.makeKey()
         window.makeFirstResponder(existing == nil ? nameField : accessField)
@@ -169,6 +174,7 @@ final class AddAccountWindowController: NSWindowController {
         configureFields()
 
         let scroll = NSScrollView()
+        formScroll = scroll
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
         scroll.borderType = .noBorder
@@ -188,7 +194,7 @@ final class AddAccountWindowController: NSWindowController {
         let rows: [(NSView, String?)] = [
             (formRow("Display name:", nameField), "Assign any name to your account."),
             (formRow("Account type:", typePopup), "Choose the storage you want to work with. Default is Amazon S3 Storage."),
-            (formRow("Access Key ID:", accessField), "Required to sign the requests you send to Amazon S3."),
+            (formRow("Access Key ID:", accessField), "Required to sign the requests you send to your storage."),
             (formRow("Secret Access Key:", secretField), existing == nil
                 ? "Stored in the macOS Keychain, never in the app's JSON file."
                 : "Leave blank to keep the current secret in the Keychain."),
@@ -216,7 +222,6 @@ final class AddAccountWindowController: NSWindowController {
         pathStyleRow = pathStyle
         addRow(pathStyle, help: nil)
         addRow(formRow("", sslCheck), help: nil)
-        addRawRow(helpRow("Secret keys are stored in the macOS Keychain; no secret is written to accounts.json."))
 
         NSLayoutConstraint.activate([
             document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
@@ -328,6 +333,53 @@ final class AddAccountWindowController: NSWindowController {
             field.target = self
             field.action = #selector(returnKey)
         }
+
+        // Keys, regions and URLs are not prose: no spelling, autocorrect,
+        // completion or prediction popups, which can cover the next field.
+        for field in Self.literalFields(of: self) {
+            field.isAutomaticTextCompletionEnabled = false
+        }
+        // There is no supported way to remove the "Passwords…" AutoFill
+        // button from a secure field; marking it as a one-time code stops
+        // macOS treating Access Key + Secret as a website login.
+        secretField.contentType = .oneTimeCode
+    }
+
+    private static func literalFields(of controller: AddAccountWindowController) -> [NSTextField] {
+        [controller.nameField, controller.accessField, controller.secretField, controller.regionField,
+         controller.endpointField, controller.bucketField]
+    }
+
+    /// Plain fields edit through a field editor with every automatic text
+    /// feature off from the moment they take focus. The secret field keeps
+    /// AppKit's own secure editor, which never offers suggestions.
+    private lazy var literalEditor: NSTextView = {
+        let editor = NSTextView()
+        editor.isFieldEditor = true
+        Self.makeLiteral(editor)
+        return editor
+    }()
+
+    func windowWillReturnFieldEditor(_ sender: NSWindow, to client: Any?) -> Any? {
+        guard let field = client as? NSTextField, !(field is NSSecureTextField),
+              Self.literalFields(of: self).contains(where: { $0 === field }) else { return nil }
+        return literalEditor
+    }
+
+    /// Turns off every automatic text feature that could change or pop up
+    /// over a credential.
+    static func makeLiteral(_ editor: NSTextView) {
+        editor.isAutomaticSpellingCorrectionEnabled = false
+        editor.isContinuousSpellCheckingEnabled = false
+        editor.isGrammarCheckingEnabled = false
+        editor.isAutomaticTextReplacementEnabled = false
+        editor.isAutomaticQuoteSubstitutionEnabled = false
+        editor.isAutomaticDashSubstitutionEnabled = false
+        editor.isAutomaticLinkDetectionEnabled = false
+        editor.isAutomaticDataDetectionEnabled = false
+        editor.isAutomaticTextCompletionEnabled = false
+        editor.inlinePredictionType = .no
+        if #available(macOS 15.0, *) { editor.writingToolsBehavior = .none }
     }
 
     private func style(_ field: NSTextField) {
@@ -386,6 +438,38 @@ final class AddAccountWindowController: NSWindowController {
 
     @objc private func typeChanged() {
         updateVisibility()
+        fitToContent(animate: window?.isVisible == true, parent: parentWindow)
+    }
+
+    /// Height of the window when every visible field shows without scrolling,
+    /// capped so the sheet, hanging from the parent's title bar, never runs
+    /// past the bottom of the screen and hides Save.
+    func fittingContentHeight(parent: NSWindow?) -> CGFloat {
+        guard let window, let document = formScroll?.documentView else { return Self.contentSize.height }
+        window.setContentSize(NSSize(width: Self.contentSize.width, height: window.contentLayoutRect.height))
+        window.contentView?.layoutSubtreeIfNeeded()
+        let wanted = (Self.chromeHeight + document.fittingSize.height).rounded(.up)
+        var available: CGFloat = 900
+        if let parent, let screen = parent.screen ?? NSScreen.main {
+            let sheetTop = min(parent.frame.maxY, screen.visibleFrame.maxY) - (parent.frame.height - parent.contentLayoutRect.height)
+            available = sheetTop - screen.visibleFrame.minY - 12
+        } else if let screen = NSScreen.main {
+            available = screen.visibleFrame.height - 80
+        }
+        return max(Self.minimumHeight, min(wanted, available))
+    }
+
+    private func fitToContent(animate: Bool, parent: NSWindow?) {
+        guard let window else { return }
+        let height = fittingContentHeight(parent: parent)
+        var frame = window.frame
+        let newFrame = window.frameRect(forContentRect: NSRect(origin: .zero, size: NSSize(width: Self.contentSize.width, height: height)))
+        // Keep the top edge where it is, as sheets hang from the title bar.
+        frame.origin.y += frame.height - newFrame.height
+        frame.size = newFrame.size
+        window.setFrame(frame, display: true, animate: animate)
+        // When the screen is too short for every field, show that the form scrolls.
+        formScroll?.flashScrollers()
     }
 
     @objc private func returnKey() {
@@ -527,6 +611,25 @@ final class AddAccountWindowController: NSWindowController {
     }
 
     func testSave() { save() }
+    func testSelectKind(_ kind: Account.Kind) {
+        if let index = Account.Kind.allCases.firstIndex(of: kind) { typePopup.selectItem(at: index) }
+        typeChanged()
+    }
+    /// Whether every visible field fits in the window without scrolling.
+    var testFormFitsWithoutScrolling: Bool {
+        guard let scroll = formScroll, let document = scroll.documentView else { return false }
+        window?.contentView?.layoutSubtreeIfNeeded()
+        return document.fittingSize.height <= scroll.contentView.bounds.height + 0.5
+    }
+    var testLiteralFieldsHaveNoTextHelpers: Bool {
+        guard let window else { return false }
+        let plainFields = Self.literalFields(of: self).filter { !($0 is NSSecureTextField) }
+        return Self.literalFields(of: self).allSatisfy { !$0.isAutomaticTextCompletionEnabled }
+            && plainFields.allSatisfy { (windowWillReturnFieldEditor(window, to: $0) as? NSTextView) === literalEditor }
+            && windowWillReturnFieldEditor(window, to: secretField) == nil
+            && !literalEditor.isContinuousSpellCheckingEnabled && literalEditor.inlinePredictionType == .no
+            && secretField.contentType == .oneTimeCode
+    }
     func testCancel() { cancel() }
     var testErrorText: String { errorLabel.stringValue }
     var testEndpointControlsVisible: Bool {
@@ -564,7 +667,10 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
     private var nameColumn: NSTableColumn?
     private var typeColumn: NSTableColumn?
     private weak var parentWindow: NSWindow?
-    private var childSheet: AddAccountWindowController?
+    /// Add and Edit open the same account sheet as the sidebar, on the main
+    /// window, so it looks and behaves the same from everywhere. The main
+    /// window closes this sheet first and reopens it afterwards.
+    var onEditAccount: ((Account?) -> Void)?
     private var editButton: FlatButton?
     private var deleteButton: FlatButton?
 
@@ -755,6 +861,12 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
 
     #if DEBUG
     func testRowCount() -> Int { table.numberOfRows }
+    func testAdd() { addAccount() }
+    func testEdit(row: Int) {
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        editAccount()
+    }
+    var testSelectedRow: Int { table.selectedRow }
     #endif
 
     private func updateActions() {
@@ -769,43 +881,22 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
     }
 
     @objc private func addAccount() {
-        presentAccountSheet(account: nil)
+        onEditAccount?(nil)
     }
 
     @objc private func editAccount() {
         guard let account = selectedAccount else { return }
-        let secret = try? accounts.secret(for: account)
-        presentAccountSheet(account: account, secret: secret)
+        onEditAccount?(account)
     }
 
-    private func presentAccountSheet(account: Account?, secret: String? = nil) {
-        guard let parent = window else { return }
-        let sheet = AddAccountWindowController(
-            account: account,
-            secret: secret,
-            onSave: { [weak self] updated, newSecret in
-                guard let self else { return }
-                do {
-                    let wasSelected = self.model.selectedAccount?.id == updated.id
-                    if account == nil {
-                        try self.accounts.add(updated, secret: newSecret ?? "")
-                    } else {
-                        try self.accounts.update(updated, secret: newSecret)
-                        self.model.invalidateFolderStats(accountID: updated.id)
-                    }
-                    self.model.reloadAccounts()
-                    if wasSelected, let selected = self.model.selectedAccount {
-                        self.model.selectAccount(selected)
-                    }
-                    self.reload()
-                } catch {
-                    self.showError("Could not save account", error.localizedDescription)
-                }
-            },
-            onCancel: {}
-        )
-        childSheet = sheet
-        sheet.present(in: parent)
+    var selectedAccountID: UUID? { selectedAccount?.id }
+
+    /// Selects an account's row, e.g. the one just added or edited.
+    func select(accountID: UUID) {
+        guard let row = accounts.accounts.firstIndex(where: { $0.id == accountID }) else { return }
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        table.scrollRowToVisible(row)
+        updateActions()
     }
 
     @objc private func deleteAccount() {
@@ -829,7 +920,7 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
     }
 
     private func showMore() {
-        guard let account = selectedAccount else { return }
+        guard let account = selectedAccount, let window else { return }
         let alert = NSAlert()
         alert.messageText = "Account details"
         alert.informativeText = """
@@ -841,19 +932,10 @@ final class StorageAccountsWindowController: NSWindowController, NSWindowDelegat
         Path-style addressing: \(account.usePathStyle ? "yes" : "no")
         """
         alert.addButton(withTitle: "OK")
-        alert.runModal()
-    }
-
-    private func showError(_ title: String, _ message: String) {
-        guard let window else { return }
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        alert.alertStyle = .warning
         alert.beginSheetModal(for: window, completionHandler: nil)
     }
 
-    private func closeSheet() {
+    func closeSheet() {
         guard let window else { return }
         if let parentWindow {
             parentWindow.endSheet(window)

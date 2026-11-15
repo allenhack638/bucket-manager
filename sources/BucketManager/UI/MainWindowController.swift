@@ -334,42 +334,87 @@ final class MainWindowController: NSWindowController {
     // MARK: - Sheets
 
     func presentAddAccount() {
+        presentAccountEditor(account: nil)
+    }
+
+    /// The one place accounts are added and edited, whether from the sidebar
+    /// or from Storage Accounts, so the sheet and what Save does are always
+    /// the same. `then` runs after the sheet closes, saved or cancelled.
+    func presentAccountEditor(account: Account?, then: ((UUID?) -> Void)? = nil) {
         guard let window else { return }
+        guard window.attachedSheet == nil else {
+            NSSound.beep()
+            then?(account?.id)
+            return
+        }
+        let secret = account.flatMap { try? accounts.secret(for: $0) }
         let sheet = AddAccountWindowController(
-            account: nil,
-            secret: nil,
-            onSave: { [weak self] account, secret in
-                guard let self, let secret else { return }
+            account: account,
+            secret: secret,
+            onSave: { [weak self] updated, newSecret in
+                guard let self else { return }
                 do {
-                    try self.accounts.add(account, secret: secret)
-                    self.model.reloadAccounts()
-                    self.model.selectAccount(account)
-                    self.model.appendLog("Added account \(account.displayName)")
+                    if account == nil {
+                        try self.accounts.add(updated, secret: newSecret ?? "")
+                        self.model.reloadAccounts()
+                        self.model.selectAccount(updated)
+                        self.model.appendLog("Added account \(updated.displayName)")
+                    } else {
+                        let wasSelected = self.model.selectedAccount?.id == updated.id
+                        try self.accounts.update(updated, secret: newSecret)
+                        self.model.invalidateFolderStats(accountID: updated.id)
+                        self.model.reloadAccounts()
+                        if wasSelected, let selected = self.model.selectedAccount {
+                            self.model.selectAccount(selected)
+                        }
+                        self.model.appendLog("Updated account \(updated.displayName)")
+                    }
                 } catch {
-                    self.presentError("Could not save account", error.localizedDescription)
+                    // Storage Accounts reopens once the error is read.
+                    self.presentError("Could not save account", error.localizedDescription) {
+                        then?(account?.id)
+                    }
+                    return
                 }
+                // After the sheet has gone, so a follow-up sheet can attach.
+                DispatchQueue.main.async { then?(updated.id) }
             },
-            onCancel: {}
+            onCancel: { DispatchQueue.main.async { then?(account?.id) } }
         )
         addAccountSheet = sheet
         sheet.present(in: window)
     }
 
-    func presentStorageAccounts() {
+    func presentStorageAccounts(selecting accountID: UUID? = nil) {
         guard let window else { return }
+        guard window.attachedSheet == nil else { NSSound.beep(); return }
         let sheet = StorageAccountsWindowController(accounts: accounts, model: model)
+        sheet.onEditAccount = { [weak self, weak sheet] account in
+            guard let self, let sheet else { return }
+            let previous = sheet.selectedAccountID
+            sheet.closeSheet()
+            DispatchQueue.main.async {
+                self.presentAccountEditor(account: account) { [weak self] id in
+                    // A cancelled Add returns to the row that was selected.
+                    self?.presentStorageAccounts(selecting: id ?? previous)
+                }
+            }
+        }
         storageSheet = sheet
         sheet.present(in: window)
+        if let accountID { sheet.select(accountID: accountID) }
     }
 
-    private func presentError(_ title: String, _ message: String) {
+    private func presentError(_ title: String, _ message: String, then: (() -> Void)? = nil) {
         AppLog.shared.error("\(title): \(message)")
-        guard let window else { return }
+        guard let window else { then?(); return }
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
         alert.alertStyle = .warning
-        alert.beginSheetModal(for: window, completionHandler: nil)
+        alert.beginSheetModal(for: window) { _ in
+            DispatchQueue.main.async { then?() }
+        }
     }
 
     // MARK: - Menu actions

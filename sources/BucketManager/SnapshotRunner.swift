@@ -108,9 +108,15 @@ enum SnapshotRunner {
             app.terminate(nil)
             return
         }
-        window.setContentSize(size)
+        // Account sheets size themselves to their fields, as in the app.
+        let contentSize = size == .zero
+            ? NSSize(width: AddAccountWindowController.contentSize.width,
+                     height: (retained.last as? AddAccountWindowController)?.fittingContentHeight(parent: nil)
+                         ?? AddAccountWindowController.contentSize.height)
+            : size
+        window.setContentSize(contentSize)
         window.orderFrontRegardless()
-        render(window: window, to: path, size: size)
+        render(window: window, to: path, size: contentSize)
         app.terminate(nil)
     }
 

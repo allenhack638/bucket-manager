@@ -51,7 +51,7 @@ if let path = argumentValue("--snapshot-logs") {
 if let kind = argumentValue("--snapshot-sheet") {
     SnapshotRunner.runSheet(
         path: argumentValue("--out") ?? "build/sheet-\(kind).png",
-        size: parsedSize(default: kind == "accounts" ? NSSize(width: 760, height: 460) : NSSize(width: 640, height: 620)),
+        size: parsedSize(default: kind == "accounts" ? NSSize(width: 760, height: 460) : .zero),
         kind: kind
     )
     exit(0)
