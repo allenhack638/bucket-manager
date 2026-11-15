@@ -141,6 +141,20 @@ async function checkForUpdates(requestedManually: boolean) {
   }
 }
 
+/** Esc closes a sheet, as on the Mac, unless it is busy saving. */
+function useEscapeToClose(onClose: () => void, busy: boolean) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.isComposing && !busy) {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, busy]);
+}
+
 function isDateFormat(value: unknown): value is DateFormat {
   return value === "monthFirst12h" || value === "dayFirst24h" || value === "iso" || value === "system";
 }
@@ -308,9 +322,13 @@ function AccountDialog({
     void save(false);
   };
 
+  useEscapeToClose(onClose, saving);
+
+  // A click outside the sheet does not close it: that silently threw away
+  // whatever had been typed. Cancel or Esc closes it.
   return (
-    <div className="sheet-backdrop" role="presentation" onMouseDown={onClose}>
-      <form className="account-sheet" onSubmit={submit} onMouseDown={(event) => event.stopPropagation()}>
+    <div className="sheet-backdrop" role="presentation">
+      <form className="account-sheet" onSubmit={submit}>
         <div className="sheet-title">
           <img className="sheet-logo" src={appIcon} alt="" />
           <div>
@@ -452,7 +470,7 @@ function AccountDialog({
             </button>
           )}
           <span className="sheet-actions-right">
-            <button className="button secondary" type="button" onClick={onClose}>
+            <button className="button secondary" type="button" onClick={onClose} disabled={saving}>
               Cancel
             </button>
             <button className="button primary" type="submit" disabled={saving}>
@@ -558,12 +576,13 @@ function CrossAccountDialog({
     }
   };
 
+  useEscapeToClose(onClose, busy);
+
   return (
-    <div className="sheet-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="sheet-backdrop" role="presentation">
       <form
         className="account-sheet cross-sheet"
         onSubmit={(event) => void submit(event)}
-        onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="sheet-title">
           <div className="sheet-cloud">

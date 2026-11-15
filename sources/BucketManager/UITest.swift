@@ -333,6 +333,105 @@ enum UITest {
         check(switchModel.prefix.isEmpty, "bucket selection resets the prefix immediately")
         check(switchModel.items.isEmpty, "bucket selection clears the previous listing immediately")
 
+        // Manage Accounts -> Edit, driven with real click and key events:
+        // moving between fields and typing must never save or close the
+        // sheet; only Return saves and only Cancel discards.
+        do {
+            let original = Account(displayName: "Probe", accessKeyID: "KEY", kind: .compatible, endpoint: "https://s3.example.com")
+            let flowStore = AccountStore(inMemoryAccounts: [original], secrets: [original.id: "secret"])
+            let flowModel = BrowserModel(accounts: flowStore)
+            let flow = MainWindowController(accounts: flowStore, model: flowModel)
+            let main = flow.window!
+            func spin(_ seconds: Double = 0.3) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
+            flow.presentStorageAccounts()
+            spin()
+            (main.attachedSheet?.windowController as? StorageAccountsWindowController)?.testEdit(row: 0)
+            spin()
+            let editorWindow = main.attachedSheet
+            let editor = editorWindow?.windowController as? AddAccountWindowController
+            check(editorWindow?.title == "Edit Account", "Manage Accounts > Edit opens the account sheet on the main window")
+            if let editor, let ew = editorWindow {
+                func click(_ field: NSTextField) {
+                    let point = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+                    let now = ProcessInfo.processInfo.systemUptime
+                    let down = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: now, windowNumber: ew.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
+                    let up = NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: now, windowNumber: ew.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!
+                    NSApp.postEvent(up, atStart: false)
+                    ew.sendEvent(down)
+                    spin(0.15)
+                }
+                func key(_ characters: String, code: UInt16) {
+                    for type in [NSEvent.EventType.keyDown, .keyUp] {
+                        let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: ew.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+                        NSApp.sendEvent(event)
+                    }
+                    spin(0.15)
+                }
+                for index in [0, 1, 2, 3, 0] {
+                    click(editor.testField(index))
+                    key("x", code: 7)
+                }
+                check(main.attachedSheet === ew && flowStore.accounts[0].displayName == "Probe",
+                      "clicking between fields and typing in Edit Account never saves or closes it")
+                click(editor.testField(0))
+                key("\r", code: 36)
+                check(main.attachedSheet?.title == "Storage Accounts"
+                          && flowStore.accounts[0].displayName.hasPrefix("Probe")
+                          && flowStore.accounts[0].displayName != "Probe",
+                      "Return saves the edited account and returns to Storage Accounts")
+            }
+            // Esc discards an edit.
+            let savedName = flowStore.accounts[0].displayName
+            (main.attachedSheet?.windowController as? StorageAccountsWindowController)?.testEdit(row: 0)
+            spin()
+            if let escWindow = main.attachedSheet, escWindow.title == "Edit Account",
+               let escEditor = escWindow.windowController as? AddAccountWindowController {
+                escWindow.makeFirstResponder(escEditor.testField(0))
+                for (characters, code) in [("z", UInt16(6)), ("\u{1b}", UInt16(53))] {
+                    for type in [NSEvent.EventType.keyDown, .keyUp] {
+                        let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: escWindow.windowNumber, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
+                        NSApp.sendEvent(event)
+                    }
+                    spin(0.15)
+                }
+                spin()
+                check(main.attachedSheet?.title == "Storage Accounts" && flowStore.accounts[0].displayName == savedName,
+                      "Esc closes Edit Account without saving and returns to Storage Accounts")
+            } else {
+                check(false, "Esc closes Edit Account without saving and returns to Storage Accounts")
+            }
+            (main.attachedSheet?.windowController as? StorageAccountsWindowController)?.closeSheet()
+            spin()
+
+            // Add from the sidebar: typing and clicking around never adds an
+            // account until Add is confirmed.
+            flow.presentAddAccount()
+            spin()
+            if let addWindow = main.attachedSheet, let addEditor = addWindow.windowController as? AddAccountWindowController {
+                // Every required field filled, so any stray save would succeed.
+                addEditor.testFill(name: "New", access: "K", secret: "S", region: "us-east-1", endpoint: "", kind: .amazonS3)
+                for index in [0, 1, 3, 2, 0] {
+                    let field = addEditor.testField(index)
+                    let point = field.convert(NSPoint(x: field.bounds.midX, y: field.bounds.midY), to: nil)
+                    let now = ProcessInfo.processInfo.systemUptime
+                    NSApp.postEvent(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: now, windowNumber: addWindow.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0)!, atStart: false)
+                    addWindow.sendEvent(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: now, windowNumber: addWindow.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+                    spin(0.15)
+                    for type in [NSEvent.EventType.keyDown, .keyUp] {
+                        NSApp.sendEvent(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: addWindow.windowNumber, context: nil, characters: "a", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0)!)
+                    }
+                    spin(0.15)
+                }
+                check(main.attachedSheet === addWindow && flowStore.accounts.count == 1,
+                      "clicking between fields and typing in Add Account never adds an account")
+                addEditor.testCancel()
+                spin()
+                check(main.attachedSheet == nil && flowStore.accounts.count == 1, "Cancel in Add Account adds nothing")
+            } else {
+                check(false, "clicking between fields and typing in Add Account never adds an account")
+            }
+        }
+
         let chromeStore = AccountStore(inMemoryAccounts: [])
         let chrome = MainWindowController(
             accounts: chromeStore,
