@@ -332,6 +332,9 @@ final class AddAccountWindowController: NSWindowController, NSWindowDelegate {
         for field in [nameField, accessField, regionField, endpointField, bucketField, secretField] as [NSTextField] {
             field.target = self
             field.action = #selector(returnKey)
+            // Only Return saves. Without this, clicking from one field to
+            // another "ends editing" and saved the half-edited account.
+            field.cell?.sendsActionOnEndEditing = false
         }
 
         // Keys, regions and URLs are not prose: no spelling, autocorrect,
@@ -611,6 +614,7 @@ final class AddAccountWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func testSave() { save() }
+    func testField(_ index: Int) -> NSTextField { [nameField, accessField, regionField, secretField][index] }
     func testSelectKind(_ kind: Account.Kind) {
         if let index = Account.Kind.allCases.firstIndex(of: kind) { typePopup.selectItem(at: index) }
         typeChanged()

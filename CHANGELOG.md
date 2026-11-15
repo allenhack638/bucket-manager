@@ -26,6 +26,8 @@
 - The status bar counts "items" rather than "files" (folders included), Download and Delete stay greyed out until something they can act on is selected, and empty folders inside very large folders show "0 bytes" instead of "—".
 - Check for Updates (Mac: Bucket Manager menu; Windows: Help menu) shows when a newer release is on GitHub, with its notes and a Download button; an optional once-a-day check announces each new version once (Mac: Options; Windows: Help → Check for Updates Automatically).
 - The Add/Edit Account sheet looks and works the same from the sidebar and from Storage Accounts, sizes itself so every field (including Addressing and SSL) is visible, and key fields no longer show spelling, completion or password AutoFill popups over the secret.
+- Edit Account no longer saves and closes when you click from one field to another; only Return or Save changes saves.
+- Windows: a click outside the account or Copy/Move dialog no longer closes it and discards what was typed, and Esc closes it.
 
 ## Windows preview 0.1.4 — 2026-10-24
 
