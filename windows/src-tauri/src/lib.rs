@@ -354,6 +354,43 @@ fn is_trusted_download(url: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// GitHub's releases feed for this project. The web view cannot fetch it
+/// itself (github.com sends no CORS headers), and unlike the API it is not
+/// limited to 60 requests an hour per network. The URL is fixed here.
+const RELEASES_FEED_URL: &str = "https://github.com/allenhack638/bucket-manager/releases.atom";
+const RELEASES_FEED_MAX_BYTES: usize = 2 * 1024 * 1024;
+
+async fn fetch_feed(url: &str) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("BucketManager")
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|error| error.to_string())?;
+    let response = client.get(url).send().await.map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("GitHub answered with HTTP {}.", response.status().as_u16()));
+    }
+    let too_large = || "The releases feed is unexpectedly large.".to_string();
+    if response.content_length().is_some_and(|length| length > RELEASES_FEED_MAX_BYTES as u64) {
+        return Err(too_large());
+    }
+    // Stop reading as soon as the cap is passed, whatever the server claims.
+    let mut response = response;
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
+        if body.len() + chunk.len() > RELEASES_FEED_MAX_BYTES {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn fetch_release_feed() -> Result<String, String> {
+    fetch_feed(RELEASES_FEED_URL).await
+}
+
 #[tauri::command]
 fn open_update_download(app: AppHandle, url: String) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
@@ -1296,6 +1333,7 @@ pub fn run() {
             get_date_format,
             get_auto_update_check,
             open_update_download,
+            fetch_release_feed,
             get_logs,
             get_logging_settings,
             save_logging_settings,
@@ -1343,6 +1381,14 @@ mod date_format_tests {
 #[cfg(test)]
 mod update_tests {
     use super::is_trusted_download;
+
+    /// Hits GitHub; run with `cargo test release_feed -- --ignored`.
+    #[tokio::test]
+    #[ignore]
+    async fn release_feed_downloads_over_tls() {
+        let xml = super::fetch_feed(super::RELEASES_FEED_URL).await.expect("feed");
+        assert!(xml.contains("<feed") && xml.contains("/releases/tag/"));
+    }
 
     #[test]
     fn update_downloads_only_open_from_github_over_https() {

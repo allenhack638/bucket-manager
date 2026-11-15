@@ -35,6 +35,7 @@ enum UpdateChecker {
 
     enum CheckError: LocalizedError {
         case http(Int)
+        case notAFeed
 
         var errorDescription: String? {
             switch self {
@@ -42,6 +43,8 @@ enum UpdateChecker {
                 return "GitHub is limiting requests right now. Try again in a few minutes."
             case .http(let status):
                 return "GitHub answered with HTTP \(status)."
+            case .notAFeed:
+                return "GitHub's releases page could not be read."
             }
         }
     }
@@ -123,7 +126,26 @@ enum UpdateChecker {
         return String(trimmed.prefix(limit)).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
+    /// GitHub's releases feed. Unlike the API it is not limited to 60
+    /// requests an hour per network, so it is the fallback when the API is
+    /// busy (offices, VPNs and shared connections hit that limit easily).
+    static let feedURL = URL(string: "https://github.com/allenhack638/bucket-manager/releases.atom")!
+
     static func fetchLatest(installed: String) async throws -> AvailableUpdate? {
+        do {
+            return try await fetchFromAPI(installed: installed)
+        } catch let apiError {
+            AppLog.shared.log("Update check via API failed (\(apiError.localizedDescription)); trying the releases feed")
+            do {
+                return try await fetchFromFeed(installed: installed)
+            } catch {
+                // Report the API's reason, e.g. GitHub limiting requests.
+                throw apiError
+            }
+        }
+    }
+
+    private static func fetchFromAPI(installed: String) async throws -> AvailableUpdate? {
         var request = URLRequest(url: releasesURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("BucketManager", forHTTPHeaderField: "User-Agent")
@@ -134,10 +156,91 @@ enum UpdateChecker {
         return try update(from: data, installed: installed)
     }
 
+    private static func fetchFromFeed(installed: String) async throws -> AvailableUpdate? {
+        var request = URLRequest(url: feedURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.setValue("BucketManager", forHTTPHeaderField: "User-Agent")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw CheckError.http(http.statusCode)
+        }
+        return try update(fromFeed: data, installed: installed)
+    }
+
+    /// The newest Mac release in GitHub's Atom releases feed, newer than
+    /// `installed`. The feed has no asset list, so Download opens the
+    /// release page, where the DMG is. It also has no pre-release flag, so
+    /// tags with a suffix ("-beta.1") are skipped, as the API path skips
+    /// pre-releases. It lists only the ten newest releases of both apps.
+    /// Throws when the body is not a releases feed (a Wi-Fi login page, say),
+    /// so that is never mistaken for "up to date".
+    static func update(fromFeed data: Data, installed: String) throws -> AvailableUpdate? {
+        guard let xml = String(data: data, encoding: .utf8), xml.contains("<feed"),
+              xml.contains("/releases/tag/") else { throw CheckError.notAFeed }
+        var best: (version: String, page: URL, notes: String)?
+        for entry in xml.components(separatedBy: "<entry>").dropFirst() {
+            guard let href = firstCapture(#"<link[^>]*href="([^"]+)""#, in: entry),
+                  let page = URL(string: decodeEntities(href)),
+                  isTrustedDownload(page),
+                  page.path.contains("/releases/tag/") else { continue }
+            let tag = page.lastPathComponent
+            guard tag.hasPrefix(tagPrefix), !tag.contains("-", after: tagPrefix) else { continue }
+            let version = String(tag.dropFirst(tagPrefix.count))
+            guard versionParts(version) != nil else { continue }
+            if let current = best, !isNewer(version, than: current.version) { continue }
+            let content = firstCapture(#"<content[^>]*>([\s\S]*?)</content>"#, in: entry) ?? ""
+            best = (version, page, htmlToText(decodeEntities(content)))
+        }
+        guard let best, isNewer(best.version, than: installed) else { return nil }
+        return AvailableUpdate(version: best.version, notes: notesExcerpt(best.notes), downloadURL: best.page)
+    }
+
+    private static func firstCapture(_ pattern: String, in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
+    }
+
+    private static func decodeEntities(_ text: String) -> String {
+        var text = text.replacingOccurrences(of: "&nbsp;", with: " ")
+        if let numeric = try? NSRegularExpression(pattern: "&#([0-9]{1,6});") {
+            for match in numeric.matches(in: text, range: NSRange(text.startIndex..., in: text)).reversed() {
+                guard let whole = Range(match.range, in: text), let digits = Range(match.range(at: 1), in: text),
+                      let value = Int(text[digits]), value != 38, let scalar = Unicode.Scalar(value) else { continue }
+                text.replaceSubrange(whole, with: String(Character(scalar)))
+            }
+        }
+        return text.replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&amp;", with: "&")
+    }
+
+    /// Release notes HTML as plain lines: list items keep a "- " marker.
+    static func htmlToText(_ html: String) -> String {
+        let text = html
+            .replacingOccurrences(of: #"<li[^>]*>"#, with: "- ", options: .regularExpression)
+            .replacingOccurrences(of: #"<br\s*/?>\n?|</(p|li|h[1-6]|ul|ol|pre|div)>"#, with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        return decodeEntities(text)
+            .replacingOccurrences(of: "\n\\s*\n(?=- )", with: "\n", options: .regularExpression)
+            .replacingOccurrences(of: "\n{3,}", with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Whether the once-a-day automatic check is due.
     static func automaticCheckDue(now: Date = Date()) -> Bool {
         guard automaticChecksEnabled, installedVersion != nil else { return false }
         let last = UserDefaults.standard.object(forKey: lastCheckKey) as? Date ?? .distantPast
         return now.timeIntervalSince(last) >= autoCheckInterval
+    }
+}
+
+private extension String {
+    /// Whether `character` appears after the first `prefix.count` characters.
+    func contains(_ character: Character, after prefix: String) -> Bool {
+        dropFirst(prefix.count).contains(character)
     }
 }
