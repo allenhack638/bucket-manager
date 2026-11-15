@@ -445,6 +445,12 @@ final class TransfersViewController: NSViewController {
         scheduleActiveTabLoad()
     }
 
+    /// Redraws the open tab from what is already loaded, e.g. after the date
+    /// format changes, without fetching anything again.
+    func redrawDetails() {
+        if selectedTab != "tasks" { updateInfo() }
+    }
+
     private func scheduleActiveTabLoad() {
         pendingDetailLoad?.cancel()
         pendingDetailLoad = nil

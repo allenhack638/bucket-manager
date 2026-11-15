@@ -47,6 +47,30 @@ final class BrowserTableView: HoverTrackingTableView {
         super.keyDown(with: event)
     }
 
+    /// A click on a row checkbox goes only to the checkbox. Letting the table
+    /// handle it too would first replace the selection with that row and then
+    /// toggle the row back off, clearing everything. The table still takes
+    /// keyboard focus, as it would for any other click on a row. A
+    /// Control-click is left alone so it opens the context menu.
+    override func mouseDown(with event: NSEvent) {
+        if !event.modifierFlags.contains(.control),
+           let checkbox = Self.checkbox(in: self, at: convert(event.locationInWindow, from: nil)) {
+            window?.makeFirstResponder(self)
+            checkbox.mouseDown(with: event)
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    static func checkbox(in table: NSTableView, at point: NSPoint) -> CheckboxView? {
+        let row = table.row(at: point)
+        let column = table.column(at: point)
+        guard row >= 0, column >= 0,
+              let cell = table.view(atColumn: column, row: row, makeIfNecessary: false) else { return nil }
+        let local = cell.convert(point, from: table)
+        return cell.subviews.first { $0 is CheckboxView && $0.frame.contains(local) } as? CheckboxView
+    }
+
     /// Like Finder: right-clicking a row outside the selection selects it, so
     /// every context-menu action targets the row under the pointer.
     override func menu(for event: NSEvent) -> NSMenu? {
@@ -575,7 +599,7 @@ final class BrowserViewController: NSViewController {
 
         let hasBucket = model.selectedBucket != nil
         objectActionButtons.forEach { $0.isEnabled = hasBucket }
-        openButton?.isEnabled = hasBucket && model.selectedItem != nil
+        openButton?.isEnabled = hasBucket && openTarget.map { $0.kind == .folder || !$0.isDeleted } == true
         refreshButton?.isEnabled = model.selectedAccount != nil
         bookmarkButton?.isEnabled = hasBucket
         renameButton?.isEnabled = hasBucket && model.singleLiveObject != nil
@@ -712,11 +736,15 @@ final class BrowserViewController: NSViewController {
         Task { await model.loadMore() }
     }
 
-    @objc func openSelected() {
+    /// The row Open acts on: the clicked row, else the first selected one.
+    private var openTarget: S3Item? {
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         let visible = model.visibleItems
-        guard row >= 0, row < visible.count else { return }
-        let item = visible[row]
+        return visible.indices.contains(row) ? visible[row] : nil
+    }
+
+    @objc func openSelected() {
+        guard let item = openTarget else { return }
         if item.kind == .folder {
             Task { await model.open(item) }
         } else if !item.isDeleted {

@@ -126,23 +126,74 @@ extension NSColor {
 }
 
 extension Int64 {
+    /// "0 bytes", "3 bytes", "3 MB": digits even for zero, where the system
+    /// formatter would otherwise write "Zero KB".
     var byteString: String {
-        ByteCountFormatter.string(fromByteCount: self, countStyle: .file)
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowsNonnumericFormatting = false
+        return formatter.string(fromByteCount: self)
+    }
+}
+
+/// How dates such as Last Modified are shown, chosen in Options.
+enum DateDisplayFormat: String, CaseIterable {
+    case monthFirst12h
+    case dayFirst24h
+    case iso
+    case system
+
+    static let defaultsKey = "BucketManagerDateFormat"
+
+    static var current: DateDisplayFormat {
+        get {
+            UserDefaults.standard.string(forKey: defaultsKey).flatMap(DateDisplayFormat.init(rawValue:)) ?? .monthFirst12h
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: defaultsKey) }
+    }
+
+    var title: String {
+        switch self {
+        case .monthFirst12h: return "Month first, 12-hour"
+        case .dayFirst24h: return "Day first, 24-hour"
+        case .iso: return "ISO (year first, 24-hour)"
+        case .system: return "Use macOS region settings"
+        }
+    }
+
+    func makeFormatter() -> DateFormatter {
+        let formatter = DateFormatter()
+        switch self {
+        case .monthFirst12h:
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "M/d/yyyy h:mm:ss a"
+        case .dayFirst24h:
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "dd/MM/yyyy HH:mm:ss"
+        case .iso:
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        case .system:
+            formatter.locale = .autoupdatingCurrent
+            formatter.dateStyle = .short
+            formatter.timeStyle = .medium
+        }
+        return formatter
     }
 }
 
 extension Date {
     private static let s3ListFormatterLock = NSLock()
-    private static let s3ListFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "M/d/yyyy h:mm:ss a"
-        return formatter
-    }()
+    nonisolated(unsafe) private static var s3ListFormatter: (DateDisplayFormat, DateFormatter)?
 
+    /// The date in the format chosen in Options.
     var s3ListString: String {
         Self.s3ListFormatterLock.lock()
         defer { Self.s3ListFormatterLock.unlock() }
-        return Self.s3ListFormatter.string(from: self)
+        let format = DateDisplayFormat.current
+        if Self.s3ListFormatter?.0 != format {
+            Self.s3ListFormatter = (format, format.makeFormatter())
+        }
+        return Self.s3ListFormatter!.1.string(from: self)
     }
 }

@@ -51,19 +51,42 @@ function formatSize(bytes: number | null) {
   return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
 }
 
+/// Chosen in View > Date Format; stored by the backend.
+type DateFormat = "monthFirst12h" | "dayFirst24h" | "iso" | "system";
+
+let dateFormat: DateFormat = "monthFirst12h";
+
+function pad(value: number) {
+  return String(value).padStart(2, "0");
+}
+
 function formatDate(value: string | null) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat("en-US", {
-    month: "numeric",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  }).format(date);
+  const time = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  switch (dateFormat) {
+    case "dayFirst24h":
+      return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${time}`;
+    case "iso":
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${time}`;
+    case "system":
+      return new Intl.DateTimeFormat(undefined, { dateStyle: "short", timeStyle: "medium" }).format(date);
+    default:
+      return new Intl.DateTimeFormat("en-US", {
+        month: "numeric",
+        day: "numeric",
+        year: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      }).format(date);
+  }
+}
+
+function isDateFormat(value: unknown): value is DateFormat {
+  return value === "monthFirst12h" || value === "dayFirst24h" || value === "iso" || value === "system";
 }
 
 function objectType(entry: ObjectEntry) {
@@ -630,6 +653,27 @@ export default function App() {
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
+
+  const [, setDateFormatVersion] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    const use = (value: unknown) => {
+      if (!isDateFormat(value)) return;
+      dateFormat = value;
+      setDateFormatVersion((version) => version + 1);
+    };
+    api.getDateFormat().then(use, () => undefined);
+    void listen<string>("date-format-changed", (event) => use(event.payload)).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    });
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     void initAppearance();

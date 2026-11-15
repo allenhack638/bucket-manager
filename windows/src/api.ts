@@ -13,6 +13,7 @@ import type {
 } from "./types";
 
 export const api = {
+  getDateFormat: () => invoke<string>("get_date_format"),
   listAccounts: () => invoke<Account[]>("list_accounts"),
   saveAccount: (input: AccountInput) => invoke<Account>("save_account", { input }),
   deleteAccount: (id: string) => invoke<void>("delete_account", { id }),

@@ -21,6 +21,8 @@
 - Windows: the Tasks list no longer reorders under the cursor, finished uploads only refresh the folder they changed and keep the selection, F5 and Ctrl+R refresh instead of resetting the app, and at most four transfers run at once.
 - Windows: remove an account from the Edit account dialog, and delete an empty bucket from the sidebar (type its name to confirm).
 - Windows: downloads carry the Mark-of-the-Web so SmartScreen checks them, account settings are saved crash-safely, the unused diagnostic logging controls are removed, and Session statistics no longer mix in all-time totals.
+- Choose how dates are shown: month-first 12-hour, day-first 24-hour, ISO, or the system's own format (Mac: Options; Windows: View → Date Format).
+- Clicking a row checkbox adds or removes just that row instead of clearing the selection, and empty sizes read "0 bytes" instead of "Zero KB".
 
 ## Windows preview 0.1.4 — 2026-10-24
 

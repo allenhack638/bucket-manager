@@ -46,6 +46,41 @@ impl AppearanceMode {
     }
 }
 
+/// How dates such as Last Modified are shown, chosen in View > Date Format.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum DateFormat {
+    MonthFirst12h,
+    DayFirst24h,
+    Iso,
+    System,
+}
+
+impl DateFormat {
+    const ALL: [Self; 4] = [Self::MonthFirst12h, Self::DayFirst24h, Self::Iso, Self::System];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::MonthFirst12h => "monthFirst12h",
+            Self::DayFirst24h => "dayFirst24h",
+            Self::Iso => "iso",
+            Self::System => "system",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::MonthFirst12h => "Month First, 12-Hour (11/14/2026 2:48:13 PM)",
+            Self::DayFirst24h => "Day First, 24-Hour (14/11/2026 14:48:13)",
+            Self::Iso => "ISO (2026-11-14 14:48:13)",
+            Self::System => "Use System Language",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|format| format.as_str() == value)
+    }
+}
+
 struct AppearanceMenuItems {
     system: CheckMenuItem<Wry>,
     light: CheckMenuItem<Wry>,
@@ -59,6 +94,8 @@ pub struct AppState {
     pub metrics: Arc<MetricsStore>,
     appearance: Mutex<AppearanceMode>,
     menu_items: Mutex<Option<AppearanceMenuItems>>,
+    date_format: Mutex<DateFormat>,
+    date_format_items: Mutex<Vec<(DateFormat, CheckMenuItem<Wry>)>>,
     logs_tab: Mutex<Option<String>>,
 }
 
@@ -283,6 +320,15 @@ fn get_appearance(state: State<'_, AppState>) -> String {
         .lock()
         .map(|mode| mode.as_str().to_string())
         .unwrap_or_else(|_| "system".to_string())
+}
+
+#[tauri::command]
+fn get_date_format(state: State<'_, AppState>) -> String {
+    state
+        .date_format
+        .lock()
+        .map(|format| format.as_str().to_string())
+        .unwrap_or_else(|_| DateFormat::MonthFirst12h.as_str().to_string())
 }
 
 #[tauri::command]
@@ -866,6 +912,46 @@ fn apply_appearance(app: &AppHandle, state: &AppState, value: &str) -> Result<()
         .map_err(|error| error.to_string())
 }
 
+fn date_format_path() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|directory| directory.join("BucketManager").join("date-format.txt"))
+}
+
+fn load_date_format() -> DateFormat {
+    date_format_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|value| DateFormat::parse(value.trim()))
+        .unwrap_or(DateFormat::MonthFirst12h)
+}
+
+fn apply_date_format(app: &AppHandle, state: &AppState, value: &str) -> Result<(), String> {
+    let format = DateFormat::parse(value).ok_or_else(|| format!("Unknown date format: {value}"))?;
+    *state
+        .date_format
+        .lock()
+        .map_err(|_| "Date format state is locked.".to_string())? = format;
+
+    // Update the menu and the page first, so a failed save only means the
+    // choice is not remembered next time.
+    for (item_format, item) in state
+        .date_format_items
+        .lock()
+        .map_err(|_| "Date format menu is locked.".to_string())?
+        .iter()
+    {
+        item.set_checked(*item_format == format)
+            .map_err(|error| error.to_string())?;
+    }
+
+    app.emit("date-format-changed", format.as_str())
+        .map_err(|error| error.to_string())?;
+
+    let path = date_format_path().ok_or_else(|| "Could not locate AppData.".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(path, format.as_str()).map_err(|error| error.to_string())
+}
+
 fn startup_log(message: &str) {
     let directory = dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -897,6 +983,7 @@ pub fn run() {
     startup_log("account store loaded");
 
     let appearance = load_appearance();
+    let date_format = load_date_format();
     let transfers = Arc::new(TransferManager::load());
     let logs = Arc::new(LogStore::new());
     let metrics = Arc::new(MetricsStore::new());
@@ -927,6 +1014,8 @@ pub fn run() {
             metrics,
             appearance: Mutex::new(appearance),
             menu_items: Mutex::new(None),
+            date_format: Mutex::new(date_format),
+            date_format_items: Mutex::new(Vec::new()),
             logs_tab: Mutex::new(None),
         })
         .setup(move |app| {
@@ -951,6 +1040,21 @@ pub fn run() {
             let appearance_menu = SubmenuBuilder::new(app, "Appearance")
                 .items(&[&system, &light, &dark])
                 .build()?;
+            let mut date_format_items = Vec::new();
+            for format in DateFormat::ALL {
+                let item = CheckMenuItemBuilder::with_id(
+                    format!("date-format:{}", format.as_str()),
+                    format.title(),
+                )
+                .checked(format == date_format)
+                .build(app)?;
+                date_format_items.push((format, item));
+            }
+            let mut date_format_menu = SubmenuBuilder::new(app, "Date Format");
+            for (_, item) in &date_format_items {
+                date_format_menu = date_format_menu.item(item);
+            }
+            let date_format_menu = date_format_menu.build()?;
             let undo = PredefinedMenuItem::undo(app, None)?;
             let redo = PredefinedMenuItem::redo(app, None)?;
             let separator = PredefinedMenuItem::separator(app)?;
@@ -962,7 +1066,7 @@ pub fn run() {
                 .items(&[&undo, &redo, &separator, &cut, &copy, &paste, &select_all])
                 .build()?;
             let view_menu = SubmenuBuilder::new(app, "View")
-                .items(&[&appearance_menu])
+                .items(&[&appearance_menu, &date_format_menu])
                 .build()?;
             let logs_item = MenuItemBuilder::with_id("window:logs", "Logs & Statistics…")
                 .accelerator("Ctrl+Alt+L")
@@ -986,6 +1090,10 @@ pub fn run() {
                     light,
                     dark,
                 });
+            *state
+                .date_format_items
+                .lock()
+                .map_err(|_| "Date format menu is locked.".to_string())? = date_format_items;
 
             match app.get_webview_window("main") {
                 Some(window) => {
@@ -1057,6 +1165,12 @@ pub fn run() {
                         startup_log(&format!("appearance change failed: {error}"));
                     }
                 }
+            } else if let Some(format) = id.strip_prefix("date-format:") {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Err(error) = apply_date_format(app, &state, format) {
+                        startup_log(&format!("date format change failed: {error}"));
+                    }
+                }
             } else if let Some(tab) = id.strip_prefix("window:") {
                 // Tauri documents that creating a window inside an event
                 // handler can deadlock on Windows; do it on another thread.
@@ -1083,6 +1197,7 @@ pub fn run() {
             cancel_transfer,
             retry_transfer,
             get_appearance,
+            get_date_format,
             get_logs,
             get_logging_settings,
             save_logging_settings,
@@ -1111,5 +1226,18 @@ pub fn run() {
             startup_log(&format!("run returned error: {error}"));
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod date_format_tests {
+    use super::DateFormat;
+
+    #[test]
+    fn every_date_format_round_trips_through_its_stored_name() {
+        for format in DateFormat::ALL {
+            assert_eq!(DateFormat::parse(format.as_str()), Some(format));
+        }
+        assert_eq!(DateFormat::parse("bogus"), None);
     }
 }
