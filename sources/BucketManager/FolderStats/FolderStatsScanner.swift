@@ -65,6 +65,15 @@ actor FolderStatsScanner {
         }
     }
 
+    /// S3 lists keys in UTF-8 byte order, so when a scan stops early at
+    /// `lastKey`, a folder whose keys all sort before it was counted in full:
+    /// its numbers are exact, and a zero means it is empty. S3 Express
+    /// directory buckets (names ending in "--x-s3") list in no set order.
+    static func isFullyScanned(prefix: String, lastKey: String?, bucket: String = "") -> Bool {
+        guard !bucket.hasSuffix("--x-s3"), let lastKey, !lastKey.hasPrefix(prefix) else { return false }
+        return Array(prefix.utf8).lexicographicallyPrecedes(Array(lastKey.utf8))
+    }
+
     func scan(group: FolderStatsScanGroup, account: Account, secret: String) async throws -> [FolderStatsRecord] {
         var accumulators: [String: Accumulator] = [:]
         for key in group.keys { accumulators[key.prefix] = Accumulator() }
@@ -73,6 +82,7 @@ actor FolderStatsScanner {
         var scanned = 0
         var partial = false
         var pages = 0
+        var lastKey: String?
 
         repeat {
             try Task.checkCancellation()
@@ -92,6 +102,7 @@ actor FolderStatsScanner {
 
             for object in page.objects {
                 try Task.checkCancellation()
+                lastKey = object.key
                 guard !object.key.hasSuffix("/") else { continue }
                 scanned += 1
                 for prefix in Self.folderPrefixes(for: object.key, target: group.target) {
@@ -126,7 +137,7 @@ actor FolderStatsScanner {
                 objectCount: accumulator.count,
                 newestObjectDate: accumulator.newest,
                 computedAt: computedAt,
-                partial: partial
+                partial: partial && !Self.isFullyScanned(prefix: prefix, lastKey: lastKey, bucket: group.bucket)
             )
         }
 

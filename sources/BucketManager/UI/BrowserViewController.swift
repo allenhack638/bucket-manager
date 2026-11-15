@@ -107,6 +107,8 @@ final class BrowserViewController: NSViewController {
     private let spinner = NSProgressIndicator()
     private let emptyView: EmptyStateView
     private var objectActionButtons: [FlatButton] = []
+    private var downloadButton: FlatButton?
+    private var deleteButton: FlatButton?
     private var openButton: FlatButton?
     private var refreshButton: FlatButton?
     private var bookmarkButton: FlatButton?
@@ -402,7 +404,9 @@ final class BrowserViewController: NSViewController {
         folder.iconTint = NSColor(hex: 0xD18B00)
         let refresh = FlatButton("Refresh", icon: "arrow.clockwise", style: .action) { [weak self] in self?.refresh() }
         refresh.iconTint = NSColor(hex: 0x0F7B0F)
-        objectActionButtons = [upload, download, delete, folder]
+        objectActionButtons = [upload, folder]
+        downloadButton = download
+        deleteButton = delete
         openButton = open
         refreshButton = refresh
 
@@ -599,6 +603,10 @@ final class BrowserViewController: NSViewController {
 
         let hasBucket = model.selectedBucket != nil
         objectActionButtons.forEach { $0.isEnabled = hasBucket }
+        // Download and Delete act on the live (not deleted) selection only.
+        let hasLiveSelection = hasBucket && !model.liveSelection.isEmpty
+        downloadButton?.isEnabled = hasLiveSelection
+        deleteButton?.isEnabled = hasLiveSelection
         openButton?.isEnabled = hasBucket && openTarget.map { $0.kind == .folder || !$0.isDeleted } == true
         refreshButton?.isEnabled = model.selectedAccount != nil
         bookmarkButton?.isEnabled = hasBucket
