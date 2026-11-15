@@ -8,11 +8,13 @@ import {
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
-import { open, save } from "@tauri-apps/plugin-dialog";
+import { ask, message, open, save } from "@tauri-apps/plugin-dialog";
 import appIcon from "./assets/app-icon.png";
 import { api } from "./api";
 import { safeFileName } from "./fileName";
+import { AUTO_CHECK_INTERVAL_MS, fetchUpdate } from "./updates";
 import { applyAppearance, initAppearance, type Appearance } from "./theme";
 import type { Account, AccountInput, Bucket, ListPage, ObjectEntry, TransferTask } from "./types";
 
@@ -82,6 +84,60 @@ function formatDate(value: string | null) {
         second: "2-digit",
         hour12: true,
       }).format(date);
+  }
+}
+
+const LAST_UPDATE_CHECK_KEY = "bucketManager.lastUpdateCheck";
+const NOTIFIED_UPDATE_KEY = "bucketManager.notifiedUpdateVersion";
+let checkingForUpdates = false;
+/** A manual request made while an automatic check is still running. */
+let manualCheckPending = false;
+
+/** An in-app sheet (Add Account, Copy to…) is open. */
+function sheetOpen() {
+  return document.querySelector(".sheet-backdrop") !== null;
+}
+
+/** Help > Check for Updates…, and the once-a-day automatic check, which
+ * announces each new version only once and never interrupts an open sheet. */
+async function checkForUpdates(requestedManually: boolean) {
+  if (checkingForUpdates) {
+    if (requestedManually) manualCheckPending = true;
+    return;
+  }
+  checkingForUpdates = true;
+  let manual = requestedManually;
+  try {
+    const installed = await getVersion();
+    let update;
+    try {
+      update = await fetchUpdate(installed);
+    } finally {
+      manual = manual || manualCheckPending;
+      manualCheckPending = false;
+    }
+    if (!manual && sheetOpen()) return;
+    // Only a successful check counts, so being offline at launch does not
+    // put the next check off for a day.
+    localStorage.setItem(LAST_UPDATE_CHECK_KEY, String(Date.now()));
+    if (!update) {
+      if (manual) {
+        await message(`Bucket Manager ${installed} is the latest version.`, { title: "You're up to date", kind: "info" });
+      }
+      return;
+    }
+    if (!manual && localStorage.getItem(NOTIFIED_UPDATE_KEY) === update.version) return;
+    localStorage.setItem(NOTIFIED_UPDATE_KEY, update.version);
+    const notes = update.notes ? `\n\n${update.notes}` : "";
+    const download = await ask(
+      `You have ${installed}. Download the new installer and run it to update.${notes}`,
+      { title: `Bucket Manager ${update.version} is available`, kind: "info", okLabel: "Download", cancelLabel: "Later" },
+    );
+    if (download) await api.openUpdateDownload(update.downloadUrl);
+  } catch (error) {
+    if (manual) await message(errorMessage(error), { title: "Couldn't check for updates", kind: "error" });
+  } finally {
+    checkingForUpdates = false;
   }
 }
 
@@ -672,6 +728,31 @@ export default function App() {
     return () => {
       active = false;
       unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    void listen("check-for-updates", () => void checkForUpdates(true)).then((stop) => {
+      if (active) unlisten = stop;
+      else stop();
+    });
+    const timer = window.setTimeout(() => {
+      const last = Number(localStorage.getItem(LAST_UPDATE_CHECK_KEY) ?? 0);
+      if (Date.now() - last < AUTO_CHECK_INTERVAL_MS) return;
+      // Like the Mac app: not on first run, while Add Account is up.
+      Promise.all([api.getAutoUpdateCheck(), api.listAccounts()]).then(
+        ([enabled, saved]) => {
+          if (enabled && saved.length > 0 && !sheetOpen()) void checkForUpdates(false);
+        },
+        () => undefined,
+      );
+    }, 3000);
+    return () => {
+      active = false;
+      unlisten?.();
+      window.clearTimeout(timer);
     };
   }, []);
 

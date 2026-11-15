@@ -96,6 +96,8 @@ pub struct AppState {
     menu_items: Mutex<Option<AppearanceMenuItems>>,
     date_format: Mutex<DateFormat>,
     date_format_items: Mutex<Vec<(DateFormat, CheckMenuItem<Wry>)>>,
+    auto_update_check: Mutex<bool>,
+    auto_update_item: Mutex<Option<CheckMenuItem<Wry>>>,
     logs_tab: Mutex<Option<String>>,
 }
 
@@ -329,6 +331,38 @@ fn get_date_format(state: State<'_, AppState>) -> String {
         .lock()
         .map(|format| format.as_str().to_string())
         .unwrap_or_else(|_| DateFormat::MonthFirst12h.as_str().to_string())
+}
+
+#[tauri::command]
+fn get_auto_update_check(state: State<'_, AppState>) -> bool {
+    state.auto_update_check.lock().map(|enabled| *enabled).unwrap_or(true)
+}
+
+/// Update downloads only open from this project's own GitHub pages, over
+/// HTTPS. GitHub redirects the browser to its file host from there.
+fn is_trusted_download(url: &str) -> bool {
+    let raw = url.to_ascii_lowercase();
+    if raw.contains("/..") || raw.contains("%2e") {
+        return false;
+    }
+    tauri::Url::parse(url)
+        .map(|parsed| {
+            parsed
+                .as_str()
+                .starts_with("https://github.com/allenhack638/bucket-manager/")
+        })
+        .unwrap_or(false)
+}
+
+#[tauri::command]
+fn open_update_download(app: AppHandle, url: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !is_trusted_download(&url) {
+        return Err("Updates can only be downloaded from GitHub.".into());
+    }
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -952,6 +986,41 @@ fn apply_date_format(app: &AppHandle, state: &AppState, value: &str) -> Result<(
     std::fs::write(path, format.as_str()).map_err(|error| error.to_string())
 }
 
+fn auto_update_path() -> Option<std::path::PathBuf> {
+    dirs::config_dir().map(|directory| directory.join("BucketManager").join("update-check.txt"))
+}
+
+fn load_auto_update_check() -> bool {
+    auto_update_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|value| value.trim() != "off")
+        .unwrap_or(true)
+}
+
+fn toggle_auto_update_check(state: &AppState) -> Result<(), String> {
+    let enabled = {
+        let mut current = state
+            .auto_update_check
+            .lock()
+            .map_err(|_| "Update setting is locked.".to_string())?;
+        *current = !*current;
+        *current
+    };
+    if let Some(item) = state
+        .auto_update_item
+        .lock()
+        .map_err(|_| "Update menu is locked.".to_string())?
+        .as_ref()
+    {
+        item.set_checked(enabled).map_err(|error| error.to_string())?;
+    }
+    let path = auto_update_path().ok_or_else(|| "Could not locate AppData.".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(path, if enabled { "on" } else { "off" }).map_err(|error| error.to_string())
+}
+
 fn startup_log(message: &str) {
     let directory = dirs::data_local_dir()
         .unwrap_or_else(std::env::temp_dir)
@@ -984,6 +1053,7 @@ pub fn run() {
 
     let appearance = load_appearance();
     let date_format = load_date_format();
+    let auto_update_check = load_auto_update_check();
     let transfers = Arc::new(TransferManager::load());
     let logs = Arc::new(LogStore::new());
     let metrics = Arc::new(MetricsStore::new());
@@ -1007,6 +1077,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(AppState {
             store,
             transfers,
@@ -1016,6 +1087,8 @@ pub fn run() {
             menu_items: Mutex::new(None),
             date_format: Mutex::new(date_format),
             date_format_items: Mutex::new(Vec::new()),
+            auto_update_check: Mutex::new(auto_update_check),
+            auto_update_item: Mutex::new(None),
             logs_tab: Mutex::new(None),
         })
         .setup(move |app| {
@@ -1077,8 +1150,19 @@ pub fn run() {
             let window_menu = SubmenuBuilder::new(app, "Window")
                 .items(&[&logs_item, &settings_item])
                 .build()?;
+            let check_updates = MenuItemBuilder::with_id("help:check-updates", "Check for Updates…")
+                .build(app)?;
+            let auto_update = CheckMenuItemBuilder::with_id(
+                "help:auto-update",
+                "Check for Updates Automatically",
+            )
+            .checked(auto_update_check)
+            .build(app)?;
+            let help_menu = SubmenuBuilder::new(app, "Help")
+                .items(&[&check_updates, &auto_update])
+                .build()?;
             let menu = MenuBuilder::new(app)
-                .items(&[&edit_menu, &view_menu, &window_menu])
+                .items(&[&edit_menu, &view_menu, &window_menu, &help_menu])
                 .build()?;
             app.set_menu(menu)?;
             *state
@@ -1094,6 +1178,10 @@ pub fn run() {
                 .date_format_items
                 .lock()
                 .map_err(|_| "Date format menu is locked.".to_string())? = date_format_items;
+            *state
+                .auto_update_item
+                .lock()
+                .map_err(|_| "Update menu is locked.".to_string())? = Some(auto_update);
 
             match app.get_webview_window("main") {
                 Some(window) => {
@@ -1171,6 +1259,14 @@ pub fn run() {
                         startup_log(&format!("date format change failed: {error}"));
                     }
                 }
+            } else if id == "help:check-updates" {
+                let _ = app.emit("check-for-updates", ());
+            } else if id == "help:auto-update" {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Err(error) = toggle_auto_update_check(&state) {
+                        startup_log(&format!("update setting change failed: {error}"));
+                    }
+                }
             } else if let Some(tab) = id.strip_prefix("window:") {
                 // Tauri documents that creating a window inside an event
                 // handler can deadlock on Windows; do it on another thread.
@@ -1198,6 +1294,8 @@ pub fn run() {
             retry_transfer,
             get_appearance,
             get_date_format,
+            get_auto_update_check,
+            open_update_download,
             get_logs,
             get_logging_settings,
             save_logging_settings,
@@ -1239,5 +1337,31 @@ mod date_format_tests {
             assert_eq!(DateFormat::parse(format.as_str()), Some(format));
         }
         assert_eq!(DateFormat::parse("bogus"), None);
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::is_trusted_download;
+
+    #[test]
+    fn update_downloads_only_open_from_github_over_https() {
+        assert!(is_trusted_download(
+            "https://github.com/allenhack638/bucket-manager/releases/download/v1/setup.exe"
+        ));
+        assert!(!is_trusted_download("https://github.com/someone/else/releases/download/x.exe"));
+        assert!(!is_trusted_download(
+            "https://raw.githubusercontent.com/allenhack638/bucket-manager/x"
+        ));
+        assert!(!is_trusted_download(
+            "https://github.com/allenhack638/bucket-manager/../../evil/x"
+        ));
+        assert!(!is_trusted_download(
+            "https://user@github.com/allenhack638/bucket-manager/x"
+        ));
+        assert!(!is_trusted_download("http://github.com/o/r"));
+        assert!(!is_trusted_download("https://github.com.evil.example/x"));
+        assert!(!is_trusted_download("file:///C:/Windows/System32/calc.exe"));
+        assert!(!is_trusted_download("not a url"));
     }
 }
