@@ -1,14 +1,20 @@
-# Bucket Manager for Windows 0.2.0
+# Bucket Manager for Windows 0.2.1
 
-Windows preview: safer transfers, a security fix, account and bucket removal, a date format setting, and Check for Updates.
+## What's new in 0.2.1
 
-## What's new
+- Check for Updates now works even when GitHub limits requests (common on office networks and VPNs): it falls back to GitHub's releases feed.
+
+## Included from 0.2.0
+
+Safer transfers, a security fix, account and bucket removal, a date format setting, and Check for Updates.
+
+## New in 0.2.0
 
 - **Help → Check for Updates…** shows when a newer release is on GitHub, with a Download button. An optional once-a-day check (Help → Check for Updates Automatically) announces each new version once.
 - **View → Date Format**: month-first 12-hour, day-first 24-hour, ISO, or your system's format.
 - Remove an account from the Edit account dialog, and delete an empty bucket from the sidebar (type its name to confirm).
 
-## Fixes
+## Fixes in 0.2.0
 
 - Moving a folder no longer deletes files before they are copied; Pause works for downloads, same-named downloads no longer corrupt each other, transfer history survives crashes, and a second launch focuses the running app.
 - Object names are cleaned before they reach the Save dialog, so a name shaped like a network path can no longer make Windows contact another server.
@@ -29,8 +35,8 @@ Windows preview: safer transfers, a security fix, account and bucket removal, a 
 
 Download either:
 
-- `Bucket.Manager_0.2.0_x64-setup.exe` (NSIS)
-- `Bucket.Manager_0.2.0_x64_en-US.msi` (MSI)
+- `Bucket.Manager_0.2.1_x64-setup.exe` (NSIS)
+- `Bucket.Manager_0.2.1_x64_en-US.msi` (MSI)
 
 Run the installer and launch Bucket Manager from the Start menu.
 
