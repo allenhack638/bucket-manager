@@ -225,7 +225,7 @@ final class BrowserModel {
         let visible = visibleItems
         let total = visible.reduce(Int64(0)) { $0 + (sizeForDisplay($1) ?? 0) }
         let count = visible.count
-        let noun = count == 1 ? "file" : "files"
+        let noun = count == 1 ? "item" : "items"
         var text: String
         if isFiltering {
             text = "\(count) of \(items.count) \(noun) (\(total.byteString))"
@@ -235,7 +235,7 @@ final class BrowserModel {
         let deleted = visible.filter(\.isDeleted).count
         if deleted > 0 { text += ", \(deleted) deleted" }
         if !selection.isEmpty {
-            text += ", \(selection.count) file\(selection.count == 1 ? "" : "s") selected"
+            text += ", \(selection.count) selected"
         }
         return text
     }

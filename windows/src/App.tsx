@@ -1415,9 +1415,8 @@ export default function App() {
                 </button>
               )}
               <span className="count-label">
-                {entries.length} files ({formatSize(visibleTotalSize)})
-                {selectedEntries.length > 0 &&
-                  `, ${selectedEntries.length} file${selectedEntries.length === 1 ? "" : "s"} selected`}
+                {entries.length} {entries.length === 1 ? "item" : "items"} ({formatSize(visibleTotalSize)})
+                {selectedEntries.length > 0 && `, ${selectedEntries.length} selected`}
               </span>
             </div>
 

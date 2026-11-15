@@ -1162,6 +1162,18 @@ enum UITest {
         ), state: .partial)
         check(unreached.sizeText == "—" && unreached.tooltip?.contains("open this folder") == true,
               "folders past a partial scan's cutoff show as unknown")
+        check(FolderStatsScanner.isFullyScanned(prefix: "big/a/", lastKey: "big/m/file.txt")
+                  && !FolderStatsScanner.isFullyScanned(prefix: "big/m/", lastKey: "big/m/file.txt")
+                  && !FolderStatsScanner.isFullyScanned(prefix: "big/z/", lastKey: "big/m/file.txt")
+                  && !FolderStatsScanner.isFullyScanned(prefix: "big/a/", lastKey: nil),
+              "a partial scan counts folders that sort before where it stopped in full")
+        // "e" + combining accent sorts before a precomposed "é" in bytes,
+        // though Swift treats the two as the same character.
+        check(FolderStatsScanner.isFullyScanned(prefix: "big/Z/", lastKey: "big/a.txt")
+                  && FolderStatsScanner.isFullyScanned(prefix: "big/e\u{301}/", lastKey: "big/\u{E9}.txt"),
+              "scan cutoffs compare keys in S3's byte order")
+        check(!FolderStatsScanner.isFullyScanned(prefix: "big/a/", lastKey: "big/m/file.txt", bucket: "data--usw2-az1--x-s3"),
+              "directory buckets, which list out of order, keep cut-off folders partial")
 
         // Selecting a row keeps each column's own colour.
         let plain = S3Item(key: "a.txt", kind: .object)
