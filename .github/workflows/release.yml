@@ -20,6 +20,14 @@ jobs:
         with:
           swift-version: "6.2"
 
+      # Reuse the build cache saved by CI on main (same compiler, same
+      # dependencies), so only the app's own code is recompiled.
+      - name: Restore Swift build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .build
+          key: swift-build-macos15-swift6.2-${{ hashFiles('Package.resolved') }}
+
       - name: Build unsigned app
         env:
           VERSION: ${{ github.ref_name }}

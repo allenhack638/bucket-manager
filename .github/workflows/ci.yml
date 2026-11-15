@@ -14,11 +14,59 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # "verify" is a required check, so the job always runs, but a pull
+      # request that touches nothing the Mac app is built from (docs,
+      # changelog, the Windows app) passes in seconds.
+      - name: Decide whether the Mac app needs verifying
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "mac=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "$changed"
+          mac=false
+          while IFS= read -r file; do
+            case "$file" in
+              ""|*.md|docs/*|windows/*|LICENSE|.github/workflows/windows*.yml) ;;
+              *) mac=true ;;
+            esac
+          done <<< "$changed"
+          echo "mac=$mac" >> "$GITHUB_OUTPUT"
+          echo "Mac app changed: $mac"
+
       - name: Install Swift 6.2
+        if: steps.changes.outputs.mac == 'true'
         uses: swift-actions/setup-swift@v2
         with:
           swift-version: "6.2"
+
+      # Compiled dependencies (the AWS SDK is most of the build time). One
+      # copy per set of dependency versions, saved only from main, so pull
+      # requests and releases reuse it within the free 10 GB of cache.
+      - name: Restore Swift build cache
+        id: swift-cache
+        if: steps.changes.outputs.mac == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: .build
+          key: swift-build-macos15-swift6.2-${{ hashFiles('Package.resolved') }}
+
       - name: Verify
+        if: steps.changes.outputs.mac == 'true'
         run: ./scripts/test.sh
+
       - name: Release build and package
+        if: steps.changes.outputs.mac == 'true'
         run: ./make-app.sh release
+
+      - name: Save Swift build cache
+        if: steps.changes.outputs.mac == 'true' && github.ref == 'refs/heads/main' && steps.swift-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .build
+          key: swift-build-macos15-swift6.2-${{ hashFiles('Package.resolved') }}
