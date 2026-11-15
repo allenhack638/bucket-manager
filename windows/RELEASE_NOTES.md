@@ -1,36 +1,36 @@
-# Bucket Manager for Windows 0.1.4
+# Bucket Manager for Windows 0.2.0
 
-Windows preview with the macOS layout, appearance switching, transfer queue, and Logs & Statistics.
+Windows preview: safer transfers, a security fix, account and bucket removal, a date format setting, and Check for Updates.
 
-## Included
+## What's new
 
-- Tauri 2 desktop app with a React UI and Rust S3 backend.
-- Multiple S3 and S3-compatible accounts.
-- Secrets stored in Windows Credential Manager.
-- Custom endpoints, regions, bucket-scoped credentials, and path-style addressing.
-- Bucket browser, folder navigation, upload, download, create folder, and recursive folder delete.
-- Paginated object listings.
-- The browser now mirrors the macOS layout and proportions: 321 px sidebar, 24 px path bar, 24 px header, 18 px rows, 30 px action bar, 28 px inspector tabs, and 40 px transfer footer.
-- Add a persisted **View → Appearance** menu with **System**, **Light**, and **Dark**, matching the macOS appearance behavior.
-- Add **Window → Logs & Statistics…** and **Window → Settings…** with audit logs, request metrics, logging retention settings, export, and reveal-log actions.
-- Add queued cross-account copy and move.
-- Add a persistent transfer queue with live progress, pause/resume/cancel/retry, and a Tasks inspector tab.
-- Add multipart uploads above 16 MiB with 8 MiB parts, scoped aborts, and full-size verification.
-- Verified 21 MiB multipart upload/download against fake S3 and real MEGA S4 in both test buckets, with byte-identical SHA-256 downloads.
+- **Help → Check for Updates…** shows when a newer release is on GitHub, with a Download button. An optional once-a-day check (Help → Check for Updates Automatically) announces each new version once.
+- **View → Date Format**: month-first 12-hour, day-first 24-hour, ISO, or your system's format.
+- Remove an account from the Edit account dialog, and delete an empty bucket from the sidebar (type its name to confirm).
+
+## Fixes
+
+- Moving a folder no longer deletes files before they are copied; Pause works for downloads, same-named downloads no longer corrupt each other, transfer history survives crashes, and a second launch focuses the running app.
+- Object names are cleaned before they reach the Save dialog, so a name shaped like a network path can no longer make Windows contact another server.
+- Failed or interrupted multipart uploads are always cleaned up instead of leaving billed parts behind, and files larger than 78 GiB now upload.
+- The Logs window can be reopened after closing it, closing the main window quits the app (asking first if transfers are running), errors show the S3 code and message, and AWS buckets in another region open correctly.
+- The Tasks list no longer reorders under the cursor, finished uploads only refresh the folder they changed, F5 and Ctrl+R refresh instead of resetting the app, and at most four transfers run at once.
+- Downloads carry the Mark-of-the-Web so SmartScreen checks them, and account settings are saved crash-safely.
+- A click outside the account or Copy/Move dialog no longer discards what was typed, and Esc closes it.
 
 ## Known limitations
 
-- This is a preview; it does not yet have the full inspector, drag and drop, folder upload, or automatic updates.
+- This is a preview; it does not yet have drag and drop or folder upload.
 - Paused/queued transfers restart from the beginning after relaunch.
 - The installer is **unsigned**, so Windows SmartScreen may block or warn on first launch. Choose **More info → Run anyway** only if you trust the download.
-- No automatic updates.
+- Updates are not installed automatically: Check for Updates opens the new installer in your browser.
 
 ## Install
 
 Download either:
 
-- `Bucket.Manager_0.1.4_x64-setup.exe` (NSIS)
-- `Bucket.Manager_0.1.4_x64_en-US.msi` (MSI)
+- `Bucket.Manager_0.2.0_x64-setup.exe` (NSIS)
+- `Bucket.Manager_0.2.0_x64_en-US.msi` (MSI)
 
 Run the installer and launch Bucket Manager from the Start menu.
 
