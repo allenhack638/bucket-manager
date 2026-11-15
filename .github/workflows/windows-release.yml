@@ -26,9 +26,13 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # One shared cache, saved only from main; pull requests and releases
+      # reuse it instead of each storing a 1.6 GB copy.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: windows/src-tauri -> target
+          shared-key: windows-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
         run: npm ci --include=dev
