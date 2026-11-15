@@ -23,6 +23,54 @@ enum UITest {
             }
         }
 
+        // The account sheet is the same size whichever window opens it, and
+        // every field for the chosen type is visible without scrolling.
+        let sizing = AddAccountWindowController(account: nil, secret: nil, onSave: { _, _ in }, onCancel: {})
+        var sheetSizes: [NSSize] = []
+        for parentSize in [NSSize(width: 1120, height: 650), NSSize(width: 760, height: 460)] {
+            let parent = NSWindow(contentRect: NSRect(origin: .zero, size: parentSize), styleMask: [.titled], backing: .buffered, defer: false)
+            sizing.present(in: parent)
+            sheetSizes.append(sizing.window?.contentLayoutRect.size ?? .zero)
+            sizing.testCancel()
+        }
+        check(sheetSizes.count == 2 && sheetSizes[0] == sheetSizes[1]
+                  && abs(sheetSizes[0].width - AddAccountWindowController.contentSize.width) <= 20,
+              "the account sheet is the same size whatever window opens it")
+        check(sizing.testFormFitsWithoutScrolling, "every Amazon S3 account field is visible without scrolling")
+        // Not tied to a short parent window, so only the screen limits it.
+        let growing = AddAccountWindowController(account: nil, secret: nil, onSave: { _, _ in }, onCancel: {})
+        growing.testSelectKind(.amazonS3)
+        let amazonHeight = growing.window?.contentLayoutRect.height ?? 0
+        growing.testSelectKind(.compatible)
+        // On a short screen (such as CI's) the sheet stops at the screen limit
+        // and the form scrolls instead.
+        let screenLimit = (NSScreen.main?.visibleFrame.height ?? 900) - 80
+        let compatibleHeight = growing.window?.contentLayoutRect.height ?? 0
+        check(compatibleHeight > amazonHeight
+                  && (growing.testFormFitsWithoutScrolling || abs(compatibleHeight - screenLimit) <= 1),
+              "switching to S3-compatible grows the sheet so endpoint, bucket, addressing and SSL all show")
+        growing.testSelectKind(.amazonS3)
+        check(growing.window?.contentLayoutRect.height == amazonHeight, "switching back to Amazon S3 shrinks the sheet again")
+        // A short window low on the screen caps the sheet so Save stays visible.
+        let lowParent = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 460), styleMask: [.titled], backing: .buffered, defer: false)
+        let capped = AddAccountWindowController(account: nil, secret: nil, onSave: { _, _ in }, onCancel: {})
+        capped.present(in: lowParent)
+        capped.testSelectKind(.compatible)
+        let screenBottom = (lowParent.screen ?? NSScreen.main)?.visibleFrame.minY ?? 0
+        check((capped.window?.frame.minY ?? -1) >= screenBottom - 1,
+              "the account sheet never runs past the bottom of the screen")
+        capped.testCancel()
+        check(sizing.testLiteralFieldsHaveNoTextHelpers, "key, region and endpoint fields have no completion or AutoFill helpers")
+        let literalEditor = NSTextView()
+        literalEditor.isContinuousSpellCheckingEnabled = true
+        literalEditor.isAutomaticSpellingCorrectionEnabled = true
+        literalEditor.isAutomaticTextCompletionEnabled = true
+        AddAccountWindowController.makeLiteral(literalEditor)
+        check(!literalEditor.isContinuousSpellCheckingEnabled && !literalEditor.isAutomaticSpellingCorrectionEnabled
+                  && !literalEditor.isAutomaticTextCompletionEnabled && !literalEditor.isAutomaticTextReplacementEnabled
+                  && literalEditor.inlinePredictionType == .no,
+              "editing a key turns off spelling, autocorrect, completion and prediction popups")
+
         var saved: (Account, String?)?
         var cancelled = false
         let add = AddAccountWindowController(
@@ -340,6 +388,14 @@ enum UITest {
         let storage = StorageAccountsWindowController(accounts: store, model: model)
         storage.reload()
         check(storage.testRowCount() == 2, "storage manager shows every account")
+        var requested: [Account?] = []
+        storage.onEditAccount = { requested.append($0) }
+        storage.testAdd()
+        storage.testEdit(row: 1)
+        check(requested.count == 2 && requested[0] == nil && requested[1]?.displayName == "Two",
+              "Storage Accounts hands Add and Edit to the shared account sheet")
+        storage.select(accountID: store.accounts[0].id)
+        check(storage.testSelectedRow == 0, "Storage Accounts reselects the account just added or edited")
             var customButtonPressed = false
             let customButton = FlatButton("Test action", style: .action)
             customButton.onClick = { customButtonPressed = true }
