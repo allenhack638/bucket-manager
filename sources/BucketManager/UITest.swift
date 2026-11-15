@@ -1206,6 +1206,47 @@ enum UITest {
         check(Int64(0).byteString == "0 bytes" && Int64(3).byteString == "3 bytes",
               "an empty size reads 0 bytes, not Zero KB")
 
+        // Check for Updates picks the newest published Mac release.
+        check(UpdateChecker.isNewer("1.1.0", than: "1.0.0") && UpdateChecker.isNewer("1.10", than: "1.9.9")
+                  && !UpdateChecker.isNewer("1.0", than: "1.0.0") && !UpdateChecker.isNewer("1.0.0", than: "1.1.0")
+                  && !UpdateChecker.isNewer("junk", than: "1.0.0"),
+              "update versions compare numerically")
+        let releasesJSON = """
+        [
+          {"tag_name": "windows-v9.0.0", "body": "", "draft": false, "prerelease": false,
+           "html_url": "https://github.com/allenhack638/bucket-manager/releases/tag/windows-v9.0.0", "assets": []},
+          {"tag_name": "macos-v2.0.0", "body": "", "draft": true, "prerelease": false,
+           "html_url": "https://github.com/allenhack638/bucket-manager/releases/tag/macos-v2.0.0", "assets": []},
+          {"tag_name": "macos-v1.3.0", "body": "", "draft": false, "prerelease": true,
+           "html_url": "https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.3.0", "assets": []},
+          {"tag_name": "macos-v1.1.0", "body": "  Faster lists.  ", "draft": false, "prerelease": false,
+           "html_url": "https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.1.0",
+           "assets": [
+             {"name": "BucketManager-1.1.0-arm64.dmg.sha256", "browser_download_url": "https://github.com/allenhack638/bucket-manager/releases/download/macos-v1.1.0/BucketManager-1.1.0-arm64.dmg.sha256"},
+             {"name": "BucketManager-1.1.0-arm64.dmg", "browser_download_url": "https://github.com/allenhack638/bucket-manager/releases/download/macos-v1.1.0/BucketManager-1.1.0-arm64.dmg"}
+           ]},
+          {"tag_name": "macos-v1.0.5", "body": "", "draft": false, "prerelease": false,
+           "html_url": "https://github.com/allenhack638/bucket-manager/releases/tag/macos-v1.0.5", "assets": []}
+        ]
+        """.data(using: .utf8)!
+        let offered = try? UpdateChecker.update(from: releasesJSON, installed: "1.0.0")
+        check(offered?.version == "1.1.0" && offered?.notes == "Faster lists."
+                  && offered?.downloadURL.lastPathComponent == "BucketManager-1.1.0-arm64.dmg",
+              "the update is the newest published Mac release and links its DMG")
+        check((try? UpdateChecker.update(from: releasesJSON, installed: "1.1.0")) == .some(nil),
+              "no update is offered when the installed version is the newest")
+        check(UpdateChecker.isTrustedDownload(URL(string: "https://github.com/allenhack638/bucket-manager/releases/download/x.dmg")!)
+                  && !UpdateChecker.isTrustedDownload(URL(string: "https://github.com/someone/else/releases/download/x.dmg")!)
+                  && !UpdateChecker.isTrustedDownload(URL(string: "https://raw.githubusercontent.com/allenhack638/bucket-manager/x")!)
+                  && !UpdateChecker.isTrustedDownload(URL(string: "https://github.com/allenhack638/bucket-manager/../../evil/x")!)
+                  && !UpdateChecker.isTrustedDownload(URL(string: "https://github.com/allenhack638/bucket-manager/%2E%2E/x")!)
+                  && !UpdateChecker.isTrustedDownload(URL(string: "http://github.com/allenhack638/bucket-manager/x")!)
+                  && !UpdateChecker.isTrustedDownload(URL(string: "https://github.com.evil.example/x")!)
+                  && !UpdateChecker.isTrustedDownload(URL(string: "file:///Applications")!),
+              "update downloads only open from GitHub over HTTPS")
+        check(UpdateChecker.notesExcerpt("# Title\r\n\r\n\r\n## Fixed\r\n- **Bold** and `code`\n```bash\nxattr x\n```") == "Title\n\nFixed\n- Bold and code\nxattr x",
+              "release notes show as plain text")
+
         // The date format follows the Options choice.
         let savedFormat = UserDefaults.standard.string(forKey: DateDisplayFormat.defaultsKey)
         let sampleDate = Date(timeIntervalSince1970: 1_763_131_693)

@@ -473,17 +473,24 @@ final class MainWindowController: NSWindowController {
         let dateRow = NSStackView(views: [dateLabel, datePopup])
         dateRow.orientation = .horizontal
         dateRow.spacing = 8
-        let accessory = NSStackView(views: [checkbox, dateRow])
+        let updatesCheckbox = NSButton(
+            checkboxWithTitle: "Check for updates automatically (once a day)",
+            target: nil,
+            action: nil
+        )
+        updatesCheckbox.state = UpdateChecker.automaticChecksEnabled ? .on : .off
+        let accessory = NSStackView(views: [checkbox, dateRow, updatesCheckbox])
         accessory.orientation = .vertical
         accessory.alignment = .leading
         accessory.spacing = 10
-        accessory.frame = NSRect(x: 0, y: 0, width: 440, height: 62)
+        accessory.frame = NSRect(x: 0, y: 0, width: 440, height: 90)
         alert.accessoryView = accessory
         alert.addButton(withTitle: "Apply")
         alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] response in
             guard response == .alertFirstButtonReturn, let self else { return }
             self.model.setCalculateFolderSizes(checkbox.state == .on)
+            UpdateChecker.automaticChecksEnabled = updatesCheckbox.state == .on
             if let raw = datePopup.selectedItem?.representedObject as? String,
                let format = DateDisplayFormat(rawValue: raw),
                format != .current {
@@ -492,6 +499,100 @@ final class MainWindowController: NSWindowController {
                 self.transfers.redrawDetails()
             }
             self.browser.refreshFolderStatsForListing()
+        }
+    }
+
+    @objc func checkForUpdatesAction() {
+        checkForUpdates(manual: true)
+    }
+
+    /// Once a day at most, and each new version is announced only once.
+    func checkForUpdatesIfDue() {
+        guard UpdateChecker.automaticCheckDue() else { return }
+        checkForUpdates(manual: false)
+    }
+
+    private var checkingForUpdates = false
+    /// A manual request made while an automatic check is still running.
+    private var manualCheckPending = false
+
+    private func checkForUpdates(manual: Bool) {
+        guard !checkingForUpdates else {
+            if manual { manualCheckPending = true }
+            return
+        }
+        guard let installed = UpdateChecker.installedVersion else {
+            if manual { showUpdateMessage("Can't check for updates", "This build has no version number.") }
+            return
+        }
+        checkingForUpdates = true
+        Task { [weak self] in
+            let result: Result<AvailableUpdate?, Error>
+            do {
+                result = .success(try await UpdateChecker.fetchLatest(installed: installed))
+            } catch {
+                result = .failure(error)
+            }
+            guard let self else { return }
+            self.checkingForUpdates = false
+            let manual = manual || self.manualCheckPending
+            self.manualCheckPending = false
+            // An automatic check never interrupts a sheet the user is working
+            // in; it simply runs again next launch.
+            if !manual, self.window?.attachedSheet != nil { return }
+            // Only a successful check counts, so being offline at launch does
+            // not put the next check off for a day.
+            if case .success = result {
+                UserDefaults.standard.set(Date(), forKey: UpdateChecker.lastCheckKey)
+            }
+            switch result {
+            case .success(let update?):
+                let defaults = UserDefaults.standard
+                if !manual, defaults.string(forKey: UpdateChecker.notifiedVersionKey) == update.version { return }
+                defaults.set(update.version, forKey: UpdateChecker.notifiedVersionKey)
+                self.presentUpdate(update, installed: installed)
+            case .success(nil):
+                if manual {
+                    self.showUpdateMessage("You're up to date", "Bucket Manager \(installed) is the latest version.")
+                }
+            case .failure(let error):
+                AppLog.shared.log("Update check failed: \(error.localizedDescription)")
+                if manual {
+                    self.showUpdateMessage("Couldn't check for updates", error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    private func presentUpdate(_ update: AvailableUpdate, installed: String) {
+        let alert = NSAlert()
+        alert.icon = NSApp.applicationIconImage
+        alert.messageText = "Bucket Manager \(update.version) is available"
+        var text = "You have \(installed). Download the new version, then replace the app in Applications."
+        if !update.notes.isEmpty { text += "\n\n\(update.notes)" }
+        alert.informativeText = text
+        alert.addButton(withTitle: "Download")
+        alert.addButton(withTitle: "Later")
+        let open = { (response: NSApplication.ModalResponse) in
+            guard response == .alertFirstButtonReturn, UpdateChecker.isTrustedDownload(update.downloadURL) else { return }
+            NSWorkspace.shared.open(update.downloadURL)
+        }
+        if let window, window.attachedSheet == nil {
+            alert.beginSheetModal(for: window, completionHandler: open)
+        } else {
+            open(alert.runModal())
+        }
+    }
+
+    private func showUpdateMessage(_ title: String, _ text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "OK")
+        if let window, window.attachedSheet == nil {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
         }
     }
 

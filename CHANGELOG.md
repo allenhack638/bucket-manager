@@ -24,6 +24,7 @@
 - Choose how dates are shown: month-first 12-hour, day-first 24-hour, ISO, or the system's own format (Mac: Options; Windows: View → Date Format).
 - Clicking a row checkbox adds or removes just that row instead of clearing the selection, and empty sizes read "0 bytes" instead of "Zero KB".
 - The status bar counts "items" rather than "files" (folders included), Download and Delete stay greyed out until something they can act on is selected, and empty folders inside very large folders show "0 bytes" instead of "—".
+- Check for Updates (Mac: Bucket Manager menu; Windows: Help menu) shows when a newer release is on GitHub, with its notes and a Download button; an optional once-a-day check announces each new version once (Mac: Options; Windows: Help → Check for Updates Automatically).
 
 ## Windows preview 0.1.4 — 2026-10-24
 

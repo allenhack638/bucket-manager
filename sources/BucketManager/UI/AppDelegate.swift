@@ -40,6 +40,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
                 self?.mainWindow.presentAddAccount()
             }
+        } else if !CommandLine.arguments.contains("--demo") {
+            // Not while the first-run Add Account sheet is up.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.mainWindow.checkForUpdatesIfDue()
+            }
         }
     }
 
@@ -63,6 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let about = NSMenuItem(title: "About Bucket Manager", action: #selector(MainWindowController.aboutAction), keyEquivalent: "")
         about.target = mainWindow
         appMenu.addItem(about)
+        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(MainWindowController.checkForUpdatesAction), keyEquivalent: "")
+        updates.target = mainWindow
+        appMenu.addItem(updates)
         let options = NSMenuItem(title: "Options…", action: #selector(MainWindowController.showOptionsAction), keyEquivalent: ",")
         options.target = mainWindow
         appMenu.addItem(options)
