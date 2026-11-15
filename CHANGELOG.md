@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## 1.1.1 — 2026-11-15
+
+- Check for Updates falls back to GitHub's releases feed when GitHub limits API requests (common on office networks and VPNs), instead of failing with "GitHub is limiting requests".
+
+## Windows preview 0.2.1 — 2026-11-15
+
 - Check for Updates falls back to GitHub's releases feed when GitHub limits API requests (common on office networks and VPNs), instead of failing with "GitHub is limiting requests".
 
 ## 1.1.0 — 2026-11-15
